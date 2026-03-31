@@ -1,0 +1,9 @@
+services:
+  rpg-library:
+    build: ./api
+    container_name: rpg-library-v2
+    ports:
+      - "8081:3000"
+    volumes:
+      - ./games:/games
+    restart: unless-stopped
