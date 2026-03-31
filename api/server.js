@@ -69,12 +69,10 @@ async function fetchDLsiteCover(rjCode, destPath) {
     const num = parseInt(numStr, 10);
     const dirNum = Math.ceil(num / 1000) * 1000;
     const dirStr = 'RJ' + String(dirNum).padStart(numStr.length, '0');
-
     const urls = [
         `https://img.dlsite.jp/modpub/images2/work/doujin/${dirStr}/${rjCode}_img_main.jpg`,
         `https://img.dlsite.jp/modpub/images2/work/professional/${dirStr}/${rjCode}_img_main.jpg`
     ];
-
     for (const url of urls) {
         try {
             const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
@@ -88,21 +86,21 @@ async function fetchDLsiteCover(rjCode, destPath) {
     return false;
 }
 
-// ── УМНЫЙ ПАРСЕР МЕТАДАННЫХ ─────────────────────────────────────
+// ── УМНЫЙ ПАРСЕР МЕТАДАННЫХ ─────────────────────────────────────────
 async function getGameMetadata(folder, gamePath) {
     const metaPath = path.join(gamePath, 'meta.json');
     const checkExists = async (p) => { try { await fsp.access(p); return true; } catch { return false; } };
 
+    let existingMeta = {};
     try {
         if (await checkExists(metaPath)) {
             const metaRaw = await fsp.readFile(metaPath, 'utf8');
-            const meta = JSON.parse(metaRaw);
-            if (meta.scraped) return meta;
+            existingMeta = JSON.parse(metaRaw);
+            if (existingMeta.scraped) return existingMeta;
         }
     } catch(e) {}
 
     let title = null;
-
     try {
         const sysRaw = await fsp.readFile(path.join(gamePath, 'data', 'System.json'), 'utf8');
         const sys = JSON.parse(sysRaw);
@@ -116,9 +114,7 @@ async function getGameMetadata(folder, gamePath) {
             const pkgRaw = await fsp.readFile(path.join(gamePath, 'package.json'), 'utf8');
             const pkg = JSON.parse(pkgRaw);
             let pName = pkg.productName || pkg.name;
-            if (pName && !pName.toLowerCase().includes('rmmz') && pName.toLowerCase() !== 'rpgmaker') {
-                title = pName;
-            }
+            if (pName && !pName.toLowerCase().includes('rmmz') && pName.toLowerCase() !== 'rpgmaker') title = pName;
         } catch(e) {}
     }
 
@@ -128,16 +124,14 @@ async function getGameMetadata(folder, gamePath) {
     }
 
     let cover = null;
-
     if (await checkExists(path.join(gamePath, 'cover.jpg'))) cover = `${folder}/cover.jpg`;
     else if (await checkExists(path.join(gamePath, 'cover.png'))) cover = `${folder}/cover.png`;
 
     const rjCode = await findRJCode(folder, gamePath);
-    
     if (rjCode && !cover) {
         const coverDest = path.join(gamePath, 'cover.jpg');
         const success = await fetchDLsiteCover(rjCode, coverDest);
-        if (success) { cover = `${folder}/cover.jpg`; }
+        if (success) cover = `${folder}/cover.jpg`;
     }
 
     if (!cover) {
@@ -150,17 +144,18 @@ async function getGameMetadata(folder, gamePath) {
         if (!cover && await checkExists(path.join(gamePath, 'icon', 'icon.png'))) cover = `${folder}/icon/icon.png`;
     }
 
-    const finalMeta = { title, cover, scraped: true };
+    // Сохраняем парсинг, не затирая существующие оценки
+    const finalMeta = { ...existingMeta, title, cover, scraped: true };
     await fsp.writeFile(metaPath, JSON.stringify(finalMeta, null, 2), 'utf8').catch(()=>{});
-
     return finalMeta;
 }
 
-// ── API РОУТЫ ──────────────────────────────────────────────────────
+// ── API: Библиотека с датами и оценками ────────────────────────────
 app.get('/api/games', async (req, res) => {
     try {
         const entries = await fsp.readdir(GAMES_DIR);
         const games = [];
+        
         for (let i = 0; i < entries.length; i++) {
             const folder = entries[i];
             const gamePath = path.join(GAMES_DIR, folder);
@@ -169,13 +164,44 @@ app.get('/api/games', async (req, res) => {
                 if (!stat.isDirectory() || folder === 'node_modules' || folder === '_saves') continue;
 
                 const meta = await getGameMetadata(folder, gamePath);
-                games.push({ id: folder, title: meta.title, cover: meta.cover, url: `/${folder}/`, number: games.length + 1 });
+                // Забираем данные для сортировки
+                games.push({ 
+                    id: folder, 
+                    title: meta.title, 
+                    cover: meta.cover, 
+                    url: `/${folder}/`, 
+                    number: games.length + 1,
+                    addedAt: stat.birthtimeMs || stat.mtimeMs || 0, // Дата добавления папки
+                    lastPlayed: meta.lastPlayed || 0,               // Последний запуск
+                    rating: meta.rating || 0                        // Оценка (0-5)
+                });
             } catch(e) {}
         }
         res.json(games);
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── НОВЫЙ API: Сохранение оценок и даты запуска ────────────────────
+app.post('/api/games/:id/meta', async (req, res) => {
+    const id = req.params.id.replace(/[^a-zA-Z0-9а-яА-Я._\-\s\[\]]/g, '');
+    const metaPath = path.join(GAMES_DIR, id, 'meta.json');
+    try {
+        let meta = {};
+        try {
+            const metaRaw = await fsp.readFile(metaPath, 'utf8');
+            meta = JSON.parse(metaRaw);
+        } catch(e) {}
+
+        if (req.body.rating !== undefined) meta.rating = req.body.rating;
+        if (req.body.lastPlayed !== undefined) meta.lastPlayed = req.body.lastPlayed;
+        meta.scraped = true; 
+
+        await fsp.writeFile(metaPath, JSON.stringify(meta, null, 2), 'utf8');
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Остальные API ──────────────────────────────────────────────────
 app.get('/api/saves/:gameId', async (req, res) => {
     const gameId = req.params.gameId.replace(/[^a-zA-Z0-9а-яА-Я._\-\s]/g, '');
     const gameSavesDir = path.join(SAVES_DIR, gameId);
@@ -254,7 +280,7 @@ app.delete('/api/games/:id', async (req, res) => {
     } catch(e) { res.status(404).json({ error: 'Игра не найдена' }); }
 });
 
-// ── РАЗДАЧА СТАТИКИ И ИГР С АВТО-ЛОКАТОРОМ ──────────────────────
+// ── РАЗДАЧА СТАТИКИ И ИГР С АВТО-ЛОКАТОРОМ (ТО, ЧТО Я ЗАБЫЛ!) ───────
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.get('*', async (req, res, next) => {
@@ -267,7 +293,7 @@ app.get('*', async (req, res, next) => {
         let stat;
         try { stat = await fsp.stat(filePath); } catch(e) {}
 
-        // 1. АВТО-ЛОКАТОР: Если пользователь запросил папку, ищем внутри неё игру
+        // 1. АВТО-ЛОКАТОР: Если запросили папку, ищем внутри неё игру
         if (stat && stat.isDirectory()) {
             if (!req.path.endsWith('/')) return res.redirect(req.path + '/');
 
@@ -283,13 +309,11 @@ app.get('*', async (req, res, next) => {
                 if (hasWww) {
                     return res.redirect(req.path + 'www/');
                 } else {
-                    // Глубокий поиск (если папка вложена еще глубже)
                     const deepDir = await findGameFolder(filePath);
                     if (deepDir) {
                         const relPath = path.relative(GAMES_DIR, deepDir).replace(/\\/g, '/');
                         return res.redirect('/' + relPath + '/');
                     } else {
-                        // Игры физически нет
                         return res.status(404).send(`
                             <div style="background:#080608; color:#e8dfc8; font-family:'Cinzel', sans-serif; text-align:center; padding:50px; height:100vh; box-sizing:border-box;">
                                 <h1 style="color:#c9a84c;">Магия рассеялась...</h1>
@@ -324,7 +348,7 @@ app.get('*', async (req, res, next) => {
         if (finalStat && finalStat.isFile()) {
             if (filePath.endsWith('index.html')) {
                 let html = await fsp.readFile(filePath, 'utf8');
-                // 🔥 ВЫРЕЗАЕМ ЗЛУЮ ЗАЩИТУ CSP, чтобы геймпад работал
+                // ВЫРЕЗАЕМ ЗЛУЮ ЗАЩИТУ CSP
                 html = html.replace(/<meta[^>]+http-equiv=['"]?Content-Security-Policy['"]?[^>]*>/gi, '');
                 html = html.replace('<body', '<body><script src="/rpg-fixes.js"></script><x ');
                 
@@ -340,4 +364,4 @@ app.get('*', async (req, res, next) => {
     next();
 });
 
-app.listen(3000, () => console.log('🚀 RPG API: Auto-Locator Mode Ready!'));
+app.listen(3000, () => console.log('🚀 RPG API: Library with Sorting & Ratings Ready!'));

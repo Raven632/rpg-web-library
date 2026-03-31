@@ -20,7 +20,6 @@
         body { background:var(--bg-deep); color:var(--text); font-family:'Crimson Text',Georgia,serif; min-height:100vh; overflow-x:hidden; }
         body::before { content:''; position:fixed; inset:0; background:radial-gradient(ellipse 80% 50% at 50% -10%, rgba(140,90,20,0.12) 0%, transparent 60%); pointer-events:none; z-index:0; }
 
-        /* Липкая стеклянная шапка */
         header { 
             position:sticky; top:0; z-index:100; text-align:center; padding:30px 20px 20px; 
             background: linear-gradient(to bottom, rgba(8,6,8,0.95) 40%, rgba(8,6,8,0.7) 100%);
@@ -33,77 +32,37 @@
         h1 { font-family:'Cinzel',serif; font-size:clamp(1.8rem,5vw,3rem); font-weight:900; letter-spacing:0.15em; text-transform:uppercase; color:var(--gold-light); text-shadow:0 0 30px rgba(201,168,76,0.4); margin-bottom: 5px;}
         .subtitle { font-style:italic; font-size:1rem; color:var(--text-dim); letter-spacing:0.1em; }
         
-        /* Панель управления (Загрузка + Поиск) */
-        .controls-zone {
-            position:relative; z-index:1;
-            max-width:800px; margin: 30px auto 40px;
-            padding:0 20px;
-            display: flex; gap: 15px; flex-wrap: wrap;
-        }
-
-        /* Строка поиска */
-        .search-box {
-            flex: 2;
-            min-width: 250px;
-            position: relative;
-        }
-        .search-box input {
-            width: 100%; padding: 16px 20px 16px 45px;
-            background: rgba(19, 17, 26, 0.6);
-            border: 1px solid rgba(201,168,76,0.3);
-            border-radius: 6px;
-            font-family: 'Cinzel', serif; font-size: 0.9rem; letter-spacing: 0.05em;
-            color: var(--text); outline: none; transition: all 0.3s;
-        }
+        .controls-zone { position:relative; z-index:1; max-width:1000px; margin: 30px auto 40px; padding:0 20px; display: flex; gap: 15px; flex-wrap: wrap; }
+        
+        .search-box { flex: 2; min-width: 250px; position: relative; }
+        .search-box input { width: 100%; padding: 16px 20px 16px 45px; background: rgba(19, 17, 26, 0.6); border: 1px solid rgba(201,168,76,0.3); border-radius: 6px; font-family: 'Cinzel', serif; font-size: 0.9rem; letter-spacing: 0.05em; color: var(--text); outline: none; transition: all 0.3s; }
         .search-box input:focus { border-color: var(--gold); background: rgba(201,168,76,0.05); box-shadow: 0 0 15px rgba(201,168,76,0.15); }
         .search-box input::placeholder { color: var(--text-dim); }
-        .search-icon {
-            position: absolute; left: 15px; top: 50%; transform: translateY(-50%);
-            width: 18px; height: 18px; fill: var(--gold-dim); pointer-events: none;
-        }
+        .search-icon { position: absolute; left: 15px; top: 50%; transform: translateY(-50%); width: 18px; height: 18px; fill: var(--gold-dim); pointer-events: none; }
 
-        .upload-btn {
-            flex: 1; min-width: 200px; padding:16px;
-            background:rgba(201,168,76,0.08);
-            border:1px dashed rgba(201,168,76,0.4);
-            border-radius:6px;
-            cursor:pointer;
-            display:flex; align-items:center; justify-content:center; gap:10px;
-            font-family:'Cinzel',serif; font-size:0.8rem; letter-spacing:0.1em;
-            color:var(--gold-dim); text-transform:uppercase;
-            transition:all 0.3s ease;
-        }
+        /* Меню сортировки */
+        .sort-box { flex: 1; min-width: 200px; padding: 16px 20px; background: rgba(19, 17, 26, 0.6); border: 1px solid rgba(201,168,76,0.3); border-radius: 6px; font-family: 'Cinzel', serif; font-size: 0.85rem; letter-spacing: 0.05em; color: var(--gold-light); outline: none; cursor: pointer; transition: all 0.3s; appearance: none; -webkit-appearance: none; background-image: url('data:image/svg+xml;utf8,<svg fill="%23c9a84c" height="24" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg"><path d="M7 10l5 5 5-5z"/></svg>'); background-repeat: no-repeat; background-position: right 10px center; }
+        .sort-box:focus, .sort-box:hover { border-color: var(--gold); box-shadow: 0 0 15px rgba(201,168,76,0.15); }
+        .sort-box option { background: var(--bg-deep); color: var(--text); }
+
+        .upload-btn { flex: 1; min-width: 200px; padding:16px; background:rgba(201,168,76,0.08); border:1px dashed rgba(201,168,76,0.4); border-radius:6px; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:10px; font-family:'Cinzel',serif; font-size:0.8rem; letter-spacing:0.1em; color:var(--gold-dim); text-transform:uppercase; transition:all 0.3s ease; }
         .upload-btn:hover { background:rgba(201,168,76,0.15); border-color:rgba(201,168,76,0.7); color:var(--gold); box-shadow: 0 0 15px rgba(201,168,76,0.1); }
         .upload-btn.drag-over { background:rgba(201,168,76,0.2); border-color:var(--gold); color:var(--gold-light); }
         .upload-btn svg { width:18px; height:18px; fill:currentColor; flex-shrink:0; }
         #file-input { display:none; }
 
-        /* Progress */
-        .progress-wrap {
-            display:none; width: 100%; margin-top:15px;
-            background:rgba(0,0,0,0.6); border:1px solid rgba(201,168,76,0.3); border-radius:6px; overflow:hidden;
-        }
+        .progress-wrap { display:none; width: 100%; margin-top:15px; background:rgba(0,0,0,0.6); border:1px solid rgba(201,168,76,0.3); border-radius:6px; overflow:hidden; }
         .progress-bar { height:6px; background:linear-gradient(90deg, var(--gold-dim), var(--gold), var(--gold-light)); background-size: 200% 200%; animation: shimmer 2s infinite linear; width:0%; transition:width 0.3s ease; }
         @keyframes shimmer { 0% { background-position: 200% center; } 100% { background-position: -200% center; } }
         .progress-text { padding:12px; font-family:'Cinzel',serif; font-size:0.75rem; letter-spacing:0.1em; color:var(--gold-light); text-align:center; }
 
-        /* Toast */
-        .toast {
-            position:fixed; bottom:30px; left:50%; transform:translateX(-50%) translateY(100px);
-            z-index:9999; padding:14px 24px; background:rgba(20,18,26,0.95);
-            border:1px solid rgba(201,168,76,0.3); border-radius:6px;
-            font-family:'Cinzel',serif; font-size:0.8rem; letter-spacing:0.1em; color:var(--text);
-            transition:transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275), opacity 0.4s ease;
-            opacity:0; max-width:90vw; text-align:center; box-shadow: 0 10px 30px rgba(0,0,0,0.8);
-        }
+        .toast { position:fixed; bottom:30px; left:50%; transform:translateX(-50%) translateY(100px); z-index:9999; padding:14px 24px; background:rgba(20,18,26,0.95); border:1px solid rgba(201,168,76,0.3); border-radius:6px; font-family:'Cinzel',serif; font-size:0.8rem; letter-spacing:0.1em; color:var(--text); transition:transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275), opacity 0.4s ease; opacity:0; max-width:90vw; text-align:center; box-shadow: 0 10px 30px rgba(0,0,0,0.8); }
         .toast.show { transform:translateX(-50%) translateY(0); opacity:1; }
         .toast.success { border-color:rgba(80,200,80,0.6); color:#a0f0a0; box-shadow: 0 0 20px rgba(80,200,80,0.1); }
         .toast.error   { border-color:rgba(220,60,60,0.6); color:#f09090; box-shadow: 0 0 20px rgba(220,60,60,0.1); }
 
-        /* Library grid */
         .library { position:relative; z-index:1; display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:28px; max-width:1400px; margin:0 auto; padding:0 20px 80px; }
 
-        /* Game Card Enhancements */
         .game-card { position:relative; background:var(--bg-card); border:1px solid rgba(201,168,76,0.15); border-radius: 4px; cursor:pointer; text-decoration:none; color:inherit; display:block; transition:all 0.4s ease; overflow:hidden; animation:fadeInUp 0.6s ease both; }
         @keyframes fadeInUp { from{opacity:0;transform:translateY(30px)} to{opacity:1;transform:translateY(0)} }
         .game-card::before { content:''; position:absolute; inset:0; background:radial-gradient(circle at center, rgba(201,168,76,0.15) 0%, transparent 70%); opacity:0; transition:opacity 0.4s; z-index:1; pointer-events:none; }
@@ -119,22 +78,28 @@
         .card-cover img { width:100%; height:100%; object-fit:cover; display:block; transition:transform 0.6s cubic-bezier(0.25, 0.46, 0.45, 0.94), filter 0.4s; filter:brightness(0.7) saturate(0.8); }
         .game-card:hover .card-cover img { transform:scale(1.08); filter:brightness(1.05) saturate(1.2); }
         
+        /* Звёзды (Оценки) */
+        .card-rating { position:absolute; top:10px; left:10px; z-index:10; display:flex; gap:2px; background:rgba(0,0,0,0.6); padding:4px 8px; border-radius:12px; border:1px solid rgba(201,168,76,0.2); backdrop-filter:blur(4px); opacity: 0; transition: opacity 0.3s; }
+        .game-card:hover .card-rating, .card-rating.has-rating { opacity: 1; }
+        .card-rating .star { color: rgba(255,255,255,0.2); font-size: 16px; cursor:pointer; transition: 0.2s; line-height: 1;}
+        .card-rating .star:hover { transform: scale(1.3); }
+        .card-rating .star.active { color: var(--gold); text-shadow: 0 0 8px var(--gold); }
+
         .cover-placeholder { width:100%; height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; background:linear-gradient(135deg,#0f0d15 0%,#1a1525 50%,#0f0d15 100%); gap:8px; }
         .cover-placeholder .rune { font-family:'Cinzel',serif; font-size:2.5rem; color:var(--gold-dim); opacity:0.5; transition:all 0.4s; }
         .cover-placeholder .folder-name { font-family:'Cinzel',serif; font-size:0.9rem; font-weight:700; color:var(--gold-dim); letter-spacing:0.1em; text-transform:uppercase; transition:color 0.4s; text-align:center; padding:0 12px; }
         .game-card:hover .cover-placeholder .rune { opacity:1; color:var(--gold); transform: scale(1.1);}
         .game-card:hover .cover-placeholder .folder-name { color:var(--gold-light); }
-        .card-cover-overlay { position:absolute; inset:0; background:linear-gradient(to top, rgba(19,17,26,1) 0%, transparent 60%); z-index:1; }
+        .card-cover-overlay { position:absolute; inset:0; background:linear-gradient(to top, rgba(19,17,26,1) 0%, transparent 60%); z-index:1; pointer-events: none;}
 
-        /* Delete button */
         .card-delete { position:absolute; top:12px; right:12px; z-index:10; width:32px; height:32px; background:rgba(20,10,10,0.8); border:1px solid rgba(220,60,60,0.5); border-radius:50%; display:flex; align-items:center; justify-content:center; opacity:0; transition:all 0.3s; cursor:pointer; backdrop-filter: blur(4px);}
         .game-card:hover .card-delete { opacity:1; transform: rotate(90deg); }
         .card-delete:hover { background:rgba(220,50,50,0.9); transform: rotate(90deg) scale(1.1) !important; box-shadow: 0 0 10px rgba(220,50,50,0.5);}
         .card-delete svg { width:16px; height:16px; fill:white; }
 
         .card-info { padding:10px 20px 24px; position:relative; z-index:1; }
-        .card-number { font-family:'Cinzel',serif; font-size:0.65rem; color:var(--gold-dim); letter-spacing:0.2em; text-transform:uppercase; margin-bottom:8px; display: flex; align-items: center; gap: 6px;}
-        .card-number::before { content: ''; width: 6px; height: 6px; background: var(--gold-dim); border-radius: 50%; display: inline-block;}
+        .card-number { font-family:'Cinzel',serif; font-size:0.65rem; color:var(--gold-dim); letter-spacing:0.2em; text-transform:uppercase; margin-bottom:8px; display: flex; align-items: center; justify-content: space-between; gap: 6px;}
+        .card-number::before { content: ''; width: 6px; height: 6px; background: var(--gold-dim); border-radius: 50%; display: inline-block; margin-right: auto;}
         .game-card:hover .card-number { color: var(--gold); }
         .game-card:hover .card-number::before { background: var(--gold-light); box-shadow: 0 0 8px var(--gold-light); }
         
@@ -175,6 +140,13 @@
         <svg class="search-icon" viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
         <input type="text" id="search-input" placeholder="Поиск по названию игры...">
     </div>
+
+    <select id="sort-select" class="sort-box">
+        <option value="newest">Новые поступления</option>
+        <option value="recent">Недавно запущенные</option>
+        <option value="rating">По оценке (Сначала лучшие)</option>
+        <option value="name">По алфавиту</option>
+    </select>
     
     <div class="upload-btn" id="upload-btn">
         <svg viewBox="0 0 24 24"><path d="M9 16h6v-6h4l-7-7-7 7h4zm-4 2h14v2H5z"/></svg>
@@ -202,9 +174,9 @@
 <script>
 const ROMAN = ['Ⅰ','Ⅱ','Ⅲ','Ⅳ','Ⅴ','Ⅵ','Ⅶ','Ⅷ','Ⅸ','Ⅹ','Ⅺ','Ⅻ'];
 const API = ''; 
-let allGames = []; // Храним все игры для поиска
+let allGames = [];
+let currentSort = 'newest'; // Сортировка по умолчанию
 
-// ── Toast ──────────────────────────────────
 function showToast(msg, type) {
     var t = document.getElementById('toast');
     t.textContent = msg;
@@ -213,7 +185,7 @@ function showToast(msg, type) {
     setTimeout(function() { t.classList.remove('show'); }, 4000);
 }
 
-// ── Загрузка игр ───────────────────────────
+// Загрузка
 async function loadGames() {
     try {
         var res = await fetch(API + '/api/games');
@@ -221,38 +193,58 @@ async function loadGames() {
         allGames = await res.json();
         renderGames(allGames);
     } catch(e) {
-        document.getElementById('status').innerHTML =
-            '<div style="color:#e08080;font-family:Cinzel,serif;font-size:0.9rem;letter-spacing:0.1em;">⚠ Связь с сервером потеряна</div>';
+        document.getElementById('status').innerHTML = '<div style="color:#e08080;font-family:Cinzel,serif;font-size:0.9rem;letter-spacing:0.1em;">⚠ Связь с сервером потеряна</div>';
     }
 }
 
-// ── Поиск ──────────────────────────────────
+// Обработчики поиска и сортировки
 document.getElementById('search-input').addEventListener('input', function(e) {
-    var query = e.target.value.toLowerCase();
-    var filtered = allGames.filter(function(game) {
-        return game.title.toLowerCase().includes(query) || game.id.toLowerCase().includes(query);
-    });
-    renderGames(filtered);
+    renderGames(allGames);
 });
 
+document.getElementById('sort-select').addEventListener('change', function(e) {
+    currentSort = e.target.value;
+    renderGames(allGames);
+});
+
+// Рендеринг и Сортировка
 function renderGames(games) {
     document.getElementById('status').style.display = 'none';
     var lib = document.getElementById('library');
     lib.innerHTML = '';
+
+    // 1. Фильтрация поиска
+    var query = document.getElementById('search-input').value.toLowerCase();
+    var filtered = games.filter(function(g) {
+        return g.title.toLowerCase().includes(query) || g.id.toLowerCase().includes(query);
+    });
+
+    // 2. Сортировка
+    if (currentSort === 'newest') filtered.sort((a,b) => b.addedAt - a.addedAt);
+    if (currentSort === 'recent') filtered.sort((a,b) => b.lastPlayed - a.lastPlayed);
+    if (currentSort === 'rating') filtered.sort((a,b) => b.rating - a.rating);
+    if (currentSort === 'name')   filtered.sort((a,b) => a.title.localeCompare(b.title));
     
-    if (!games.length) {
+    if (!filtered.length) {
         lib.innerHTML = '<div class="empty-state">По вашему запросу ничего не найдено...</div>';
         if(allGames.length === 0) lib.innerHTML = '<div class="empty-state">Библиотека пуста. Время добавить первую игру!</div>';
         document.getElementById('library-info').textContent = '';
         return;
     }
 
-    games.forEach(function(game, i) {
+    filtered.forEach(function(game, i) {
         var card = document.createElement('a');
         card.className = 'game-card';
         card.href = game.url;
-        card.style.animationDelay = (i * 0.05) + 's'; // Более быстрая лесенка
+        card.style.animationDelay = (i * 0.05) + 's';
         var roman = ROMAN[i % ROMAN.length] || (i + 1).toString();
+        
+        // Генерация Звёзд
+        let starsHtml = `<div class="card-rating ${game.rating > 0 ? 'has-rating' : ''}">`;
+        for (let s = 1; s <= 5; s++) {
+            starsHtml += `<span class="star ${s <= game.rating ? 'active' : ''}" data-val="${s}">★</span>`;
+        }
+        starsHtml += `</div>`;
         
         card.innerHTML =
             '<div class="card-corner-tl"></div>' +
@@ -260,6 +252,7 @@ function renderGames(games) {
                 '<svg viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>' +
             '</div>' +
             '<div class="card-cover">' +
+                starsHtml +
                 (game.cover
                     ? '<img src="' + game.cover + '" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\';" alt="">' +
                       '<div class="cover-placeholder" style="display:none"><span class="rune">' + roman + '</span><span class="folder-name">' + game.id + '</span></div>'
@@ -268,36 +261,67 @@ function renderGames(games) {
                 '<div class="card-cover-overlay"></div>' +
             '</div>' +
             '<div class="card-info">' +
-                '<div class="card-number">Том ' + String(game.number).padStart(2,'0') + '</div>' +
+                '<div class="card-number"><span>Том ' + String(game.number).padStart(2,'0') + '</span></div>' +
                 '<div class="card-title">' + game.title + '</div>' +
                 '<div class="card-launch">Играть <span class="launch-arrow">→</span></div>' +
             '</div>' +
             '<div class="card-corner-br"></div>';
 
-        // Удаление игры
+        // Клик по звезде (Сохранение оценки)
+        var stars = card.querySelectorAll('.star');
+        stars.forEach(function(star) {
+            star.addEventListener('click', function(e) {
+                e.preventDefault(); e.stopPropagation();
+                var val = parseInt(this.getAttribute('data-val'));
+                game.rating = val;
+                
+                // Визуальное обновление
+                card.querySelector('.card-rating').classList.add('has-rating');
+                stars.forEach(s => {
+                    if (parseInt(s.getAttribute('data-val')) <= val) s.classList.add('active');
+                    else s.classList.remove('active');
+                });
+                
+                // Отправка на сервер
+                fetch(API + '/api/games/' + encodeURIComponent(game.id) + '/meta', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ rating: val })
+                });
+            });
+        });
+
+        // Клик по кнопке удаления
         card.querySelector('.card-delete').addEventListener('click', async function(e) {
             e.preventDefault(); e.stopPropagation();
             if (!confirm('Сжечь том "' + game.title + '"?\nЭто заклинание необратимо!')) return;
             try {
                 var r = await fetch(API + '/api/games/' + encodeURIComponent(game.id), { method: 'DELETE' });
                 var d = await r.json();
-                if (d.success) { 
-                    showToast('Том обратился в пепел', 'success'); 
-                    document.getElementById('search-input').value = ''; // Сброс поиска
-                    loadGames(); 
-                }
+                if (d.success) { showToast('Том обратился в пепел', 'success'); loadGames(); }
                 else showToast('Ошибка: ' + d.error, 'error');
             } catch(err) { showToast('Магия дала сбой', 'error'); }
         });
 
+        // Клик по карточке (Сохранение времени запуска)
+        card.addEventListener('click', function(e) {
+            if (e.target.closest('.card-delete') || e.target.closest('.card-rating')) return;
+            game.lastPlayed = Date.now();
+            fetch(API + '/api/games/' + encodeURIComponent(game.id) + '/meta', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ lastPlayed: game.lastPlayed }),
+                keepalive: true // Завершит запрос даже если страница закрылась/перешла на другую
+            });
+        });
+
         lib.appendChild(card);
     });
-    var n = games.length;
-    document.getElementById('library-info').textContent =
-        n + ' ' + (n===1?'свиток':n<5?'свитка':'свитков') + ' в библиотеке';
+    
+    document.getElementById('library-info').textContent = filtered.length + ' свитков найдено';
 }
 
-// ── Загрузка архивов ───────────────────────────
+// ── Загрузка архивов (БЕЗ ИЗМЕНЕНИЙ) ───────────────────────────
 var uploadBtn = document.getElementById('upload-btn');
 var fileInput = document.getElementById('file-input');
 var progressWrap = document.getElementById('progress-wrap');
@@ -305,43 +329,22 @@ var progressBar = document.getElementById('progress-bar');
 var progressText = document.getElementById('progress-text');
 
 uploadBtn.addEventListener('click', function() { fileInput.click(); });
-
-// Drag & Drop
 uploadBtn.addEventListener('dragover', function(e) { e.preventDefault(); uploadBtn.classList.add('drag-over'); });
 uploadBtn.addEventListener('dragleave', function() { uploadBtn.classList.remove('drag-over'); });
-uploadBtn.addEventListener('drop', function(e) {
-    e.preventDefault(); uploadBtn.classList.remove('drag-over');
-    var file = e.dataTransfer.files[0];
-    if (file) uploadFile(file);
-});
-
-fileInput.addEventListener('change', function() {
-    if (fileInput.files[0]) uploadFile(fileInput.files[0]);
-    fileInput.value = '';
-});
+uploadBtn.addEventListener('drop', function(e) { e.preventDefault(); uploadBtn.classList.remove('drag-over'); var file = e.dataTransfer.files[0]; if (file) uploadFile(file); });
+fileInput.addEventListener('change', function() { if (fileInput.files[0]) uploadFile(fileInput.files[0]); fileInput.value = ''; });
 
 function uploadFile(file) {
-    if (!file.name.toLowerCase().match(/\.(zip|7z|rar)$/)) {
-        showToast('Сервер принимает только архивы ZIP, 7z или RAR!', 'error'); return;
-    }
-
-    var formData = new FormData();
-    formData.append('game', file);
-
+    if (!file.name.toLowerCase().match(/\.(zip|7z|rar)$/)) { showToast('Сервер принимает только архивы ZIP, 7z или RAR!', 'error'); return; }
+    var formData = new FormData(); formData.append('game', file);
     var xhr = new XMLHttpRequest();
-    progressWrap.style.display = 'block';
-    progressBar.style.width = '0%';
-    progressText.textContent = 'Передача ' + file.name + '...';
-    uploadBtn.style.pointerEvents = 'none';
-    uploadBtn.style.opacity = '0.5';
+    progressWrap.style.display = 'block'; progressBar.style.width = '0%'; progressText.textContent = 'Передача ' + file.name + '...';
+    uploadBtn.style.pointerEvents = 'none'; uploadBtn.style.opacity = '0.5';
 
     xhr.upload.addEventListener('progress', function(e) {
         if (e.lengthComputable) {
-            var pct = Math.round(e.loaded / e.total * 90);
-            progressBar.style.width = pct + '%';
-            var mb = (e.loaded / 1024 / 1024).toFixed(1);
-            var total = (e.total / 1024 / 1024).toFixed(1);
-            progressText.textContent = 'Передача маны: ' + mb + ' / ' + total + ' MB';
+            progressBar.style.width = Math.round(e.loaded / e.total * 90) + '%';
+            progressText.textContent = 'Передача маны: ' + (e.loaded / 1024 / 1024).toFixed(1) + ' / ' + (e.total / 1024 / 1024).toFixed(1) + ' MB';
         }
     });
 
@@ -349,35 +352,14 @@ function uploadFile(file) {
         progressBar.style.width = '100%';
         try {
             var data = JSON.parse(xhr.responseText);
-            if (data.success) {
-                progressText.textContent = '✓ ' + data.message;
-                showToast(data.message, 'success');
-                setTimeout(function() {
-                    progressWrap.style.display = 'none';
-                    document.getElementById('search-input').value = '';
-                    loadGames();
-                }, 2000);
-            } else {
-                progressText.textContent = '✗ ' + data.error;
-                showToast(data.error, 'error');
-            }
-        } catch(e) {
-            progressText.textContent = '✗ Сервер не отвечает';
-            showToast('Ошибка сервера', 'error');
-        }
-        uploadBtn.style.pointerEvents = '';
-        uploadBtn.style.opacity = '';
+            if (data.success) { progressText.textContent = '✓ ' + data.message; showToast(data.message, 'success'); setTimeout(function() { progressWrap.style.display = 'none'; loadGames(); }, 2000); } 
+            else { progressText.textContent = '✗ ' + data.error; showToast(data.error, 'error'); }
+        } catch(e) { progressText.textContent = '✗ Сервер не отвечает'; showToast('Ошибка сервера', 'error'); }
+        uploadBtn.style.pointerEvents = ''; uploadBtn.style.opacity = '';
     });
 
-    xhr.addEventListener('error', function() {
-        progressText.textContent = '✗ Ритуал прерван';
-        showToast('Связь разорвана', 'error');
-        uploadBtn.style.pointerEvents = '';
-        uploadBtn.style.opacity = '';
-    });
-
-    xhr.open('POST', API + '/api/upload');
-    xhr.send(formData);
+    xhr.addEventListener('error', function() { progressText.textContent = '✗ Ритуал прерван'; showToast('Связь разорвана', 'error'); uploadBtn.style.pointerEvents = ''; uploadBtn.style.opacity = ''; });
+    xhr.open('POST', API + '/api/upload'); xhr.send(formData);
 }
 
 loadGames();
@@ -385,9 +367,7 @@ loadGames();
 
 <script>
     if ('serviceWorker' in navigator) {
-        window.addEventListener('load', function() {
-            navigator.serviceWorker.register('/sw.js');
-        });
+        window.addEventListener('load', function() { navigator.serviceWorker.register('/sw.js'); });
     }
 </script>
 
