@@ -3,260 +3,208 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Private Gallery</title>
+    <title>RPG Library</title>
     <link rel="manifest" href="/manifest.json">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="apple-mobile-web-app-title" content="Private Gallery">
+    <meta name="apple-mobile-web-app-title" content="RPG Library">
     <link rel="apple-touch-icon" href="/icon-192.png">
-    <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;800&family=Playfair+Display:ital,wght@0,600;0,800;1,600&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700;900&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
     <style>
         :root {
-            /* Неоново-розовая и фиолетовая палитра */
-            --pink-neon: #ff2a85;
-            --pink-glow: #ff7eb3;
-            --pink-dark: #8b184b;
-            --bg-deep: #0d060f; 
-            --bg-mid: #170b19;
-            --bg-card: #201024;
-            --text-main: #fce7f3;
-            --text-dim: #b89db8;
-            --font-head: 'Playfair Display', serif;
-            --font-ui: 'Nunito', sans-serif;
+            --gold: #c9a84c; --gold-light: #f0d080; --gold-dim: #7a6030;
+            --bg-deep: #080608; --bg-mid: #100e12; --bg-card: #13111a;
+            --text: #e8dfc8; --text-dim: #7a7060;
         }
-        
         * { margin:0; padding:0; box-sizing:border-box; }
-        body { 
-            background-color: var(--bg-deep); 
-            background-image: radial-gradient(circle at 50% 0%, rgba(139, 24, 75, 0.15) 0%, transparent 70%);
-            color: var(--text-main); 
-            font-family: var(--font-ui); 
-            min-height: 100vh; 
-            overflow-x: hidden; 
-        }
+        body { background:var(--bg-deep); color:var(--text); font-family:'Crimson Text',Georgia,serif; min-height:100vh; overflow-x:hidden; }
+        body::before { content:''; position:fixed; inset:0; background:radial-gradient(ellipse 80% 50% at 50% -10%, rgba(140,90,20,0.12) 0%, transparent 60%); pointer-events:none; z-index:0; }
 
-        /* Гламурная шапка */
+        /* Липкая стеклянная шапка */
         header { 
-            position:sticky; top:0; z-index:100; text-align:center; padding:35px 20px 25px; 
-            background: rgba(13, 6, 15, 0.85);
-            backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px);
-            border-bottom: 1px solid rgba(255, 42, 133, 0.15);
-            box-shadow: 0 4px 30px rgba(0,0,0,0.5);
+            position:sticky; top:0; z-index:100; text-align:center; padding:30px 20px 20px; 
+            background: linear-gradient(to bottom, rgba(8,6,8,0.95) 40%, rgba(8,6,8,0.7) 100%);
+            backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+            border-bottom: 1px solid rgba(201,168,76,0.1);
         }
-        h1 { 
-            font-family: var(--font-head); font-size: clamp(2rem, 6vw, 3.5rem); 
-            font-weight: 800; font-style: italic;
-            color: #fff; text-shadow: 0 0 20px rgba(255, 42, 133, 0.6); 
-            margin-bottom: 5px; letter-spacing: 2px;
-        }
-        .subtitle { 
-            font-size: 0.9rem; color: var(--text-dim); letter-spacing: 0.2em; 
-            text-transform: uppercase; font-weight: 600;
-        }
+        .header-ornament { display:flex; align-items:center; justify-content:center; gap:20px; margin-bottom:10px; }
+        .ornament-line { flex:1; max-width:200px; height:1px; background:linear-gradient(90deg,transparent,var(--gold-dim),var(--gold),var(--gold-dim),transparent); }
+        .ornament-diamond { width:8px; height:8px; background:var(--gold); transform:rotate(45deg); box-shadow:0 0 12px rgba(201,168,76,0.6); }
+        h1 { font-family:'Cinzel',serif; font-size:clamp(1.8rem,5vw,3rem); font-weight:900; letter-spacing:0.15em; text-transform:uppercase; color:var(--gold-light); text-shadow:0 0 30px rgba(201,168,76,0.4); margin-bottom: 5px;}
+        .subtitle { font-style:italic; font-size:1rem; color:var(--text-dim); letter-spacing:0.1em; }
         
-        /* Панель управления */
+        /* Панель управления (Загрузка + Поиск) */
         .controls-zone {
             position:relative; z-index:1;
-            max-width:850px; margin: 40px auto; padding:0 20px;
-            display: flex; gap: 20px; flex-wrap: wrap;
+            max-width:800px; margin: 30px auto 40px;
+            padding:0 20px;
+            display: flex; gap: 15px; flex-wrap: wrap;
         }
 
         /* Строка поиска */
-        .search-box { flex: 2; min-width: 250px; position: relative; }
+        .search-box {
+            flex: 2;
+            min-width: 250px;
+            position: relative;
+        }
         .search-box input {
             width: 100%; padding: 16px 20px 16px 45px;
-            background: rgba(23, 11, 25, 0.7);
-            border: 1px solid rgba(255, 42, 133, 0.2);
-            border-radius: 12px;
-            font-family: var(--font-ui); font-size: 1rem; color: #fff; 
-            outline: none; transition: all 0.3s ease;
-            box-shadow: inset 0 2px 10px rgba(0,0,0,0.5);
+            background: rgba(19, 17, 26, 0.6);
+            border: 1px solid rgba(201,168,76,0.3);
+            border-radius: 6px;
+            font-family: 'Cinzel', serif; font-size: 0.9rem; letter-spacing: 0.05em;
+            color: var(--text); outline: none; transition: all 0.3s;
         }
-        .search-box input:focus { 
-            border-color: var(--pink-neon); background: rgba(32, 16, 36, 0.9); 
-            box-shadow: 0 0 20px rgba(255, 42, 133, 0.2), inset 0 2px 10px rgba(0,0,0,0.5); 
-        }
+        .search-box input:focus { border-color: var(--gold); background: rgba(201,168,76,0.05); box-shadow: 0 0 15px rgba(201,168,76,0.15); }
         .search-box input::placeholder { color: var(--text-dim); }
         .search-icon {
             position: absolute; left: 15px; top: 50%; transform: translateY(-50%);
-            width: 20px; height: 20px; fill: var(--pink-dark); pointer-events: none;
+            width: 18px; height: 18px; fill: var(--gold-dim); pointer-events: none;
         }
 
-        /* Кнопка загрузки */
         .upload-btn {
-            flex: 1; min-width: 220px; padding:16px;
-            background: linear-gradient(135deg, rgba(255, 42, 133, 0.1) 0%, rgba(139, 24, 75, 0.1) 100%);
-            border: 1px dashed rgba(255, 42, 133, 0.5);
-            border-radius: 12px; cursor: pointer;
-            display: flex; align-items: center; justify-content: center; gap: 12px;
-            font-weight: 800; letter-spacing: 0.05em; color: var(--pink-glow);
-            transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+            flex: 1; min-width: 200px; padding:16px;
+            background:rgba(201,168,76,0.08);
+            border:1px dashed rgba(201,168,76,0.4);
+            border-radius:6px;
+            cursor:pointer;
+            display:flex; align-items:center; justify-content:center; gap:10px;
+            font-family:'Cinzel',serif; font-size:0.8rem; letter-spacing:0.1em;
+            color:var(--gold-dim); text-transform:uppercase;
+            transition:all 0.3s ease;
         }
-        .upload-btn:hover { 
-            background: rgba(255, 42, 133, 0.15); border-color: var(--pink-neon); 
-            color: #fff; box-shadow: 0 0 25px rgba(255, 42, 133, 0.25); 
-            transform: translateY(-2px);
-        }
-        .upload-btn.drag-over { background: rgba(255, 42, 133, 0.25); border-color: #fff; color: #fff; }
-        .upload-btn svg { width:20px; height:20px; fill:currentColor; }
+        .upload-btn:hover { background:rgba(201,168,76,0.15); border-color:rgba(201,168,76,0.7); color:var(--gold); box-shadow: 0 0 15px rgba(201,168,76,0.1); }
+        .upload-btn.drag-over { background:rgba(201,168,76,0.2); border-color:var(--gold); color:var(--gold-light); }
+        .upload-btn svg { width:18px; height:18px; fill:currentColor; flex-shrink:0; }
         #file-input { display:none; }
 
-        /* Прогресс бар */
+        /* Progress */
         .progress-wrap {
-            display:none; width: 100%; margin-top:20px;
-            background: rgba(0,0,0,0.5); border-radius: 20px; overflow: hidden;
-            box-shadow: inset 0 2px 5px rgba(0,0,0,0.5);
+            display:none; width: 100%; margin-top:15px;
+            background:rgba(0,0,0,0.6); border:1px solid rgba(201,168,76,0.3); border-radius:6px; overflow:hidden;
         }
-        .progress-bar { 
-            height: 8px; background: linear-gradient(90deg, var(--pink-dark), var(--pink-neon), var(--pink-glow)); 
-            background-size: 200% 200%; animation: shimmer 2s infinite linear; 
-            width: 0%; transition: width 0.3s ease; border-radius: 20px;
-        }
+        .progress-bar { height:6px; background:linear-gradient(90deg, var(--gold-dim), var(--gold), var(--gold-light)); background-size: 200% 200%; animation: shimmer 2s infinite linear; width:0%; transition:width 0.3s ease; }
         @keyframes shimmer { 0% { background-position: 200% center; } 100% { background-position: -200% center; } }
-        .progress-text { padding:10px; font-size: 0.85rem; font-weight: 600; color: var(--pink-glow); text-align: center; }
+        .progress-text { padding:12px; font-family:'Cinzel',serif; font-size:0.75rem; letter-spacing:0.1em; color:var(--gold-light); text-align:center; }
 
-        /* Всплывающие уведомления */
+        /* Toast */
         .toast {
             position:fixed; bottom:30px; left:50%; transform:translateX(-50%) translateY(100px);
-            z-index:9999; padding:16px 28px; background: rgba(32, 16, 36, 0.95);
-            border: 1px solid rgba(255, 42, 133, 0.4); border-radius: 16px;
-            font-weight: 600; font-size: 0.95rem; color: #fff;
-            transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-            opacity:0; box-shadow: 0 10px 40px rgba(0,0,0,0.8), 0 0 20px rgba(255,42,133,0.2);
+            z-index:9999; padding:14px 24px; background:rgba(20,18,26,0.95);
+            border:1px solid rgba(201,168,76,0.3); border-radius:6px;
+            font-family:'Cinzel',serif; font-size:0.8rem; letter-spacing:0.1em; color:var(--text);
+            transition:transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275), opacity 0.4s ease;
+            opacity:0; max-width:90vw; text-align:center; box-shadow: 0 10px 30px rgba(0,0,0,0.8);
         }
         .toast.show { transform:translateX(-50%) translateY(0); opacity:1; }
-        .toast.success { border-color: #ff7eb3; color: #fff; }
-        .toast.error   { border-color: #ff3333; color: #ff9999; }
+        .toast.success { border-color:rgba(80,200,80,0.6); color:#a0f0a0; box-shadow: 0 0 20px rgba(80,200,80,0.1); }
+        .toast.error   { border-color:rgba(220,60,60,0.6); color:#f09090; box-shadow: 0 0 20px rgba(220,60,60,0.1); }
 
-        /* Сетка игр */
-        .library { 
-            position:relative; z-index:1; display:grid; 
-            grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); 
-            gap: 30px; max-width: 1500px; margin: 0 auto; padding: 0 20px 80px; 
-        }
+        /* Library grid */
+        .library { position:relative; z-index:1; display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:28px; max-width:1400px; margin:0 auto; padding:0 20px 80px; }
 
-        /* Карточка игры (Modern Eroge Style) */
-        .game-card { 
-            position:relative; background: var(--bg-card); 
-            border-radius: 16px; cursor: pointer; text-decoration: none; color: inherit; 
-            display: block; transition: all 0.4s cubic-bezier(0.25, 0.8, 0.25, 1); 
-            overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.05);
-            animation: fadeInUp 0.5s ease both;
-        }
-        @keyframes fadeInUp { from{opacity:0;transform:translateY(20px)} to{opacity:1;transform:translateY(0)} }
+        /* Game Card Enhancements */
+        .game-card { position:relative; background:var(--bg-card); border:1px solid rgba(201,168,76,0.15); border-radius: 4px; cursor:pointer; text-decoration:none; color:inherit; display:block; transition:all 0.4s ease; overflow:hidden; animation:fadeInUp 0.6s ease both; }
+        @keyframes fadeInUp { from{opacity:0;transform:translateY(30px)} to{opacity:1;transform:translateY(0)} }
+        .game-card::before { content:''; position:absolute; inset:0; background:radial-gradient(circle at center, rgba(201,168,76,0.15) 0%, transparent 70%); opacity:0; transition:opacity 0.4s; z-index:1; pointer-events:none; }
         
-        .game-card:hover { 
-            transform: translateY(-10px); 
-            border-color: rgba(255, 42, 133, 0.5); 
-            box-shadow: 0 20px 40px rgba(0,0,0,0.6), 0 0 25px rgba(255, 42, 133, 0.15); 
-        }
+        .game-card:hover { transform:translateY(-8px); border-color:rgba(201,168,76,0.6); box-shadow:0 15px 40px rgba(0,0,0,0.8), 0 0 20px rgba(201,168,76,0.2); }
+        .game-card:hover::before { opacity:1; }
         
-        /* Обложка */
-        .card-cover { width:100%; aspect-ratio:16/10; overflow:hidden; position:relative; background:#000; }
-        .card-cover img { 
-            width:100%; height:100%; object-fit:cover; display:block; 
-            transition: transform 0.7s ease, filter 0.5s ease; 
-            filter: brightness(0.8) contrast(1.1); 
-        }
-        .game-card:hover .card-cover img { transform: scale(1.05); filter: brightness(1.1) contrast(1.1); }
-        
-        .cover-placeholder { 
-            width:100%; height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; 
-            background: linear-gradient(135deg, #170b19 0%, #2a112a 50%, #170b19 100%); gap:12px; 
-        }
-        .cover-placeholder .rune { font-family: var(--font-head); font-size: 3rem; font-style: italic; color: var(--pink-dark); opacity: 0.6; transition: all 0.4s; }
-        .cover-placeholder .folder-name { font-size: 0.85rem; font-weight: 800; color: var(--pink-dark); letter-spacing: 0.15em; text-transform: uppercase; transition: color 0.4s; text-align: center; padding: 0 15px; }
-        .game-card:hover .cover-placeholder .rune { opacity: 1; color: var(--pink-glow); transform: scale(1.1); }
-        .game-card:hover .cover-placeholder .folder-name { color: var(--text-main); }
-        
-        /* Кнопка удаления (Крестик) */
-        .card-delete { 
-            position:absolute; top:15px; right:15px; z-index:10; width:36px; height:36px; 
-            background: rgba(0,0,0,0.6); border: 1px solid rgba(255,255,255,0.2); border-radius: 50%; 
-            display:flex; align-items:center; justify-content:center; 
-            opacity:0; transition:all 0.3s; cursor:pointer; backdrop-filter: blur(5px);
-        }
-        .game-card:hover .card-delete { opacity:1; }
-        .card-delete:hover { background: #ff2a85; border-color: #ff2a85; box-shadow: 0 0 15px #ff2a85; transform: scale(1.1) rotate(90deg); }
-        .card-delete svg { width:16px; height:16px; fill:#fff; transition: transform 0.3s; }
+        .card-corner-tl { position:absolute; top:0; left:0; width:20px; height:20px; border-top:2px solid var(--gold-dim); border-left:2px solid var(--gold-dim); transition:all 0.3s; z-index:2; border-top-left-radius: 4px;}
+        .card-corner-br { position:absolute; bottom:0; right:0; width:20px; height:20px; border-bottom:2px solid var(--gold-dim); border-right:2px solid var(--gold-dim); transition:all 0.3s; z-index:2; border-bottom-right-radius: 4px;}
+        .game-card:hover .card-corner-tl, .game-card:hover .card-corner-br { border-color:var(--gold); width:35px; height:35px; }
 
-        /* Информация в карточке */
-        .card-info { padding: 20px; position: relative; z-index: 1; background: linear-gradient(to bottom, transparent, rgba(0,0,0,0.3));}
+        .card-cover { width:100%; aspect-ratio:16/10; overflow:hidden; position:relative; background:#0f0d15; }
+        .card-cover img { width:100%; height:100%; object-fit:cover; display:block; transition:transform 0.6s cubic-bezier(0.25, 0.46, 0.45, 0.94), filter 0.4s; filter:brightness(0.7) saturate(0.8); }
+        .game-card:hover .card-cover img { transform:scale(1.08); filter:brightness(1.05) saturate(1.2); }
         
-        .card-number { 
-            font-size: 0.7rem; color: var(--pink-dark); font-weight: 800; letter-spacing: 0.15em; 
-            text-transform: uppercase; margin-bottom: 8px; transition: color 0.3s;
-        }
-        .game-card:hover .card-number { color: var(--pink-glow); }
-        
-        .card-title { 
-            font-family: var(--font-head); font-size: 1.25rem; font-weight: 600; 
-            color: #fff; line-height: 1.3; transition: color 0.3s; 
-            min-height: 2.6em; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; 
-        }
-        .game-card:hover .card-title { color: var(--pink-glow); }
-        
-        .card-launch { 
-            margin-top: 20px; display: inline-flex; align-items: center; justify-content: center;
-            width: 100%; padding: 10px; border-radius: 8px;
-            background: rgba(255, 42, 133, 0.1); font-size: 0.85rem; font-weight: 800; 
-            color: var(--pink-glow); text-transform: uppercase; letter-spacing: 0.1em;
-            transition: all 0.3s;
-        }
-        .game-card:hover .card-launch { 
-            background: var(--pink-neon); color: #fff; box-shadow: 0 5px 15px rgba(255, 42, 133, 0.4); 
-        }
+        .cover-placeholder { width:100%; height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; background:linear-gradient(135deg,#0f0d15 0%,#1a1525 50%,#0f0d15 100%); gap:8px; }
+        .cover-placeholder .rune { font-family:'Cinzel',serif; font-size:2.5rem; color:var(--gold-dim); opacity:0.5; transition:all 0.4s; }
+        .cover-placeholder .folder-name { font-family:'Cinzel',serif; font-size:0.9rem; font-weight:700; color:var(--gold-dim); letter-spacing:0.1em; text-transform:uppercase; transition:color 0.4s; text-align:center; padding:0 12px; }
+        .game-card:hover .cover-placeholder .rune { opacity:1; color:var(--gold); transform: scale(1.1);}
+        .game-card:hover .cover-placeholder .folder-name { color:var(--gold-light); }
+        .card-cover-overlay { position:absolute; inset:0; background:linear-gradient(to top, rgba(19,17,26,1) 0%, transparent 60%); z-index:1; }
 
-        /* Системные сообщения */
-        .loading { position:relative; z-index:1; text-align:center; padding:80px 20px; font-size:1rem; color:var(--text-dim); letter-spacing:0.1em; }
-        .loading-dots span { display:inline-block; animation:blink 1.4s infinite both; font-size:1.5rem; color:var(--pink-neon); }
+        /* Delete button */
+        .card-delete { position:absolute; top:12px; right:12px; z-index:10; width:32px; height:32px; background:rgba(20,10,10,0.8); border:1px solid rgba(220,60,60,0.5); border-radius:50%; display:flex; align-items:center; justify-content:center; opacity:0; transition:all 0.3s; cursor:pointer; backdrop-filter: blur(4px);}
+        .game-card:hover .card-delete { opacity:1; transform: rotate(90deg); }
+        .card-delete:hover { background:rgba(220,50,50,0.9); transform: rotate(90deg) scale(1.1) !important; box-shadow: 0 0 10px rgba(220,50,50,0.5);}
+        .card-delete svg { width:16px; height:16px; fill:white; }
+
+        .card-info { padding:10px 20px 24px; position:relative; z-index:1; }
+        .card-number { font-family:'Cinzel',serif; font-size:0.65rem; color:var(--gold-dim); letter-spacing:0.2em; text-transform:uppercase; margin-bottom:8px; display: flex; align-items: center; gap: 6px;}
+        .card-number::before { content: ''; width: 6px; height: 6px; background: var(--gold-dim); border-radius: 50%; display: inline-block;}
+        .game-card:hover .card-number { color: var(--gold); }
+        .game-card:hover .card-number::before { background: var(--gold-light); box-shadow: 0 0 8px var(--gold-light); }
+        
+        .card-title { font-family:'Cinzel',serif; font-size:1.1rem; font-weight:700; color:var(--text); letter-spacing:0.02em; line-height:1.3; transition:color 0.3s; min-height:2.6em; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+        .game-card:hover .card-title { color:var(--gold-light); }
+        
+        .card-launch { margin-top: 15px; display:inline-flex; align-items:center; gap:8px; font-size:0.75rem; color:var(--text-dim); font-family:'Cinzel',serif; letter-spacing:0.15em; text-transform:uppercase; transition:all 0.3s; padding: 6px 12px; border: 1px solid transparent; border-radius: 4px;}
+        .game-card:hover .card-launch { color:var(--bg-deep); background: var(--gold); font-weight: 700; box-shadow: 0 4px 15px rgba(201,168,76,0.3);}
+        .launch-arrow { display:inline-block; transition:transform 0.3s; }
+        .game-card:hover .launch-arrow { transform:translateX(4px); }
+
+        .loading { position:relative; z-index:1; text-align:center; padding:80px 20px; font-family:'Cinzel',serif; color:var(--text-dim); letter-spacing:0.2em; font-size:0.85rem; }
+        .loading-dots span { display:inline-block; animation:blink 1.4s infinite both; font-size:1.2rem; color:var(--gold-dim); }
         .loading-dots span:nth-child(2) { animation-delay:0.2s; }
         .loading-dots span:nth-child(3) { animation-delay:0.4s; }
         @keyframes blink { 0%,80%,100%{opacity:0} 40%{opacity:1} }
         
-        .empty-state { grid-column: 1 / -1; text-align: center; padding: 80px 20px; color: var(--text-dim); font-size: 1.1rem; }
+        .empty-state { grid-column: 1 / -1; text-align: center; padding: 60px 20px; color: var(--text-dim); font-family: 'Cinzel', serif; font-size: 1.1rem; letter-spacing: 0.1em; }
         
-        footer { position:relative; z-index:1; text-align:center; padding:30px; font-size:0.8rem; color:var(--text-dim); opacity: 0.5; }
+        .library-info { position:relative; z-index:1; text-align:center; font-family:'Cinzel',serif; font-size:0.75rem; color:var(--text-dim); letter-spacing:0.2em; padding-bottom:20px; }
+        footer { position:relative; z-index:1; text-align:center; padding:25px; border-top:1px solid rgba(201,168,76,0.1); background: rgba(0,0,0,0.3); font-size:0.75rem; color:var(--text-dim); letter-spacing:0.1em; }
     </style>
 </head>
 <body>
 
 <header>
-    <h1>Private Collection</h1>
-    <p class="subtitle">18+ Visual Novel & RPG Gallery</p>
+    <div class="header-ornament">
+        <div class="ornament-line"></div>
+        <div class="ornament-diamond"></div>
+        <div class="ornament-line"></div>
+    </div>
+    <h1>RPG Library</h1>
+    <p class="subtitle">Ваша личная коллекция приключений</p>
 </header>
 
 <div class="controls-zone">
     <div class="search-box">
         <svg class="search-icon" viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
-        <input type="text" id="search-input" placeholder="Поиск по названию или RJ коду...">
+        <input type="text" id="search-input" placeholder="Поиск по названию игры...">
     </div>
     
     <div class="upload-btn" id="upload-btn">
         <svg viewBox="0 0 24 24"><path d="M9 16h6v-6h4l-7-7-7 7h4zm-4 2h14v2H5z"/></svg>
-        Загрузить архив (ZIP/7Z)
+        Добавить игру
     </div>
     <input type="file" id="file-input" accept=".zip,.7z,.rar">
     
     <div class="progress-wrap" id="progress-wrap">
         <div class="progress-bar" id="progress-bar"></div>
-        <div class="progress-text" id="progress-text">Распаковка файлов...</div>
+        <div class="progress-text" id="progress-text">Распаковка магии...</div>
     </div>
 </div>
 
 <div id="status" class="loading">
-    <div>Подключение к серверу</div>
+    <div>Открытие архивов</div>
     <div class="loading-dots"><span>·</span><span>·</span><span>·</span></div>
 </div>
 
 <div class="library" id="library"></div>
+<div class="library-info" id="library-info"></div>
+<div class="toast" id="toast"></div>
 
-<footer>Midnight Server Engine</footer>
+<footer>RPG Library · Home Server</footer>
 
 <script>
+const ROMAN = ['Ⅰ','Ⅱ','Ⅲ','Ⅳ','Ⅴ','Ⅵ','Ⅶ','Ⅷ','Ⅸ','Ⅹ','Ⅺ','Ⅻ'];
 const API = ''; 
-let allGames = []; 
+let allGames = []; // Храним все игры для поиска
 
+// ── Toast ──────────────────────────────────
 function showToast(msg, type) {
     var t = document.getElementById('toast');
     t.textContent = msg;
@@ -265,6 +213,7 @@ function showToast(msg, type) {
     setTimeout(function() { t.classList.remove('show'); }, 4000);
 }
 
+// ── Загрузка игр ───────────────────────────
 async function loadGames() {
     try {
         var res = await fetch(API + '/api/games');
@@ -273,10 +222,11 @@ async function loadGames() {
         renderGames(allGames);
     } catch(e) {
         document.getElementById('status').innerHTML =
-            '<div style="color:#ff3333;font-weight:bold;">⚠ Сервер недоступен</div>';
+            '<div style="color:#e08080;font-family:Cinzel,serif;font-size:0.9rem;letter-spacing:0.1em;">⚠ Связь с сервером потеряна</div>';
     }
 }
 
+// ── Поиск ──────────────────────────────────
 document.getElementById('search-input').addEventListener('input', function(e) {
     var query = e.target.value.toLowerCase();
     var filtered = allGames.filter(function(game) {
@@ -291,7 +241,9 @@ function renderGames(games) {
     lib.innerHTML = '';
     
     if (!games.length) {
-        lib.innerHTML = '<div class="empty-state">В галерее пока ничего нет...</div>';
+        lib.innerHTML = '<div class="empty-state">По вашему запросу ничего не найдено...</div>';
+        if(allGames.length === 0) lib.innerHTML = '<div class="empty-state">Библиотека пуста. Время добавить первую игру!</div>';
+        document.getElementById('library-info').textContent = '';
         return;
     }
 
@@ -299,44 +251,53 @@ function renderGames(games) {
         var card = document.createElement('a');
         card.className = 'game-card';
         card.href = game.url;
-        card.style.animationDelay = (i * 0.05) + 's'; 
+        card.style.animationDelay = (i * 0.05) + 's'; // Более быстрая лесенка
+        var roman = ROMAN[i % ROMAN.length] || (i + 1).toString();
         
         card.innerHTML =
-            '<div class="card-delete" data-id="' + game.id + '" title="Удалить из галереи">' +
-                '<svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>' +
+            '<div class="card-corner-tl"></div>' +
+            '<div class="card-delete" data-id="' + game.id + '" title="Сжечь игру">' +
+                '<svg viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>' +
             '</div>' +
             '<div class="card-cover">' +
                 (game.cover
                     ? '<img src="' + game.cover + '" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\';" alt="">' +
-                      '<div class="cover-placeholder" style="display:none"><span class="rune">No.' + String(game.number).padStart(2,'0') + '</span><span class="folder-name">' + game.id + '</span></div>'
-                    : '<div class="cover-placeholder"><span class="rune">No.' + String(game.number).padStart(2,'0') + '</span><span class="folder-name">' + game.id + '</span></div>'
+                      '<div class="cover-placeholder" style="display:none"><span class="rune">' + roman + '</span><span class="folder-name">' + game.id + '</span></div>'
+                    : '<div class="cover-placeholder"><span class="rune">' + roman + '</span><span class="folder-name">' + game.id + '</span></div>'
                 ) +
+                '<div class="card-cover-overlay"></div>' +
             '</div>' +
             '<div class="card-info">' +
-                '<div class="card-number">Title ' + String(game.number).padStart(2,'0') + '</div>' +
+                '<div class="card-number">Том ' + String(game.number).padStart(2,'0') + '</div>' +
                 '<div class="card-title">' + game.title + '</div>' +
-                '<div class="card-launch">Запустить сцену</div>' +
-            '</div>';
+                '<div class="card-launch">Играть <span class="launch-arrow">→</span></div>' +
+            '</div>' +
+            '<div class="card-corner-br"></div>';
 
+        // Удаление игры
         card.querySelector('.card-delete').addEventListener('click', async function(e) {
             e.preventDefault(); e.stopPropagation();
-            if (!confirm('Удалить тайтл "' + game.title + '" навсегда?')) return;
+            if (!confirm('Сжечь том "' + game.title + '"?\nЭто заклинание необратимо!')) return;
             try {
                 var r = await fetch(API + '/api/games/' + encodeURIComponent(game.id), { method: 'DELETE' });
                 var d = await r.json();
                 if (d.success) { 
-                    showToast('Тайтл успешно удален', 'success'); 
-                    document.getElementById('search-input').value = ''; 
+                    showToast('Том обратился в пепел', 'success'); 
+                    document.getElementById('search-input').value = ''; // Сброс поиска
                     loadGames(); 
                 }
                 else showToast('Ошибка: ' + d.error, 'error');
-            } catch(err) { showToast('Сбой удаления', 'error'); }
+            } catch(err) { showToast('Магия дала сбой', 'error'); }
         });
 
         lib.appendChild(card);
     });
+    var n = games.length;
+    document.getElementById('library-info').textContent =
+        n + ' ' + (n===1?'свиток':n<5?'свитка':'свитков') + ' в библиотеке';
 }
 
+// ── Загрузка архивов ───────────────────────────
 var uploadBtn = document.getElementById('upload-btn');
 var fileInput = document.getElementById('file-input');
 var progressWrap = document.getElementById('progress-wrap');
@@ -345,6 +306,7 @@ var progressText = document.getElementById('progress-text');
 
 uploadBtn.addEventListener('click', function() { fileInput.click(); });
 
+// Drag & Drop
 uploadBtn.addEventListener('dragover', function(e) { e.preventDefault(); uploadBtn.classList.add('drag-over'); });
 uploadBtn.addEventListener('dragleave', function() { uploadBtn.classList.remove('drag-over'); });
 uploadBtn.addEventListener('drop', function(e) {
@@ -360,7 +322,7 @@ fileInput.addEventListener('change', function() {
 
 function uploadFile(file) {
     if (!file.name.toLowerCase().match(/\.(zip|7z|rar)$/)) {
-        showToast('Только архивы ZIP, 7z или RAR!', 'error'); return;
+        showToast('Сервер принимает только архивы ZIP, 7z или RAR!', 'error'); return;
     }
 
     var formData = new FormData();
@@ -369,7 +331,7 @@ function uploadFile(file) {
     var xhr = new XMLHttpRequest();
     progressWrap.style.display = 'block';
     progressBar.style.width = '0%';
-    progressText.textContent = 'Загрузка ' + file.name + '...';
+    progressText.textContent = 'Передача ' + file.name + '...';
     uploadBtn.style.pointerEvents = 'none';
     uploadBtn.style.opacity = '0.5';
 
@@ -379,7 +341,7 @@ function uploadFile(file) {
             progressBar.style.width = pct + '%';
             var mb = (e.loaded / 1024 / 1024).toFixed(1);
             var total = (e.total / 1024 / 1024).toFixed(1);
-            progressText.textContent = 'Обработка: ' + mb + ' / ' + total + ' MB';
+            progressText.textContent = 'Передача маны: ' + mb + ' / ' + total + ' MB';
         }
     });
 
@@ -388,19 +350,19 @@ function uploadFile(file) {
         try {
             var data = JSON.parse(xhr.responseText);
             if (data.success) {
-                progressText.textContent = 'Успешно распаковано!';
-                showToast('Добавлено в галерею', 'success');
+                progressText.textContent = '✓ ' + data.message;
+                showToast(data.message, 'success');
                 setTimeout(function() {
                     progressWrap.style.display = 'none';
                     document.getElementById('search-input').value = '';
                     loadGames();
                 }, 2000);
             } else {
-                progressText.textContent = 'Ошибка загрузки';
+                progressText.textContent = '✗ ' + data.error;
                 showToast(data.error, 'error');
             }
         } catch(e) {
-            progressText.textContent = 'Сервер не отвечает';
+            progressText.textContent = '✗ Сервер не отвечает';
             showToast('Ошибка сервера', 'error');
         }
         uploadBtn.style.pointerEvents = '';
@@ -408,8 +370,8 @@ function uploadFile(file) {
     });
 
     xhr.addEventListener('error', function() {
-        progressText.textContent = 'Связь прервана';
-        showToast('Обрыв соединения', 'error');
+        progressText.textContent = '✗ Ритуал прерван';
+        showToast('Связь разорвана', 'error');
         uploadBtn.style.pointerEvents = '';
         uploadBtn.style.opacity = '';
     });
