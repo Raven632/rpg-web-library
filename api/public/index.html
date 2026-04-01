@@ -124,6 +124,49 @@
         
         .library-info { position:relative; z-index:1; text-align:center; font-family:'Cinzel',serif; font-size:0.75rem; color:var(--text-dim); letter-spacing:0.2em; padding-bottom:20px; }
         footer { position:relative; z-index:1; text-align:center; padding:25px; border-top:1px solid rgba(201,168,76,0.1); background: rgba(0,0,0,0.3); font-size:0.75rem; color:var(--text-dim); letter-spacing:0.1em; }
+
+        /* --- Стили для всплывающего окна (Modal) --- */
+        .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.85); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); z-index: 2000; display: flex; align-items: center; justify-content: center; opacity: 0; pointer-events: none; transition: opacity 0.3s ease; padding: 20px; }
+        .modal-overlay.active { opacity: 1; pointer-events: all; }
+        
+        /* ⚡ Ограничиваем высоту до 90% экрана (max-height: 90vh) */
+        .modal-content { background: var(--bg-card); border: 1px solid rgba(201,168,76,0.3); border-radius: 8px; max-width: 850px; width: 100%; max-height: 90vh; display: flex; flex-direction: column; position: relative; transform: translateY(30px) scale(0.95); transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); box-shadow: 0 25px 60px rgba(0,0,0,0.9), 0 0 40px rgba(201,168,76,0.1); overflow: hidden; }
+        .modal-overlay.active .modal-content { transform: translateY(0) scale(1); }
+        
+        .modal-close { position: absolute; top: 15px; right: 20px; font-size: 2.5rem; color: var(--text-dim); cursor: pointer; line-height: 1; transition: color 0.2s; z-index: 100; font-family: sans-serif; text-shadow: 0 2px 10px rgba(0,0,0,0.8); }
+        .modal-close:hover { color: var(--gold-light); }
+        
+        /* ⚡ РАЗРЕШАЕМ СКРОЛЛ ВНУТРИ ОКНА (overflow-y: auto) */
+        .modal-header { display: flex; flex-wrap: wrap; gap: 30px; padding: 35px; background: linear-gradient(to bottom right, rgba(201,168,76,0.05), transparent); overflow-y: auto; flex: 1; }
+        
+        .modal-cover-wrapper { width: 320px; border-radius: 6px; overflow: hidden; border: 1px solid rgba(201,168,76,0.2); background: #0f0d15; position: relative; box-shadow: 0 10px 20px rgba(0,0,0,0.5); align-self: flex-start; flex-shrink: 0; }
+        #modal-cover { width: 100%; display: block; }
+        
+        .modal-info { flex: 1; min-width: 250px; display: flex; flex-direction: column; position: relative; }
+        #modal-number { font-family: 'Cinzel', serif; font-size: 0.8rem; color: var(--gold-dim); letter-spacing: 0.2em; margin-bottom: 12px; text-transform: uppercase; display: flex; align-items: center; gap: 8px;}
+        #modal-number::before { content: ''; width: 6px; height: 6px; background: var(--gold); border-radius: 50%; display: inline-block; box-shadow: 0 0 8px var(--gold);}
+        #modal-title { font-family: 'Cinzel', serif; font-size: 1.8rem; color: var(--text); line-height: 1.25; margin-bottom: 25px; text-shadow: 0 0 20px rgba(201,168,76,0.2); padding-right: 30px; }
+        
+        .modal-meta { display: flex; flex-direction: column; gap: 8px; margin-bottom: 25px; font-family: 'Cinzel', serif; font-size: 0.85rem; color: var(--text-dim); letter-spacing: 0.05em; }
+        .modal-meta b { color: var(--gold-dim); font-weight: normal; margin-right: 5px; }
+        
+        .modal-tags { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 30px; }
+        .modal-tags .tag { padding: 5px 12px; font-size: 0.7rem; border-color: rgba(201,168,76,0.3); background: rgba(20,18,26,0.8); }
+        
+        /* ⚡ "ПРИКЛЕИВАЕМ" КНОПКУ К НИЗУ (position: sticky) */
+        #modal-play-btn { position: sticky; bottom: -5px; margin-top: auto; width: 100%; padding: 16px; background: rgba(20, 18, 26, 0.95); border: 1px solid var(--gold); border-radius: 4px; color: var(--gold-light); font-family: 'Cinzel', serif; font-size: 1.1rem; font-weight: 700; letter-spacing: 0.15em; text-transform: uppercase; cursor: pointer; transition: all 0.3s; display: inline-flex; align-items: center; justify-content: center; gap: 12px; text-decoration: none; box-shadow: 0 -15px 30px rgba(0,0,0,0.8); backdrop-filter: blur(10px); }
+        #modal-play-btn:hover { background: var(--gold); color: var(--bg-deep); box-shadow: 0 0 25px rgba(201,168,76,0.6); transform: translateY(-2px); }
+        
+        /* 📱 МОБИЛЬНАЯ АДАПТАЦИЯ (Делаем стиль как в современных приложениях) */
+        @media (max-width: 700px) { 
+            .modal-overlay { padding: 10px; align-items: flex-end; }
+            .modal-content { max-height: 85vh; border-radius: 16px 16px 8px 8px; }
+            .modal-header { padding: 25px 20px; gap: 20px; } 
+            .modal-cover-wrapper { width: 100%; max-height: 200px; } /* Делаем обложку панорамной */
+            #modal-cover { height: 100%; object-fit: cover; object-position: top; }
+            #modal-title { font-size: 1.4rem; } 
+            #modal-play-btn { font-size: 1rem; padding: 14px; bottom: 0; }
+        }
     </style>
 </head>
 <body>
@@ -171,6 +214,31 @@
 <div class="library" id="library"></div>
 <div class="library-info" id="library-info"></div>
 <div class="toast" id="toast"></div>
+
+<div class="modal-overlay" id="game-modal">
+    <div class="modal-content">
+        <div class="modal-close" id="modal-close">×</div>
+        <div class="modal-header">
+            <div id="modal-cover-container" class="modal-cover-wrapper">
+                <img id="modal-cover" src="" alt="Cover">
+                <div id="modal-cover-placeholder" class="cover-placeholder" style="display:none;">
+                    <span class="rune" id="modal-placeholder-rune"></span>
+                    <span class="folder-name" id="modal-placeholder-name"></span>
+                </div>
+            </div>
+            <div class="modal-info">
+                <div class="modal-number" id="modal-number"></div>
+                <h2 id="modal-title"></h2>
+                <div class="modal-meta">
+                    <span id="modal-added"></span>
+                    <span id="modal-played"></span>
+                </div>
+                <div class="modal-tags" id="modal-tags"></div>
+                <button class="modal-play-btn" id="modal-play-btn">Играть <span class="launch-arrow">→</span></button>
+            </div>
+        </div>
+    </div>
+</div>
 
 <footer>RPG Library · Home Server</footer>
 
@@ -229,9 +297,8 @@ function renderGames(games) {
     }
 
     filtered.forEach(function(game, i) {
-        var card = document.createElement('a');
+        var card = document.createElement('div'); // СТАЛО div
         card.className = 'game-card';
-        card.href = game.url;
         card.style.animationDelay = (i * 0.05) + 's';
         var roman = ROMAN[i % ROMAN.length] || (i + 1).toString();
         
@@ -263,7 +330,7 @@ function renderGames(games) {
             '<div class="card-info">' +
                 '<div class="card-number"><span>Том ' + String(game.number).padStart(2,'0') + '</span></div>' +
                 '<div class="card-title">' + game.title + '</div>' +
-                '<div class="card-launch">Играть <span class="launch-arrow">→</span></div>' +
+                '<div class="card-launch">Подробнее <span class="launch-arrow">→</span></div>' +
             '</div>' +
             '<div class="card-corner-br"></div>';
 
@@ -295,12 +362,55 @@ function renderGames(games) {
             } catch(err) { showToast('Магия дала сбой', 'error'); }
         });
 
+        // Логика клика по карточке: Открываем Modal
         card.addEventListener('click', function(e) {
             if (e.target.closest('.card-delete') || e.target.closest('.card-rating')) return;
-            game.lastPlayed = Date.now();
-            fetch(API + '/api/games/' + encodeURIComponent(game.id) + '/meta', {
-                method: 'POST', headers: {'Content-Type': 'application/json', 'x-api-token': 'SuperSecretKey123'}, body: JSON.stringify({ lastPlayed: game.lastPlayed }), keepalive: true 
-            });
+            
+            // Заполняем данные в окне
+            document.getElementById('modal-title').textContent = game.title;
+            document.getElementById('modal-number').textContent = 'Том ' + String(game.number).padStart(2,'0');
+            
+            // Обложка
+            const coverEl = document.getElementById('modal-cover');
+            const placeholder = document.getElementById('modal-cover-placeholder');
+            if (game.cover) {
+                coverEl.src = game.cover; coverEl.style.display = 'block'; placeholder.style.display = 'none';
+            } else {
+                coverEl.style.display = 'none'; placeholder.style.display = 'flex';
+                document.getElementById('modal-placeholder-rune').textContent = ROMAN[i % ROMAN.length] || (i + 1);
+                document.getElementById('modal-placeholder-name').textContent = game.id;
+            }
+
+            // Даты
+            const formatDate = (ms) => ms ? new Date(ms).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' }) : 'Никогда';
+            document.getElementById('modal-added').innerHTML = '<b>Свиток получен:</b> ' + formatDate(game.addedAt);
+            document.getElementById('modal-played').innerHTML = '<b>Последний ритуал:</b> ' + formatDate(game.lastPlayed);
+
+            // Теги (Теперь выводим ВСЕ)
+            const tagsDiv = document.getElementById('modal-tags');
+            tagsDiv.innerHTML = '';
+            if (game.tags && game.tags.length > 0) {
+                game.tags.forEach(t => {
+                    const span = document.createElement('span'); span.className = 'tag'; span.textContent = t; tagsDiv.appendChild(span);
+                });
+            } else {
+                tagsDiv.innerHTML = '<span class="tag" style="opacity:0.5; border-color:transparent;">Теги не расшифрованы</span>';
+            }
+
+            // Кнопка ИГРАТЬ (сохраняет дату запуска и переходит в игру)
+            document.getElementById('modal-play-btn').onclick = function() {
+                game.lastPlayed = Date.now();
+                fetch(API + '/api/games/' + encodeURIComponent(game.id) + '/meta', {
+                    method: 'POST', 
+                    headers: {'Content-Type': 'application/json', 'x-api-token': 'SuperSecretKey123'}, 
+                    body: JSON.stringify({ lastPlayed: game.lastPlayed })
+                }).finally(() => {
+                    window.location.href = game.url; // Прыгаем в игру!
+                });
+            };
+
+            // Показываем окно
+            document.getElementById('game-modal').classList.add('active');
         });
 
         lib.appendChild(card);
@@ -347,9 +457,19 @@ function uploadFile(file) {
 
     xhr.addEventListener('error', function() { progressText.textContent = '✗ Ритуал прерван'; showToast('Связь разорвана', 'error'); uploadBtn.style.pointerEvents = ''; uploadBtn.style.opacity = ''; });
     xhr.open('POST', API + '/api/upload');
-    xhr.setRequestHeader('x-api-token', 'SuperSecretKey123'); // ⚡ ДОБАВИТЬ ЭТУ СТРОКУ
+    xhr.setRequestHeader('x-api-token', 'SuperSecretKey123'); 
     xhr.send(formData);
 }
+
+// Закрытие окна по крестику или клику мимо
+document.getElementById('modal-close').addEventListener('click', () => document.getElementById('game-modal').classList.remove('active'));
+document.getElementById('game-modal').addEventListener('click', (e) => {
+    if (e.target === document.getElementById('game-modal')) document.getElementById('game-modal').classList.remove('active');
+});
+// Закрытие окна по кнопке ESC
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') document.getElementById('game-modal').classList.remove('active');
+});
 
 loadGames();
 </script>
