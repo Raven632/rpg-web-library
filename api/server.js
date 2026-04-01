@@ -39,12 +39,10 @@ const uploadLimiter = rateLimit({ windowMs: 60 * 1000, max: 5, message: { error:
 app.use('/api/', apiLimiter);
 
 // Middleware авторизации для изменяющих запросов (POST, DELETE)
-// Middleware авторизации для изменяющих запросов (POST, DELETE)
 function requireAuth(req, res, next) {
     if (req.method === 'GET') return next(); // Читать можно всем
     
     if (req.headers['x-api-token'] !== API_TOKEN) {
-        // ДОБАВЛЯЕМ ЛОГИРОВАНИЕ СЮДА:
         console.log(`[Security] 🛑 Заблокирована попытка доступа (${req.method} ${req.path}). IP: ${req.ip}`);
         return res.status(401).json({ error: 'Отказано в доступе. Неверный токен.' });
     }
@@ -52,13 +50,12 @@ function requireAuth(req, res, next) {
 }
 app.use('/api/', requireAuth);
 
-// ⚡ ИЗМЕНЕНИЕ 1: Умное сохранение с расширением файла
+// ⚡ Умное сохранение с расширением файла
 const storage = multer.diskStorage({
     destination: function (req, file, cb) {
         cb(null, UPLOAD_TMP);
     },
     filename: function (req, file, cb) {
-        // Вытаскиваем расширение (например, .rar) и приклеиваем его к файлу
         const ext = path.extname(file.originalname) || '';
         cb(null, 'archive_' + Date.now() + ext);
     }
@@ -153,9 +150,6 @@ const backgroundScrapeQueue = [];
 const queuedScrapes = new Set();
 let isBackgroundScraping = false;
 
-// =======================================================
-// 1. ЗАМЕНИТЬ ФУНКЦИЮ processBackgroundScrape
-// =======================================================
 async function processBackgroundScrape() {
     if (isBackgroundScraping) return; // Если уже работает, тихо ждем
     if (backgroundScrapeQueue.length === 0) {
@@ -168,18 +162,19 @@ async function processBackgroundScrape() {
     console.log(`\n[Queue] 🚀 Запускаем парсинг для ${task.rjCode} (Осталось в очереди: ${backgroundScrapeQueue.length})`);
     
     try {
-        const tags = await executeFetchDLsiteTags(task.rjCode);
-        if (tags && tags.length > 0) {
+        const scrapedData = await executeFetchDLsiteTags(task.rjCode);
+        if (scrapedData && scrapedData.tags && scrapedData.tags.length > 0) {
             let meta = {};
             try {
                 const metaRaw = await fsp.readFile(task.metaPath, 'utf8');
                 meta = JSON.parse(metaRaw);
             } catch(e) {}
             
-            meta.tags = tags;
+            meta.tags = scrapedData.tags;
+            meta.description = scrapedData.description; // ⚡ ДОБАВЛЯЕМ ОПИСАНИЕ
             meta.scraped = true;
             await fsp.writeFile(task.metaPath, JSON.stringify(meta, null, 2), 'utf8');
-            console.log(`[Queue] 💾 Теги для ${task.rjCode} успешно сохранены!`);
+            console.log(`[Queue] 💾 Теги и Описание для ${task.rjCode} успешно сохранены!`);
         } else {
             console.log(`[Queue] ⚠️ Парсер вернул пустоту для ${task.rjCode}`);
         }
@@ -201,7 +196,7 @@ const DL_AJAX_TIMEOUT_MS = 8000;
 const PROXY_TTL_MS = 30 * 60 * 1000; 
 const TAGS_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // Кэш тегов на 24 часа
 
-const dlsiteTagCache = new Map(); // rjCode -> { tags, expiresAt }
+const dlsiteTagCache = new Map(); // rjCode -> { data, expiresAt }
 const proxyPool = new Map();      
 
 function nowMs() { return Date.now(); }
@@ -244,10 +239,23 @@ function buildProxyCandidates(publicList) {
     return Array.from(candidates).slice(0, MAX_PROXY_ATTEMPTS);
 }
 
+// ⚡ Бесплатный переводчик через неофициальное API Google Translate
+async function translateText(text, targetLang = 'en') {
+    if (!text) return '';
+    try {
+        const res = await fetch(`https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${targetLang}&dt=t&q=${encodeURIComponent(text)}`);
+        const data = await res.json();
+        return data[0].map(item => item[0]).join(''); // Склеиваем переведенные абзацы
+    } catch (e) {
+        console.error('[Translate Error]', e.message);
+        return text; // Если Гугл заблокировал запрос, отдаем оригинальный японский текст
+    }
+}
+
 async function executeFetchDLsiteTags(rjCode) {
     const cached = dlsiteTagCache.get(rjCode);
     if (cached && cached.expiresAt > nowMs()) {
-        return cached.tags;
+        return cached.data; // ⚡ Возвращаем сохраненную data (теги + описание)
     }
 
     const publicList = await getPublicJapaneseProxies();
@@ -282,25 +290,44 @@ async function executeFetchDLsiteTags(rjCode) {
                 throw new Error('Blocked');
             }
 
-            const tags = await page.evaluate(async (rj, timeout) => {
+            const scrapedData = await page.evaluate(async (rj, timeout) => {
+                let tags = [];
+                let description = '';
+                
                 try {
                     const controller = new AbortController();
                     const timer = setTimeout(() => controller.abort(), timeout);
                     const apiRes = await fetch(`https://www.dlsite.com/maniax/product/info/ajax?product_id=${rj}`, { signal: controller.signal });
                     clearTimeout(timer);
                     const data = await apiRes.json();
-                    if (data && data[rj] && data[rj].genres) return data[rj].genres.map(g => g.name);
+                    if (data && data[rj] && data[rj].genres) tags = data[rj].genres.map(g => g.name);
                 } catch (e) {}
-                const genreLinks = Array.from(document.querySelectorAll('a[href*="/genre/"]'));
-                return genreLinks.map(el => el.innerText.trim()).filter(text => text.length > 0);
+                
+                if (tags.length === 0) {
+                    const genreLinks = Array.from(document.querySelectorAll('a[href*="/genre/"]'));
+                    tags = genreLinks.map(el => el.innerText.trim()).filter(text => text.length > 0);
+                }
+
+                // Ищем описание на странице DLsite
+                const descEl = document.querySelector('[itemprop="description"]') || document.querySelector('.work_parts_area');
+                if (descEl) description = descEl.innerText.trim();
+
+                return { tags, description };
             }, rjCode, DL_AJAX_TIMEOUT_MS); 
 
-            if (tags && tags.length > 0) {
-                const uniqueTags = [...new Set(tags)];
+            if (scrapedData && scrapedData.tags && scrapedData.tags.length > 0) {
+                const uniqueTags = [...new Set(scrapedData.tags)];
+                
+                // ⚡ ИЗМЕНЕНИЕ: Отправляем текст в Google Translate
+                console.log(`[DLsite] 🌐 Переводим описание для ${rjCode} на английский...`);
+                const translatedDesc = await translateText(scrapedData.description, 'en');
+                
+                const finalData = { tags: uniqueTags, description: translatedDesc };
+                
                 updateProxyScore(proxy, true); 
-                dlsiteTagCache.set(rjCode, { tags: uniqueTags, expiresAt: nowMs() + TAGS_CACHE_TTL_MS }); 
+                dlsiteTagCache.set(rjCode, { data: finalData, expiresAt: nowMs() + TAGS_CACHE_TTL_MS }); 
                 await browser.close();
-                return uniqueTags;
+                return finalData;
             } else {
                 throw new Error('Soft-Lock');
             }
@@ -309,12 +336,9 @@ async function executeFetchDLsiteTags(rjCode) {
             if (browser) await browser.close();
         }
     }
-    return [];
+    return null;
 }
 
-// =======================================================
-// 2. ЗАМЕНИТЬ ФУНКЦИЮ getGameMetadata
-// =======================================================
 async function getGameMetadata(folder, gamePath) {
     console.log(`[API] 🔍 Читаем папку: ${folder}`);
     const metaPath = path.join(gamePath, 'meta.json');
@@ -401,9 +425,6 @@ async function getGameMetadata(folder, gamePath) {
     return finalMeta;
 }
 
-// =======================================================
-// 3. ЗАМЕНИТЬ БЛОК app.get('/api/games', ...)
-// =======================================================
 app.get('/api/games', async (req, res) => {
     console.log(`\n[API] 📥 Получен запрос списка игр от фронтенда!`);
     try {
@@ -419,11 +440,12 @@ app.get('/api/games', async (req, res) => {
                 const meta = await getGameMetadata(folder, gamePath);
                 games.push({ 
                     id: folder, title: meta.title, cover: meta.cover, tags: meta.tags || [], 
+                    description: meta.description || '', // ⚡ ОТПРАВЛЯЕМ ОПИСАНИЕ НА ФРОНТ
                     url: `/${folder}/`, number: games.length + 1, addedAt: stat.birthtimeMs || stat.mtimeMs || 0,
                     lastPlayed: meta.lastPlayed || 0, rating: meta.rating || 0
                 });
             } catch(e) {
-                console.error(`[API] ❌ Ошибка в папке ${folder}:`, e.message); // Сорвали маску с ошибки
+                console.error(`[API] ❌ Ошибка в папке ${folder}:`, e.message); 
             }
         }
         console.log(`[API] 📤 Отправляем ${games.length} игр на фронтенд.`);
@@ -508,22 +530,20 @@ app.post('/api/upload', uploadLimiter, upload.single('game'), async (req, res) =
     if (!req.file) return res.status(400).json({ error: 'Файл не получен' });
     console.log(`[Upload] 📥 Принят файл: ${req.file.originalname} | Размер: ${(req.file.size / 1024 / 1024).toFixed(2)} MB`);
     
-    const archivePath = req.file.path; // Теперь тут будет путь вида .../archive_12345.rar
+    const archivePath = req.file.path; 
     let originalName = req.file.originalname.replace(/\.(zip|7z|rar)$/i, '').replace(/[^\w\s\-\.а-яА-Я\[\]]/g, '_').trim();
     if (!originalName) originalName = 'game_archive';
 
     const tmpExtractDir = path.join(UPLOAD_TMP, 'ext_' + Date.now());
-    const isRar = archivePath.toLowerCase().endsWith('.rar'); // ⚡ Проверяем, RAR ли это
+    const isRar = archivePath.toLowerCase().endsWith('.rar'); 
 
     try {
         await fsp.mkdir(tmpExtractDir, { recursive: true });
         
         if (isRar) {
-            // ⚡ ИЗМЕНЕНИЕ 2: Для RAR используем официальный бронебойный 'unrar'
             console.log(`[Upload] 🗜️ Распаковка RAR архива через официальный алгоритм...`);
             await execFilePromise('unrar', ['x', '-y', archivePath, tmpExtractDir + '/']);
         } else {
-            // Для ZIP и 7Z используем 7zz
             console.log(`[Upload] 🗜️ Распаковка ZIP/7Z через 7-Zip...`);
             const { stdout } = await execFilePromise('7zz', ['l', '-ba', '-slt', archivePath]);
             const lines = stdout.split('\n').filter(l => l.startsWith('Path = '));
@@ -553,7 +573,6 @@ app.post('/api/upload', uploadLimiter, upload.single('game'), async (req, res) =
         await fsp.unlink(archivePath).catch(() => {});
         res.json({ success: true, folder: finalDestFolder, message: `Игра "${finalDestFolder}" успешно добавлена!` });
     } catch (e) {
-        // Чтобы терминал не зависал от миллиона строк ошибки
         console.error('[Upload Error]:', e.message ? e.message.substring(0, 300) + '...' : e);
         await fsp.rm(tmpExtractDir, { recursive: true, force: true }).catch(() => {});
         await fsp.unlink(archivePath).catch(() => {});
