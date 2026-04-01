@@ -7,6 +7,9 @@ const https = require('https');
 const { exec } = require('child_process');
 const util = require('util');
 const execPromise = util.promisify(exec);
+const puppeteer = require('puppeteer-extra');
+const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+puppeteer.use(StealthPlugin());
 
 const app = express();
 const GAMES_DIR = '/games';
@@ -27,7 +30,6 @@ const upload = multer({
     }
 });
 
-// ── Вспомогательные функции ────────────────────────────────────────
 async function findGameFolder(dir) {
     const items = await fsp.readdir(dir, { withFileTypes: true });
     const wwwFolder = items.find(i => i.isDirectory() && i.name.toLowerCase() === 'www');
@@ -86,7 +88,108 @@ async function fetchDLsiteCover(rjCode, destPath) {
     return false;
 }
 
-// ── УМНЫЙ ПАРСЕР МЕТАДАННЫХ ─────────────────────────────────────────
+// ── ГЛОБАЛЬНАЯ ПАМЯТЬ ПРОКСИ (в самом верху server.js) ──
+let goodProxies = new Set();
+let lastProxyFetch = 0;
+let cachedProxies = [];
+
+async function fetchDLsiteTags(rjCode) {
+    console.log(`\n======================================================`);
+    console.log(`[DLsite] 🤖 Робот с памятью для ${rjCode}...`);
+
+    // Обновляем список прокси не чаще чем раз в 10 минут
+    const now = Date.now();
+    if (now - lastProxyFetch > 10 * 60 * 1000 || cachedProxies.length === 0) {
+        console.log(`[DLsite] 🌍 Обновляем список японских прокси...`);
+        try {
+            const res = await fetch('https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=10000&country=JP');
+            const text = await res.text();
+            cachedProxies = text.split('\n')
+                .map(p => p.trim())
+                .filter(p => p.includes(':'))
+                .sort(() => Math.random() - 0.5);
+            lastProxyFetch = now;
+        } catch (e) {
+            console.log(`[DLsite] Не удалось обновить прокси, используем старые`);
+        }
+    }
+
+    // Приоритет — проверенные
+    let proxiesToTry = [...goodProxies, ...cachedProxies];
+    proxiesToTry = [...new Set(proxiesToTry)]; // убираем дубли
+
+    if (proxiesToTry.length === 0) proxiesToTry = ['direct'];
+
+    for (let i = 0; i < Math.min(5, proxiesToTry.length); i++) {  // уменьшил до 5
+        const proxy = proxiesToTry[i];
+        let browser;
+
+        try {
+            console.log(`[DLsite] 🚀 Попытка ${i+1} | IP: ${proxy}`);
+
+            const args = [
+                '--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage',
+                '--disable-gpu', '--lang=en-US'
+            ];
+            if (proxy !== 'direct') args.push(`--proxy-server=http://${proxy}`);
+
+            browser = await puppeteer.launch({ headless: "new", executablePath: '/usr/bin/chromium', args });
+
+            const page = await browser.newPage();
+            await page.setDefaultNavigationTimeout(25000);
+
+            // Куки + блокировка мусора
+            await page.setCookie({ name: 'adultchecked', value: '1', domain: '.dlsite.com' });
+            await page.setRequestInterception(true);
+            page.on('request', req => {
+                if (['image','stylesheet','font','media'].includes(req.resourceType())) req.abort();
+                else req.continue();
+            });
+
+            const url = `https://www.dlsite.com/maniax/work/=/product_id/${rjCode}.html?locale=en_US`;
+            await page.goto(url, { waitUntil: 'domcontentloaded' });
+
+            const title = await page.title();
+            if (title.includes('Google') || title === '') {
+                goodProxies.delete(proxy);
+                throw new Error('Google redirect');
+            }
+
+            // Самый быстрый способ — AJAX внутри браузера
+            const tags = await page.evaluate(async (code) => {
+                try {
+                    const res = await fetch(`https://www.dlsite.com/maniax/product/info/ajax?product_id=${code}`);
+                    const json = await res.json();
+                    if (json && json[code] && json[code].genres) {
+                        return json[code].genres.map(g => g.name);
+                    }
+                } catch(e) {}
+                // fallback — парсинг страницы
+                return Array.from(document.querySelectorAll('a[href*="/genre/"]'))
+                    .map(el => el.innerText.trim())
+                    .filter(t => t.length > 1);
+            }, rjCode);
+
+            if (tags && tags.length > 0) {
+                const unique = [...new Set(tags)];
+                console.log(`[DLsite] ✅ УСПЕХ! Теги:`, unique);
+                if (proxy !== 'direct') goodProxies.add(proxy); // запоминаем золотой IP
+                await browser.close();
+                return unique;
+            }
+
+        } catch (err) {
+            console.log(`[DLsite] ❌ Прокси ${proxy} не сработал: ${err.message}`);
+            goodProxies.delete(proxy);
+        } finally {
+            if (browser) await browser.close().catch(() => {});
+        }
+    }
+
+    console.log(`[DLsite] ❌ Не удалось получить теги для ${rjCode}`);
+    return [];
+}
+
 async function getGameMetadata(folder, gamePath) {
     const metaPath = path.join(gamePath, 'meta.json');
     const checkExists = async (p) => { try { await fsp.access(p); return true; } catch { return false; } };
@@ -124,14 +227,26 @@ async function getGameMetadata(folder, gamePath) {
     }
 
     let cover = null;
+    let tags = existingMeta.tags || []; // Подхватываем старые теги, если есть
+
     if (await checkExists(path.join(gamePath, 'cover.jpg'))) cover = `${folder}/cover.jpg`;
     else if (await checkExists(path.join(gamePath, 'cover.png'))) cover = `${folder}/cover.png`;
 
     const rjCode = await findRJCode(folder, gamePath);
-    if (rjCode && !cover) {
-        const coverDest = path.join(gamePath, 'cover.jpg');
-        const success = await fetchDLsiteCover(rjCode, coverDest);
-        if (success) cover = `${folder}/cover.jpg`;
+    
+    // 🔥 Если нашли RJ-код, скачиваем обложку и ТЕГИ
+    if (rjCode) {
+        if (!cover) {
+            const coverDest = path.join(gamePath, 'cover.jpg');
+            const success = await fetchDLsiteCover(rjCode, coverDest);
+            if (success) cover = `${folder}/cover.jpg`;
+        }
+        
+        // Если тегов еще нет, парсим их с DLsite
+        if (tags.length === 0) {
+            console.log(`🏷️ Парсим теги с DLsite для ${rjCode}...`);
+            tags = await fetchDLsiteTags(rjCode);
+        }
     }
 
     if (!cover) {
@@ -144,18 +259,16 @@ async function getGameMetadata(folder, gamePath) {
         if (!cover && await checkExists(path.join(gamePath, 'icon', 'icon.png'))) cover = `${folder}/icon/icon.png`;
     }
 
-    // Сохраняем парсинг, не затирая существующие оценки
-    const finalMeta = { ...existingMeta, title, cover, scraped: true };
+    // Сохраняем парсинг
+    const finalMeta = { ...existingMeta, title, cover, tags, scraped: true };
     await fsp.writeFile(metaPath, JSON.stringify(finalMeta, null, 2), 'utf8').catch(()=>{});
     return finalMeta;
 }
 
-// ── API: Библиотека с датами и оценками ────────────────────────────
 app.get('/api/games', async (req, res) => {
     try {
         const entries = await fsp.readdir(GAMES_DIR);
         const games = [];
-        
         for (let i = 0; i < entries.length; i++) {
             const folder = entries[i];
             const gamePath = path.join(GAMES_DIR, folder);
@@ -164,16 +277,16 @@ app.get('/api/games', async (req, res) => {
                 if (!stat.isDirectory() || folder === 'node_modules' || folder === '_saves') continue;
 
                 const meta = await getGameMetadata(folder, gamePath);
-                // Забираем данные для сортировки
                 games.push({ 
                     id: folder, 
                     title: meta.title, 
                     cover: meta.cover, 
+                    tags: meta.tags || [], // Отправляем теги на фронтенд
                     url: `/${folder}/`, 
                     number: games.length + 1,
-                    addedAt: stat.birthtimeMs || stat.mtimeMs || 0, // Дата добавления папки
-                    lastPlayed: meta.lastPlayed || 0,               // Последний запуск
-                    rating: meta.rating || 0                        // Оценка (0-5)
+                    addedAt: stat.birthtimeMs || stat.mtimeMs || 0,
+                    lastPlayed: meta.lastPlayed || 0,
+                    rating: meta.rating || 0
                 });
             } catch(e) {}
         }
@@ -181,7 +294,6 @@ app.get('/api/games', async (req, res) => {
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ── НОВЫЙ API: Сохранение оценок и даты запуска ────────────────────
 app.post('/api/games/:id/meta', async (req, res) => {
     const id = req.params.id.replace(/[^a-zA-Z0-9а-яА-Я._\-\s\[\]]/g, '');
     const metaPath = path.join(GAMES_DIR, id, 'meta.json');
@@ -201,7 +313,7 @@ app.post('/api/games/:id/meta', async (req, res) => {
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ── Остальные API ──────────────────────────────────────────────────
+// API Сейвов и Загрузки
 app.get('/api/saves/:gameId', async (req, res) => {
     const gameId = req.params.gameId.replace(/[^a-zA-Z0-9а-яА-Я._\-\s]/g, '');
     const gameSavesDir = path.join(SAVES_DIR, gameId);
@@ -280,7 +392,6 @@ app.delete('/api/games/:id', async (req, res) => {
     } catch(e) { res.status(404).json({ error: 'Игра не найдена' }); }
 });
 
-// ── РАЗДАЧА СТАТИКИ И ИГР С АВТО-ЛОКАТОРОМ (ТО, ЧТО Я ЗАБЫЛ!) ───────
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.get('*', async (req, res, next) => {
@@ -293,7 +404,6 @@ app.get('*', async (req, res, next) => {
         let stat;
         try { stat = await fsp.stat(filePath); } catch(e) {}
 
-        // 1. АВТО-ЛОКАТОР: Если запросили папку, ищем внутри неё игру
         if (stat && stat.isDirectory()) {
             if (!req.path.endsWith('/')) return res.redirect(req.path + '/');
 
@@ -326,7 +436,6 @@ app.get('*', async (req, res, next) => {
             }
         }
 
-        // 2. Фоллбэк аудио
         if (reqPath.endsWith('.ogg')) {
             try { await fsp.access(filePath); } catch {
                 try { await fsp.access(filePath + '_'); filePath += '_'; } catch {
@@ -341,14 +450,12 @@ app.get('*', async (req, res, next) => {
             }
         }
 
-        // 3. Выдача файла
         let finalStat;
         try { finalStat = await fsp.stat(filePath); } catch(e) {}
 
         if (finalStat && finalStat.isFile()) {
             if (filePath.endsWith('index.html')) {
                 let html = await fsp.readFile(filePath, 'utf8');
-                // ВЫРЕЗАЕМ ЗЛУЮ ЗАЩИТУ CSP
                 html = html.replace(/<meta[^>]+http-equiv=['"]?Content-Security-Policy['"]?[^>]*>/gi, '');
                 html = html.replace('<body', '<body><script src="/rpg-fixes.js"></script><x ');
                 
@@ -364,4 +471,4 @@ app.get('*', async (req, res, next) => {
     next();
 });
 
-app.listen(3000, () => console.log('🚀 RPG API: Library with Sorting & Ratings Ready!'));
+app.listen(3000, () => console.log('🚀 RPG API: Tags, Ratings, and Sorting Ready!'));

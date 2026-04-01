@@ -6,4 +6,6 @@ services:
       - "8081:3000"
     volumes:
       - ./games:/games
-    restart: unless-stopped
+      - ./api:/app
+      - /app/node_modules
+    command: npx nodemon server.js
