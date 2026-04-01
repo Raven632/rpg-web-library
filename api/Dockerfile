@@ -2,9 +2,12 @@ FROM node:20
 
 WORKDIR /app
 
-# 1. Устанавливаем архиватор (p7zip-full) и Chromium с поддержкой азиатских шрифтов
+RUN sed -i 's/main$/main contrib non-free non-free-firmware/g' /etc/apt/sources.list.d/debian.sources || true
+
+# 1. Устанавливаем архиватор (p7zip-full дает команду 7z) и Chromium с поддержкой азиатских шрифтов
 RUN apt-get update && apt-get install -y \
     7zip \
+    unrar \ 
     chromium \
     fonts-ipafont-gothic fonts-wqy-zenhei fonts-thai-tlwg fonts-kacst fonts-freefont-ttf \
     --no-install-recommends \

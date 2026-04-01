@@ -9,3 +9,4 @@ services:
       - ./api:/app
       - /app/node_modules
     command: npx nodemon server.js
+    restart: unless-stopped #

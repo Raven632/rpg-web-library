@@ -143,7 +143,7 @@ window.addEventListener('load', function() {
         if (key.indexOf('RPG ') === 0) { 
             fetch('/api/saves/' + encodeURIComponent(gameId) + '/' + encodeURIComponent(key), {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', 'x-api-token': 'SuperSecretKey123' },
                 body: JSON.stringify({ value: value })
             }).catch(function(e) {});
         }
@@ -155,7 +155,8 @@ window.addEventListener('load', function() {
         originalRemoveItem.call(this, key);
         if (key.indexOf('RPG ') === 0) {
             fetch('/api/saves/' + encodeURIComponent(gameId) + '/' + encodeURIComponent(key), {
-                method: 'DELETE'
+                method: 'DELETE',
+                headers: { 'x-api-token': 'SuperSecretKey123' }
             }).catch(function(e) {});
         }
     };

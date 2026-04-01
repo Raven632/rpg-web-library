@@ -279,7 +279,7 @@ function renderGames(games) {
                     else s.classList.remove('active');
                 });
                 fetch(API + '/api/games/' + encodeURIComponent(game.id) + '/meta', {
-                    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ rating: val })
+                    method: 'POST', headers: {'Content-Type': 'application/json', 'x-api-token': 'SuperSecretKey123'}, body: JSON.stringify({ rating: val })
                 });
             });
         });
@@ -288,7 +288,7 @@ function renderGames(games) {
             e.preventDefault(); e.stopPropagation();
             if (!confirm('Сжечь том "' + game.title + '"?\nЭто заклинание необратимо!')) return;
             try {
-                var r = await fetch(API + '/api/games/' + encodeURIComponent(game.id), { method: 'DELETE' });
+                var r = await fetch(API + '/api/games/' + encodeURIComponent(game.id), { method: 'DELETE', headers: { 'x-api-token': 'SuperSecretKey123' }});
                 var d = await r.json();
                 if (d.success) { showToast('Том обратился в пепел', 'success'); loadGames(); }
                 else showToast('Ошибка: ' + d.error, 'error');
@@ -299,7 +299,7 @@ function renderGames(games) {
             if (e.target.closest('.card-delete') || e.target.closest('.card-rating')) return;
             game.lastPlayed = Date.now();
             fetch(API + '/api/games/' + encodeURIComponent(game.id) + '/meta', {
-                method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ lastPlayed: game.lastPlayed }), keepalive: true 
+                method: 'POST', headers: {'Content-Type': 'application/json', 'x-api-token': 'SuperSecretKey123'}, body: JSON.stringify({ lastPlayed: game.lastPlayed }), keepalive: true 
             });
         });
 
@@ -346,7 +346,9 @@ function uploadFile(file) {
     });
 
     xhr.addEventListener('error', function() { progressText.textContent = '✗ Ритуал прерван'; showToast('Связь разорвана', 'error'); uploadBtn.style.pointerEvents = ''; uploadBtn.style.opacity = ''; });
-    xhr.open('POST', API + '/api/upload'); xhr.send(formData);
+    xhr.open('POST', API + '/api/upload');
+    xhr.setRequestHeader('x-api-token', 'SuperSecretKey123'); // ⚡ ДОБАВИТЬ ЭТУ СТРОКУ
+    xhr.send(formData);
 }
 
 loadGames();
