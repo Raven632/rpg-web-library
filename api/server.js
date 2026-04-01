@@ -88,105 +88,180 @@ async function fetchDLsiteCover(rjCode, destPath) {
     return false;
 }
 
-// ── ГЛОБАЛЬНАЯ ПАМЯТЬ ПРОКСИ (в самом верху server.js) ──
-let goodProxies = new Set();
-let lastProxyFetch = 0;
-let cachedProxies = [];
+// =====================================================================
+// DLsite Tags: Умный пул прокси + Кэширование (Оптимизированная версия)
+// =====================================================================
 
-async function fetchDLsiteTags(rjCode) {
-    console.log(`\n======================================================`);
-    console.log(`[DLsite] 🤖 Робот с памятью для ${rjCode}...`);
+// Настройки пула
+const MAX_PROXY_ATTEMPTS = 5;
+const DL_PAGE_TIMEOUT_MS = 25000;
+const DL_AJAX_TIMEOUT_MS = 8000;
+const PROXY_TTL_MS = 30 * 60 * 1000; // Прокси забывается через 30 минут простоя
 
-    // Обновляем список прокси не чаще чем раз в 10 минут
-    const now = Date.now();
-    if (now - lastProxyFetch > 10 * 60 * 1000 || cachedProxies.length === 0) {
-        console.log(`[DLsite] 🌍 Обновляем список японских прокси...`);
-        try {
-            const res = await fetch('https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=10000&country=JP');
-            const text = await res.text();
-            cachedProxies = text.split('\n')
-                .map(p => p.trim())
-                .filter(p => p.includes(':'))
-                .sort(() => Math.random() - 0.5);
-            lastProxyFetch = now;
-        } catch (e) {
-            console.log(`[DLsite] Не удалось обновить прокси, используем старые`);
-        }
+const dlsiteTagCache = new Map(); // Кэш найденных тегов: rjCode -> tags
+const proxyPool = new Map();      // Умная память прокси: proxy -> { score, fails }
+
+function nowMs() { return Date.now(); }
+
+// Очистка старых прокси из памяти
+function cleanupProxyPool() {
+    const now = nowMs();
+    for (const [proxy, meta] of proxyPool.entries()) {
+        if (now - meta.lastUsed > PROXY_TTL_MS) proxyPool.delete(proxy);
+    }
+}
+
+// Изменение рейтинга прокси
+function updateProxyScore(proxy, isSuccess) {
+    if (!proxy || proxy === 'direct') return;
+    const meta = proxyPool.get(proxy) || { score: 0, fails: 0, lastUsed: nowMs() };
+    
+    meta.lastUsed = nowMs();
+    if (isSuccess) {
+        meta.score += 3;
+        meta.fails = 0;
+    } else {
+        meta.score -= 2;
+        meta.fails += 1;
     }
 
-    // Приоритет — проверенные
-    let proxiesToTry = [...goodProxies, ...cachedProxies];
-    proxiesToTry = [...new Set(proxiesToTry)]; // убираем дубли
+    // Если прокси сильно провинился - выкидываем его навсегда
+    if (meta.fails >= 2 || meta.score <= -3) {
+        proxyPool.delete(proxy);
+    } else {
+        proxyPool.set(proxy, meta);
+    }
+}
 
-    if (proxiesToTry.length === 0) proxiesToTry = ['direct'];
+// Получение свежего списка публичных прокси
+async function getPublicJapaneseProxies() {
+    try {
+        const res = await fetch('https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=10000&country=JP');
+        if (!res.ok) throw new Error('Proxy API error');
+        const text = await res.text();
+        return text.split('\n')
+                   .map(p => p.trim())
+                   .filter(p => p.includes(':'))
+                   .sort(() => Math.random() - 0.5); // Перемешиваем
+    } catch (e) {
+        console.log(`[DLsite] ⚠️ Ошибка загрузки списка прокси: ${e.message}`);
+        return [];
+    }
+}
 
-    for (let i = 0; i < Math.min(5, proxiesToTry.length); i++) {  // уменьшил до 5
-        const proxy = proxiesToTry[i];
+// Формирование умной очереди (Сначала лучшие из памяти, затем новые)
+function buildProxyCandidates(publicList) {
+    cleanupProxyPool();
+    // Сортируем память по очкам (score) по убыванию
+    const remembered = [...proxyPool.entries()]
+        .sort((a, b) => b[1].score - a[1].score)
+        .map(entry => entry[0]);
+
+    // Если у тебя когда-нибудь появится платный прокси, он будет читаться отсюда
+    const trustedProxy = process.env.DLSITE_JP_PROXY || null;
+    
+    let candidates = new Set();
+    if (trustedProxy) candidates.add(trustedProxy);
+    remembered.forEach(p => candidates.add(p));
+    publicList.forEach(p => candidates.add(p));
+    
+    if (candidates.size === 0) candidates.add('direct');
+    
+    return Array.from(candidates).slice(0, MAX_PROXY_ATTEMPTS);
+}
+
+// Главная функция парсинга
+async function fetchDLsiteTags(rjCode) {
+    // 1. Быстрый возврат из кэша (если мы уже парсили эту игру в этой сессии)
+    if (dlsiteTagCache.has(rjCode)) {
+        console.log(`[DLsite] ⚡ Теги для ${rjCode} взяты из локального кэша.`);
+        return dlsiteTagCache.get(rjCode);
+    }
+
+    console.log(`\n======================================================`);
+    console.log(`[DLsite] 🤖 Начинаем операцию для ${rjCode}...`);
+
+    const publicList = await getPublicJapaneseProxies();
+    const candidates = buildProxyCandidates(publicList);
+
+    for (let i = 0; i < candidates.length; i++) {
+        const proxy = candidates[i];
         let browser;
-
         try {
-            console.log(`[DLsite] 🚀 Попытка ${i+1} | IP: ${proxy}`);
+            const isRemembered = proxyPool.has(proxy) ? '(⭐ Из памяти)' : '';
+            console.log(`\n[DLsite] 🚀 Попытка ${i + 1}/${candidates.length}. IP: ${proxy} ${isRemembered}`);
 
             const args = [
-                '--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage',
-                '--disable-gpu', '--lang=en-US'
+                '--no-sandbox', '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage', '--disable-gpu', '--lang=en-US'
             ];
             if (proxy !== 'direct') args.push(`--proxy-server=http://${proxy}`);
 
-            browser = await puppeteer.launch({ headless: "new", executablePath: '/usr/bin/chromium', args });
+            browser = await puppeteer.launch({
+                headless: "new",
+                executablePath: '/usr/bin/chromium',
+                args: args
+            });
 
             const page = await browser.newPage();
-            await page.setDefaultNavigationTimeout(25000);
+            page.setDefaultNavigationTimeout(DL_PAGE_TIMEOUT_MS);
 
-            // Куки + блокировка мусора
-            await page.setCookie({ name: 'adultchecked', value: '1', domain: '.dlsite.com' });
+            await page.setCookie({ name: 'adultchecked', value: '1', domain: '.dlsite.com', path: '/' });
             await page.setRequestInterception(true);
-            page.on('request', req => {
-                if (['image','stylesheet','font','media'].includes(req.resourceType())) req.abort();
+            page.on('request', (req) => {
+                if (['image', 'stylesheet', 'font', 'media'].includes(req.resourceType())) req.abort();
                 else req.continue();
             });
 
             const url = `https://www.dlsite.com/maniax/work/=/product_id/${rjCode}.html?locale=en_US`;
             await page.goto(url, { waitUntil: 'domcontentloaded' });
 
-            const title = await page.title();
-            if (title.includes('Google') || title === '') {
-                goodProxies.delete(proxy);
-                throw new Error('Google redirect');
+            const pageTitle = await page.title();
+            
+            // Проверка на блокировку или "левый" редирект (Google, Cloudflare)
+            if (!pageTitle.includes('DLsite') || pageTitle.includes('Google') || pageTitle === '') {
+                throw new Error(`Заблокирован или перенаправлен (Title: ${pageTitle.substring(0, 20)})`);
             }
 
-            // Самый быстрый способ — AJAX внутри браузера
-            const tags = await page.evaluate(async (code) => {
+            // Пытаемся достать теги (Сначала API, потом HTML)
+            const tags = await page.evaluate(async (rj, timeout) => {
+                // План А: Внутреннее API
                 try {
-                    const res = await fetch(`https://www.dlsite.com/maniax/product/info/ajax?product_id=${code}`);
-                    const json = await res.json();
-                    if (json && json[code] && json[code].genres) {
-                        return json[code].genres.map(g => g.name);
-                    }
-                } catch(e) {}
-                // fallback — парсинг страницы
-                return Array.from(document.querySelectorAll('a[href*="/genre/"]'))
-                    .map(el => el.innerText.trim())
-                    .filter(t => t.length > 1);
-            }, rjCode);
+                    const controller = new AbortController();
+                    const timer = setTimeout(() => controller.abort(), timeout);
+                    const apiRes = await fetch(`https://www.dlsite.com/maniax/product/info/ajax?product_id=${rj}`, { signal: controller.signal });
+                    clearTimeout(timer);
+                    const data = await apiRes.json();
+                    if (data && data[rj] && data[rj].genres) return data[rj].genres.map(g => g.name);
+                } catch (e) {}
+
+                // План Б: Парсинг DOM
+                const genreLinks = Array.from(document.querySelectorAll('a[href*="/genre/"]'));
+                return genreLinks.map(el => el.innerText.trim()).filter(text => text.length > 0);
+            }, rjCode, DL_AJAX_TIMEOUT_MS); 
 
             if (tags && tags.length > 0) {
-                const unique = [...new Set(tags)];
-                console.log(`[DLsite] ✅ УСПЕХ! Теги:`, unique);
-                if (proxy !== 'direct') goodProxies.add(proxy); // запоминаем золотой IP
+                const uniqueTags = [...new Set(tags)];
+                console.log(`[DLsite] ✅ УСПЕХ! Теги найдены:`, uniqueTags);
+                
+                updateProxyScore(proxy, true); // Хвалим прокси
+                dlsiteTagCache.set(rjCode, uniqueTags); // Сохраняем в кэш
+                
                 await browser.close();
-                return unique;
+                return uniqueTags;
+            } else {
+                throw new Error('Мягкая блокировка (Soft-Lock), тегов нет.');
             }
 
-        } catch (err) {
-            console.log(`[DLsite] ❌ Прокси ${proxy} не сработал: ${err.message}`);
-            goodProxies.delete(proxy);
-        } finally {
-            if (browser) await browser.close().catch(() => {});
+        } catch (error) {
+            console.log(`[DLsite] 🚫 Ошибка: ${error.message.split('\n')[0]}`);
+            updateProxyScore(proxy, false); // Штрафуем прокси
+            if (browser) await browser.close();
         }
     }
 
-    console.log(`[DLsite] ❌ Не удалось получить теги для ${rjCode}`);
+    console.log(`\n[DLsite] ❌ Все попытки исчерпаны. Теги не найдены.`);
+    console.log(`======================================================\n`);
     return [];
 }
 
