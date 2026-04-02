@@ -273,8 +273,8 @@ function populateTagFilter(games) {
         }
     });
 
-    // Сортируем теги по популярности (от частых к редким)
-    const sortedTags = Object.keys(tagCounts).sort((a, b) => tagCounts[b] - tagCounts[a]);
+    // ⚡ Сортируем теги строго по алфавиту
+    const sortedTags = Object.keys(tagCounts).sort((a, b) => a.localeCompare(b));
 
     // Заполняем выпадающий список
     tagSelect.innerHTML = '<option value="all">Все жанры</option>';
@@ -290,8 +290,20 @@ async function loadGames() {
     try {
         var res = await fetch(API + '/api/games');
         if (!res.ok) throw new Error();
-        allGames = await res.json();
-        populateTagFilter(allGames); // ⚡ Вызываем генератор тегов
+        let rawGames = await res.json();
+        
+        // ⚡ МАГИЯ ОЧИСТКИ ТЕГОВ
+        rawGames.forEach(g => {
+            if (g.tags && g.tags.length > 0) {
+                // Отрезаем пробел и цифры в скобках в конце строки (например " (18)")
+                let cleanedTags = g.tags.map(t => t.replace(/\s*\(\d+\)$/, '').trim());
+                // Оставляем только уникальные теги (убираем дубликаты)
+                g.tags = [...new Set(cleanedTags)]; 
+            }
+        });
+        
+        allGames = rawGames;
+        populateTagFilter(allGames);
         renderGames(allGames);
     } catch(e) {
         document.getElementById('status').innerHTML = '<div style="color:#e08080;font-family:Cinzel,serif;font-size:0.9rem;letter-spacing:0.1em;">⚠ Связь с сервером потеряна</div>';
