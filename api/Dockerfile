@@ -10,6 +10,8 @@ RUN apt-get update && apt-get install -y \
     unrar \ 
     chromium \
     fonts-ipafont-gothic fonts-wqy-zenhei fonts-thai-tlwg fonts-kacst fonts-freefont-ttf \
+    python3 \
+    build-essential \
     --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
@@ -18,6 +20,9 @@ COPY package*.json ./
 
 # 3. Устанавливаем твои основные пакеты
 RUN npm install --omit=dev
+
+RUN npm install sqlite3 --build-from-source
+RUN npm install sqlite
 
 # 4. Устанавливаем Puppeteer и модули для обхода Cloudflare
 RUN npm install puppeteer-core puppeteer-extra puppeteer-extra-plugin-stealth

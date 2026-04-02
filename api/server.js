@@ -13,6 +13,10 @@ const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 
+// ⚡ ПОДКЛЮЧАЕМ SQLITE
+const sqlite3 = require('sqlite3');
+const { open } = require('sqlite');
+
 puppeteer.use(StealthPlugin());
 
 const app = express();
@@ -20,28 +24,22 @@ app.use(compression());
 const GAMES_DIR = '/games';
 const UPLOAD_TMP = '/tmp/rpg-uploads';
 const SAVES_DIR = path.join(GAMES_DIR, '_saves'); 
-const API_TOKEN = process.env.API_TOKEN || 'SuperSecretKey123'; // Токен для защиты API
+const API_TOKEN = process.env.API_TOKEN || 'SuperSecretKey123'; 
+
+let db; // Глобальная переменная для базы данных
 
 fsp.mkdir(UPLOAD_TMP, { recursive: true }).catch(() => {});
 fsp.mkdir(SAVES_DIR, { recursive: true }).catch(() => {});
 
-// Базовая безопасность HTTP-заголовков
-app.use(helmet({
-    contentSecurityPolicy: false, // Отключаем CSP, так как RPG Maker игры используют eval() и инлайн-скрипты
-    crossOriginEmbedderPolicy: false
-}));
-
+app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
 app.use(express.json({ limit: '50mb' }));
 
-// Лимиты запросов (защита от DDoS и брутфорса)
 const apiLimiter = rateLimit({ windowMs: 60 * 1000, max: 200, message: { error: 'Слишком много запросов' }});
 const uploadLimiter = rateLimit({ windowMs: 60 * 1000, max: 5, message: { error: 'Слишком много загрузок' }});
 app.use('/api/', apiLimiter);
 
-// Middleware авторизации для изменяющих запросов (POST, DELETE)
 function requireAuth(req, res, next) {
-    if (req.method === 'GET') return next(); // Читать можно всем
-    
+    if (req.method === 'GET') return next(); 
     if (req.headers['x-api-token'] !== API_TOKEN) {
         console.log(`[Security] 🛑 Заблокирована попытка доступа (${req.method} ${req.path}). IP: ${req.ip}`);
         return res.status(401).json({ error: 'Отказано в доступе. Неверный токен.' });
@@ -50,11 +48,8 @@ function requireAuth(req, res, next) {
 }
 app.use('/api/', requireAuth);
 
-// ⚡ Умное сохранение с расширением файла
 const storage = multer.diskStorage({
-    destination: function (req, file, cb) {
-        cb(null, UPLOAD_TMP);
-    },
+    destination: function (req, file, cb) { cb(null, UPLOAD_TMP); },
     filename: function (req, file, cb) {
         const ext = path.extname(file.originalname) || '';
         cb(null, 'archive_' + Date.now() + ext);
@@ -63,7 +58,7 @@ const storage = multer.diskStorage({
 
 const upload = multer({
     storage: storage,
-    limits: { fileSize: 5 * 1024 * 1024 * 1024 }, // Лимит 5 ГБ
+    limits: { fileSize: 5 * 1024 * 1024 * 1024 },
     fileFilter: (req, file, cb) => {
         if (file.originalname.match(/\.(zip|7z|rar)$/i)) cb(null, true);
         else cb(new Error('Поддерживаются только ZIP, 7z и RAR!'));
@@ -73,17 +68,12 @@ const upload = multer({
 function escapeHtml(unsafe) {
     return (unsafe || '').toString().replace(/[&<"'>]/g, function(m) {
         switch (m) {
-            case '&': return '&amp;';
-            case '<': return '&lt;';
-            case '>': return '&gt;';
-            case '"': return '&quot;';
-            case "'": return '&#039;';
-            default: return m;
+            case '&': return '&amp;'; case '<': return '&lt;'; case '>': return '&gt;';
+            case '"': return '&quot;'; case "'": return '&#039;'; default: return m;
         }
     });
 }
 
-// Защита от Stack Overflow: ограничение глубины рекурсии (depth)
 async function findGameFolder(dir, depth = 0) {
     if (depth > 10) return null; 
     const items = await fsp.readdir(dir, { withFileTypes: true });
@@ -144,14 +134,26 @@ async function fetchDLsiteCover(rjCode, destPath) {
 }
 
 // =====================================================================
-// DLsite Tags: Фоновая очередь
+// DLsite Tags & Translate
 // =====================================================================
 const backgroundScrapeQueue = [];
 const queuedScrapes = new Set();
 let isBackgroundScraping = false;
 
+async function translateText(text, targetLang = 'en') {
+    if (!text) return '';
+    try {
+        const res = await fetch(`https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${targetLang}&dt=t&q=${encodeURIComponent(text)}`);
+        const data = await res.json();
+        return data[0].map(item => item[0]).join(''); 
+    } catch (e) {
+        console.error('[Translate Error]', e.message);
+        return text; 
+    }
+}
+
 async function processBackgroundScrape() {
-    if (isBackgroundScraping) return; // Если уже работает, тихо ждем
+    if (isBackgroundScraping) return; 
     if (backgroundScrapeQueue.length === 0) {
         console.log(`[Queue] ✅ Очередь пуста. Все задачи выполнены.`);
         return;
@@ -164,17 +166,14 @@ async function processBackgroundScrape() {
     try {
         const scrapedData = await executeFetchDLsiteTags(task.rjCode);
         if (scrapedData && scrapedData.tags && scrapedData.tags.length > 0) {
-            let meta = {};
-            try {
-                const metaRaw = await fsp.readFile(task.metaPath, 'utf8');
-                meta = JSON.parse(metaRaw);
-            } catch(e) {}
             
-            meta.tags = scrapedData.tags;
-            meta.description = scrapedData.description; // ⚡ ДОБАВЛЯЕМ ОПИСАНИЕ
-            meta.scraped = true;
-            await fsp.writeFile(task.metaPath, JSON.stringify(meta, null, 2), 'utf8');
-            console.log(`[Queue] 💾 Теги и Описание для ${task.rjCode} успешно сохранены!`);
+            // ⚡ ТЕПЕРЬ СОХРАНЯЕМ ДАННЫЕ СРАЗУ В БАЗУ ДАННЫХ, А НЕ В ФАЙЛ
+            await db.run(
+                'UPDATE games SET tags = ?, description = ?, scraped = 1 WHERE id = ?',
+                [JSON.stringify(scrapedData.tags), scrapedData.description, task.folder]
+            );
+            console.log(`[Queue] 💾 Теги и Описание для ${task.rjCode} успешно сохранены в БД!`);
+            
         } else {
             console.log(`[Queue] ⚠️ Парсер вернул пустоту для ${task.rjCode}`);
         }
@@ -187,16 +186,13 @@ async function processBackgroundScrape() {
     }
 }
 
-// =====================================================================
-// DLsite Tags: Умный пул прокси + Кэширование
-// =====================================================================
 const MAX_PROXY_ATTEMPTS = 5;
 const DL_PAGE_TIMEOUT_MS = 25000;
 const DL_AJAX_TIMEOUT_MS = 8000;
 const PROXY_TTL_MS = 30 * 60 * 1000; 
-const TAGS_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // Кэш тегов на 24 часа
+const TAGS_CACHE_TTL_MS = 24 * 60 * 60 * 1000; 
 
-const dlsiteTagCache = new Map(); // rjCode -> { data, expiresAt }
+const dlsiteTagCache = new Map(); 
 const proxyPool = new Map();      
 
 function nowMs() { return Date.now(); }
@@ -239,24 +235,9 @@ function buildProxyCandidates(publicList) {
     return Array.from(candidates).slice(0, MAX_PROXY_ATTEMPTS);
 }
 
-// ⚡ Бесплатный переводчик через неофициальное API Google Translate
-async function translateText(text, targetLang = 'en') {
-    if (!text) return '';
-    try {
-        const res = await fetch(`https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${targetLang}&dt=t&q=${encodeURIComponent(text)}`);
-        const data = await res.json();
-        return data[0].map(item => item[0]).join(''); // Склеиваем переведенные абзацы
-    } catch (e) {
-        console.error('[Translate Error]', e.message);
-        return text; // Если Гугл заблокировал запрос, отдаем оригинальный японский текст
-    }
-}
-
 async function executeFetchDLsiteTags(rjCode) {
     const cached = dlsiteTagCache.get(rjCode);
-    if (cached && cached.expiresAt > nowMs()) {
-        return cached.data; // ⚡ Возвращаем сохраненную data (теги + описание)
-    }
+    if (cached && cached.expiresAt > nowMs()) return cached.data; 
 
     const publicList = await getPublicJapaneseProxies();
     const candidates = buildProxyCandidates(publicList);
@@ -265,10 +246,7 @@ async function executeFetchDLsiteTags(rjCode) {
         const proxy = candidates[i];
         let browser;
         try {
-            const args = [
-                '--no-sandbox', '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage', '--disable-gpu', '--lang=en-US'
-            ];
+            const args = ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--lang=en-US'];
             if (proxy !== 'direct') args.push(`--proxy-server=http://${proxy}`);
 
             browser = await puppeteer.launch({ headless: "new", executablePath: '/usr/bin/chromium', args });
@@ -286,14 +264,11 @@ async function executeFetchDLsiteTags(rjCode) {
             await page.goto(url, { waitUntil: 'domcontentloaded' });
             const pageTitle = await page.title();
             
-            if (!pageTitle.includes('DLsite') || pageTitle.includes('Google') || pageTitle === '') {
-                throw new Error('Blocked');
-            }
+            if (!pageTitle.includes('DLsite') || pageTitle.includes('Google') || pageTitle === '') throw new Error('Blocked');
 
             const scrapedData = await page.evaluate(async (rj, timeout) => {
                 let tags = [];
                 let description = '';
-                
                 try {
                     const controller = new AbortController();
                     const timer = setTimeout(() => controller.abort(), timeout);
@@ -307,21 +282,15 @@ async function executeFetchDLsiteTags(rjCode) {
                     const genreLinks = Array.from(document.querySelectorAll('a[href*="/genre/"]'));
                     tags = genreLinks.map(el => el.innerText.trim()).filter(text => text.length > 0);
                 }
-
-                // Ищем описание на странице DLsite
                 const descEl = document.querySelector('[itemprop="description"]') || document.querySelector('.work_parts_area');
                 if (descEl) description = descEl.innerText.trim();
-
                 return { tags, description };
             }, rjCode, DL_AJAX_TIMEOUT_MS); 
 
             if (scrapedData && scrapedData.tags && scrapedData.tags.length > 0) {
                 const uniqueTags = [...new Set(scrapedData.tags)];
-                
-                // ⚡ ИЗМЕНЕНИЕ: Отправляем текст в Google Translate
                 console.log(`[DLsite] 🌐 Переводим описание для ${rjCode} на английский...`);
                 const translatedDesc = await translateText(scrapedData.description, 'en');
-                
                 const finalData = { tags: uniqueTags, description: translatedDesc };
                 
                 updateProxyScore(proxy, true); 
@@ -339,196 +308,169 @@ async function executeFetchDLsiteTags(rjCode) {
     return null;
 }
 
-async function getGameMetadata(folder, gamePath) {
-    console.log(`[API] 🔍 Читаем папку: ${folder}`);
-    const metaPath = path.join(gamePath, 'meta.json');
-    const checkExists = async (p) => { try { await fsp.access(p); return true; } catch { return false; } };
-
-    let existingMeta = {};
-    try {
-        if (await checkExists(metaPath)) {
-            const metaRaw = await fsp.readFile(metaPath, 'utf8');
-            existingMeta = JSON.parse(metaRaw);
-            
-            if (existingMeta.scraped && existingMeta.tags && existingMeta.tags.length > 0) {
-                console.log(`[API] ⏩ ${folder} уже имеет теги, пропускаем.`);
-                return existingMeta;
-            }
-        }
-    } catch(e) {
-        console.log(`[API] ⚠️ Ошибка чтения meta.json для ${folder}:`, e.message);
-    }
-
-    let title = null;
-    try {
-        const sysRaw = await fsp.readFile(path.join(gamePath, 'data', 'System.json'), 'utf8');
-        const sys = JSON.parse(sysRaw);
-        if (sys.gameTitle && !sys.gameTitle.toLowerCase().includes('rmmz') && !sys.gameTitle.toLowerCase().includes('rpgmaker')) {
-            title = sys.gameTitle;
-        }
-    } catch(e) {}
-
-    if (!title) {
-        try {
-            const pkgRaw = await fsp.readFile(path.join(gamePath, 'package.json'), 'utf8');
-            const pkg = JSON.parse(pkgRaw);
-            let pName = pkg.productName || pkg.name;
-            if (pName && !pName.toLowerCase().includes('rmmz') && pName.toLowerCase() !== 'rpgmaker') title = pName;
-        } catch(e) {}
-    }
-
-    if (!title) {
-        title = folder.replace(/\[?RJ\d{6,8}\]?/gi, '').replace(/[-_]/g, ' ').replace(/\s+/g, ' ').trim();
-        if (!title || title.toLowerCase() === 'game') title = folder;
-    }
-
-    let cover = null;
-    let tags = existingMeta.tags || []; 
-
-    if (await checkExists(path.join(gamePath, 'cover.jpg'))) cover = `${folder}/cover.jpg`;
-    else if (await checkExists(path.join(gamePath, 'cover.png'))) cover = `${folder}/cover.png`;
-
-    const rjCode = await findRJCode(folder, gamePath);
-    
-    if (rjCode) {
-        console.log(`[API] 🏷️ Найден RJ-код: ${rjCode} (для папки ${folder})`);
-        if (!cover) {
-            const coverDest = path.join(gamePath, 'cover.jpg');
-            const success = await fetchDLsiteCover(rjCode, coverDest);
-            if (success) cover = `${folder}/cover.jpg`;
-        }
-        
-        if (tags.length === 0 && !queuedScrapes.has(rjCode)) {
-            console.log(`[Queue] ➕ Добавляем ${rjCode} в очередь.`);
-            queuedScrapes.add(rjCode);
-            backgroundScrapeQueue.push({ rjCode, metaPath });
-            processBackgroundScrape();
-        } else if (queuedScrapes.has(rjCode)) {
-            console.log(`[Queue] ⏳ ${rjCode} уже стоит в очереди.`);
-        }
-    } else {
-        console.log(`[API] ❓ RJ-код не найден для ${folder}. Парсинг пропущен.`);
-    }
-
-    if (!cover) {
-        const titles1Path = path.join(gamePath, 'img', 'titles1');
-        if (await checkExists(titles1Path)) {
-            const titleFiles = await fsp.readdir(titles1Path);
-            const validFiles = titleFiles.filter(f => f.match(/\.(png|jpg|jpeg)$/i));
-            if (validFiles.length > 0) cover = `${folder}/img/titles1/${validFiles[0]}`;
-        }
-        if (!cover && await checkExists(path.join(gamePath, 'icon', 'icon.png'))) cover = `${folder}/icon/icon.png`;
-    }
-
-    const finalMeta = { ...existingMeta, title, cover, tags, scraped: (tags && tags.length > 0) };
-    await fsp.writeFile(metaPath, JSON.stringify(finalMeta, null, 2), 'utf8').catch(()=>{});
-    return finalMeta;
+// =====================================================================
+// ⚡ НОВОЕ: Инициализация БД и Синхронизация папок
+// =====================================================================
+async function initDB() {
+    // База данных будет лежать в папке games, чтобы не удаляться при перезапуске Докера
+    db = await open({ filename: path.join(GAMES_DIR, 'library.db'), driver: sqlite3.Database });
+    await db.exec(`
+        CREATE TABLE IF NOT EXISTS games (
+            id TEXT PRIMARY KEY,
+            title TEXT,
+            cover TEXT,
+            tags TEXT,
+            description TEXT,
+            rating INTEGER DEFAULT 0,
+            lastPlayed INTEGER DEFAULT 0,
+            addedAt INTEGER DEFAULT 0,
+            scraped INTEGER DEFAULT 0
+        )
+    `);
 }
 
-app.get('/api/games', async (req, res) => {
-    console.log(`\n[API] 📥 Получен запрос списка игр от фронтенда!`);
-    try {
-        const entries = await fsp.readdir(GAMES_DIR);
-        const games = [];
-        for (let i = 0; i < entries.length; i++) {
-            const folder = entries[i];
-            const gamePath = path.join(GAMES_DIR, folder);
-            try {
-                const stat = await fsp.stat(gamePath);
-                if (!stat.isDirectory() || folder === 'node_modules' || folder === '_saves') continue;
+async function syncDatabase() {
+    console.log('[DB] 🔄 Синхронизация диска с SQLite базой данных...');
+    const entries = await fsp.readdir(GAMES_DIR);
+    const existingGames = await db.all('SELECT id FROM games');
+    const dbIds = existingGames.map(g => g.id);
 
-                const meta = await getGameMetadata(folder, gamePath);
-                games.push({ 
-                    id: folder, title: meta.title, cover: meta.cover, tags: meta.tags || [], 
-                    description: meta.description || '', // ⚡ ОТПРАВЛЯЕМ ОПИСАНИЕ НА ФРОНТ
-                    url: `/${folder}/`, number: games.length + 1, addedAt: stat.birthtimeMs || stat.mtimeMs || 0,
-                    lastPlayed: meta.lastPlayed || 0, rating: meta.rating || 0
-                });
-            } catch(e) {
-                console.error(`[API] ❌ Ошибка в папке ${folder}:`, e.message); 
+    for (const folder of entries) {
+        const gamePath = path.join(GAMES_DIR, folder);
+        let stat;
+        try { stat = await fsp.stat(gamePath); } catch(e) { continue; }
+        
+        if (!stat.isDirectory() || folder === 'node_modules' || folder === '_saves') continue;
+
+        if (!dbIds.includes(folder)) {
+            console.log(`[DB] ➕ Найдена новая игра на диске: ${folder}`);
+            
+            // Пытаемся вытащить имя из файлов движка
+            let title = folder.replace(/\[?RJ\d{6,8}\]?/gi, '').replace(/[-_]/g, ' ').replace(/\s+/g, ' ').trim() || folder;
+            try {
+                const sysRaw = await fsp.readFile(path.join(gamePath, 'data', 'System.json'), 'utf8');
+                const sys = JSON.parse(sysRaw);
+                if (sys.gameTitle && !sys.gameTitle.toLowerCase().includes('rmmz')) title = sys.gameTitle;
+            } catch(e) {}
+
+            if (title === folder) {
+                try {
+                    const pkgRaw = await fsp.readFile(path.join(gamePath, 'package.json'), 'utf8');
+                    let pName = JSON.parse(pkgRaw).productName || JSON.parse(pkgRaw).name;
+                    if (pName && !pName.toLowerCase().includes('rmmz')) title = pName;
+                } catch(e) {}
+            }
+
+            // Ищем обложку
+            let cover = null;
+            const checkExists = async (p) => { try { await fsp.access(p); return true; } catch { return false; } };
+            if (await checkExists(path.join(gamePath, 'cover.jpg'))) cover = `${folder}/cover.jpg`;
+            else if (await checkExists(path.join(gamePath, 'cover.png'))) cover = `${folder}/cover.png`;
+
+            // ⚡ МИГРАЦИЯ: Если есть старый meta.json, переносим его в БД!
+            let tags = [], description = '', rating = 0, lastPlayed = 0, scraped = 0;
+            try {
+                const oldMeta = JSON.parse(await fsp.readFile(path.join(gamePath, 'meta.json'), 'utf8'));
+                if (oldMeta.tags) tags = oldMeta.tags;
+                if (oldMeta.description) description = oldMeta.description;
+                if (oldMeta.rating) rating = oldMeta.rating;
+                if (oldMeta.lastPlayed) lastPlayed = oldMeta.lastPlayed;
+                if (oldMeta.scraped) scraped = 1;
+                if (oldMeta.title && title === folder) title = oldMeta.title;
+            } catch(e) {}
+
+            const rjCode = await findRJCode(folder, gamePath);
+            if (rjCode && !cover) {
+                const success = await fetchDLsiteCover(rjCode, path.join(gamePath, 'cover.jpg'));
+                if (success) cover = `${folder}/cover.jpg`;
+            }
+
+            if (!cover) {
+                const titles1Path = path.join(gamePath, 'img', 'titles1');
+                if (await checkExists(titles1Path)) {
+                    const validFiles = (await fsp.readdir(titles1Path)).filter(f => f.match(/\.(png|jpg|jpeg)$/i));
+                    if (validFiles.length > 0) cover = `${folder}/img/titles1/${validFiles[0]}`;
+                }
+                if (!cover && await checkExists(path.join(gamePath, 'icon', 'icon.png'))) cover = `${folder}/icon/icon.png`;
+            }
+
+            // Добавляем запись в SQLite
+            await db.run(`
+                INSERT INTO games (id, title, cover, tags, description, rating, lastPlayed, addedAt, scraped)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `, [folder, title, cover, JSON.stringify(tags), description, rating, lastPlayed, stat.birthtimeMs || stat.mtimeMs || Date.now(), scraped]);
+
+            // Если тегов нет, отправляем в очередь
+            if (rjCode && tags.length === 0 && !queuedScrapes.has(rjCode)) {
+                queuedScrapes.add(rjCode);
+                backgroundScrapeQueue.push({ rjCode, folder });
+                processBackgroundScrape();
             }
         }
-        console.log(`[API] 📤 Отправляем ${games.length} игр на фронтенд.`);
+    }
+
+    // Удаляем из БД игры, чьи папки были физически удалены с диска
+    for (const id of dbIds) {
+        if (!entries.includes(id)) {
+            console.log(`[DB] 🗑️ Папка не найдена, удаляем из БД: ${id}`);
+            await db.run('DELETE FROM games WHERE id = ?', [id]);
+        }
+    }
+    console.log('[DB] ✅ Синхронизация завершена!');
+}
+
+// =====================================================================
+// ⚡ ОБНОВЛЕННЫЕ API МАРШРУТЫ (РАБОТАЮТ ЧЕРЕЗ БД)
+// =====================================================================
+app.get('/api/games', async (req, res) => {
+    console.log(`[API] 📥 Отдаем список игр из SQLite...`);
+    try {
+        const rows = await db.all('SELECT * FROM games');
+        const games = rows.map(row => ({
+            id: row.id, title: row.title, cover: row.cover,
+            tags: row.tags ? JSON.parse(row.tags) : [],
+            description: row.description, url: `/${row.id}/`, number: 0,
+            addedAt: row.addedAt, lastPlayed: row.lastPlayed, rating: row.rating
+        }));
+        
+        // Присваиваем номера томов на лету
+        games.sort((a,b) => a.addedAt - b.addedAt).forEach((g, i) => g.number = i + 1);
+        
         res.json(games);
     } catch (e) { 
-        console.error(`[API] ❌ КРИТИЧЕСКАЯ ОШИБКА:`, e);
-        res.status(500).json({ error: 'Внутренняя ошибка сервера' }); 
+        console.error(`[API] ❌ ОШИБКА БД:`, e);
+        res.status(500).json({ error: 'Внутренняя ошибка базы данных' }); 
     }
 });
 
 app.post('/api/games/:id/meta', async (req, res) => {
-    const id = path.basename(req.params.id).replace(/[^a-zA-Z0-9а-яА-Я._\-\s\[\]]/g, '');
-    const metaPath = path.join(GAMES_DIR, id, 'meta.json');
+    const id = path.basename(req.params.id);
     try {
-        let meta = {};
-        try {
-            const metaRaw = await fsp.readFile(metaPath, 'utf8');
-            meta = JSON.parse(metaRaw);
-        } catch(e) {}
-
-        if (typeof req.body.rating === 'number') meta.rating = Math.max(0, Math.min(5, req.body.rating));
-        if (typeof req.body.lastPlayed === 'number') meta.lastPlayed = req.body.lastPlayed;
-        meta.scraped = true; 
-
-        await fsp.writeFile(metaPath, JSON.stringify(meta, null, 2), 'utf8');
+        const updates = [];
+        const params = [];
+        if (typeof req.body.rating === 'number') {
+            updates.push('rating = ?'); 
+            params.push(Math.max(0, Math.min(5, req.body.rating)));
+        }
+        if (typeof req.body.lastPlayed === 'number') {
+            updates.push('lastPlayed = ?'); 
+            params.push(req.body.lastPlayed);
+        }
+        
+        if (updates.length > 0) {
+            params.push(id);
+            await db.run(`UPDATE games SET ${updates.join(', ')} WHERE id = ?`, params);
+        }
         res.json({ success: true });
     } catch (e) { 
         console.error(e);
-        res.status(500).json({ error: 'Внутренняя ошибка сервера' }); 
+        res.status(500).json({ error: 'Ошибка БД' }); 
     }
-});
-
-app.get('/api/saves/:gameId', async (req, res) => {
-    const gameId = path.basename(req.params.gameId).replace(/[^a-zA-Z0-9а-яА-Я._\-\s]/g, '');
-    const gameSavesDir = path.join(SAVES_DIR, gameId);
-    try {
-        await fsp.access(gameSavesDir);
-        const files = await fsp.readdir(gameSavesDir);
-        const saves = {};
-        for (const file of files) {
-            if (file.endsWith('.json')) {
-                const key = decodeURIComponent(file.replace('.json', ''));
-                saves[key] = await fsp.readFile(path.join(gameSavesDir, file), 'utf8');
-            }
-        }
-        res.json(saves);
-    } catch(e) { res.json({}); }
-});
-
-app.post('/api/saves/:gameId/:key', async (req, res) => {
-    const gameId = path.basename(req.params.gameId).replace(/[^a-zA-Z0-9а-яА-Я._\-\s]/g, '');
-    const key = path.basename(req.params.key); 
-    const gameSavesDir = path.join(SAVES_DIR, gameId);
-    
-    // Валидация содержимого сохранения
-    const value = req.body.value;
-    if (typeof value !== 'string') return res.status(400).json({ error: 'Сохранение должно быть строкой' });
-    if (value.length > 5_000_000) return res.status(413).json({ error: 'Слишком большой файл сохранения' });
-
-    try {
-        await fsp.mkdir(gameSavesDir, { recursive: true });
-        const safeFileName = encodeURIComponent(key) + '.json';
-        await fsp.writeFile(path.join(gameSavesDir, safeFileName), value, 'utf8');
-        res.json({ success: true });
-    } catch(e) { 
-        console.error(e);
-        res.status(500).json({ error: 'Внутренняя ошибка сервера' }); 
-    }
-});
-
-app.delete('/api/saves/:gameId/:key', async (req, res) => {
-    const gameId = path.basename(req.params.gameId).replace(/[^a-zA-Z0-9а-яА-Я._\-\s]/g, '');
-    const key = path.basename(req.params.key);
-    const safeFileName = encodeURIComponent(key) + '.json';
-    try {
-        await fsp.unlink(path.join(SAVES_DIR, gameId, safeFileName));
-        res.json({ success: true });
-    } catch(e) { res.json({ success: true }); }
 });
 
 app.post('/api/upload', uploadLimiter, upload.single('game'), async (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'Файл не получен' });
-    console.log(`[Upload] 📥 Принят файл: ${req.file.originalname} | Размер: ${(req.file.size / 1024 / 1024).toFixed(2)} MB`);
+    console.log(`[Upload] 📥 Принят архив: ${req.file.originalname}`);
     
     const archivePath = req.file.path; 
     let originalName = req.file.originalname.replace(/\.(zip|7z|rar)$/i, '').replace(/[^\w\s\-\.а-яА-Я\[\]]/g, '_').trim();
@@ -540,38 +482,34 @@ app.post('/api/upload', uploadLimiter, upload.single('game'), async (req, res) =
     try {
         await fsp.mkdir(tmpExtractDir, { recursive: true });
         
-        if (isRar) {
-            console.log(`[Upload] 🗜️ Распаковка RAR архива через официальный алгоритм...`);
-            await execFilePromise('unrar', ['x', '-y', archivePath, tmpExtractDir + '/']);
-        } else {
-            console.log(`[Upload] 🗜️ Распаковка ZIP/7Z через 7-Zip...`);
+        if (isRar) await execFilePromise('unrar', ['x', '-y', archivePath, tmpExtractDir + '/']);
+        else {
             const { stdout } = await execFilePromise('7zz', ['l', '-ba', '-slt', archivePath]);
             const lines = stdout.split('\n').filter(l => l.startsWith('Path = '));
             for (const line of lines) {
                 const entryPath = path.resolve(tmpExtractDir, line.replace('Path = ', '').trim());
-                if (!entryPath.startsWith(path.resolve(tmpExtractDir) + path.sep)) {
-                    throw new Error('Обнаружен опасный путь в архиве (Zip Slip)');
-                }
+                if (!entryPath.startsWith(path.resolve(tmpExtractDir) + path.sep)) throw new Error('Zip Slip');
             }
             await execFilePromise('7zz', ['x', archivePath, `-o${tmpExtractDir}`, '-y']);
         }
         
         let sourceDir = await findGameFolder(tmpExtractDir);
-        if (!sourceDir) throw new Error("В архиве не найдена папка 'www' или файл 'index.html'");
+        if (!sourceDir) throw new Error("Не найдена папка 'www'");
+        
         let finalDestFolder = originalName;
         let counter = 1;
-        while (fs.existsSync(path.join(GAMES_DIR, finalDestFolder))) {
-            finalDestFolder = `${originalName}_${counter}`;
-            counter++;
-        }
+        while (fs.existsSync(path.join(GAMES_DIR, finalDestFolder))) { finalDestFolder = `${originalName}_${counter}`; counter++; }
         const finalPath = path.join(GAMES_DIR, finalDestFolder);
         
         await execFilePromise('chmod', ['-R', '755', sourceDir]);
-        
         await fsp.cp(sourceDir, finalPath, { recursive: true });
+        
+        // ⚡ После загрузки просим сервер проверить новую папку и добавить в БД
+        await syncDatabase(); 
+
         await fsp.rm(tmpExtractDir, { recursive: true, force: true }).catch(() => {});
         await fsp.unlink(archivePath).catch(() => {});
-        res.json({ success: true, folder: finalDestFolder, message: `Игра "${finalDestFolder}" успешно добавлена!` });
+        res.json({ success: true, folder: finalDestFolder, message: `Игра "${finalDestFolder}" добавлена!` });
     } catch (e) {
         console.error('[Upload Error]:', e.message ? e.message.substring(0, 300) + '...' : e);
         await fsp.rm(tmpExtractDir, { recursive: true, force: true }).catch(() => {});
@@ -581,13 +519,52 @@ app.post('/api/upload', uploadLimiter, upload.single('game'), async (req, res) =
 });
 
 app.delete('/api/games/:id', async (req, res) => {
-    const id = path.basename(req.params.id).replace(/[^a-zA-Z0-9а-яА-Я._\-\s\[\]]/g, '');
+    const id = path.basename(req.params.id);
     const gamePath = path.join(GAMES_DIR, id);
     try {
         await fsp.access(gamePath);
         await fsp.rm(gamePath, { recursive: true, force: true });
+        await db.run('DELETE FROM games WHERE id = ?', [id]); // Удаляем из БД
         res.json({ success: true });
     } catch(e) { res.status(404).json({ error: 'Игра не найдена' }); }
+});
+
+// Сохранения остаются в файлах, так как это огромные JSON-строки
+app.get('/api/saves/:gameId', async (req, res) => {
+    const gameId = path.basename(req.params.gameId);
+    const gameSavesDir = path.join(SAVES_DIR, gameId);
+    try {
+        const files = await fsp.readdir(gameSavesDir);
+        const saves = {};
+        for (const file of files) {
+            if (file.endsWith('.json')) {
+                saves[decodeURIComponent(file.replace('.json', ''))] = await fsp.readFile(path.join(gameSavesDir, file), 'utf8');
+            }
+        }
+        res.json(saves);
+    } catch(e) { res.json({}); }
+});
+
+app.post('/api/saves/:gameId/:key', async (req, res) => {
+    const gameId = path.basename(req.params.gameId);
+    const key = path.basename(req.params.key); 
+    const gameSavesDir = path.join(SAVES_DIR, gameId);
+    const value = req.body.value;
+    if (typeof value !== 'string') return res.status(400).json({ error: 'Bad data' });
+    try {
+        await fsp.mkdir(gameSavesDir, { recursive: true });
+        await fsp.writeFile(path.join(gameSavesDir, encodeURIComponent(key) + '.json'), value, 'utf8');
+        res.json({ success: true });
+    } catch(e) { res.status(500).json({ error: 'Server error' }); }
+});
+
+app.delete('/api/saves/:gameId/:key', async (req, res) => {
+    const gameId = path.basename(req.params.gameId);
+    const key = path.basename(req.params.key);
+    try {
+        await fsp.unlink(path.join(SAVES_DIR, gameId, encodeURIComponent(key) + '.json'));
+        res.json({ success: true });
+    } catch(e) { res.json({ success: true }); }
 });
 
 app.use(express.static(path.join(__dirname, 'public')));
@@ -597,11 +574,11 @@ app.get('*', async (req, res, next) => {
 
     let reqPath = decodeURIComponent(req.path);
     let filePath = path.join(GAMES_DIR, reqPath);
-
     const normalizedGamesDir = path.resolve(GAMES_DIR);
     const normalizedFilePath = path.resolve(filePath);
+    
     if (normalizedFilePath !== normalizedGamesDir && !normalizedFilePath.startsWith(normalizedGamesDir + path.sep)) {
-        return res.status(403).send('Доступ запрещен / Forbidden');
+        return res.status(403).send('Доступ запрещен');
     }
 
     try {
@@ -610,32 +587,17 @@ app.get('*', async (req, res, next) => {
 
         if (stat && stat.isDirectory()) {
             if (!req.path.endsWith('/')) return res.redirect(req.path + '/');
-
             let hasRoot = false, hasWww = false;
             try { await fsp.access(path.join(filePath, 'index.html')); hasRoot = true; } catch(e) {}
-            
             if (hasRoot) {
-                reqPath += 'index.html';
-                filePath = path.join(filePath, 'index.html');
+                reqPath += 'index.html'; filePath = path.join(filePath, 'index.html');
             } else {
                 try { await fsp.access(path.join(filePath, 'www', 'index.html')); hasWww = true; } catch(e) {}
-                
-                if (hasWww) {
-                    return res.redirect(req.path + 'www/');
-                } else {
+                if (hasWww) return res.redirect(req.path + 'www/');
+                else {
                     const deepDir = await findGameFolder(filePath);
-                    if (deepDir) {
-                        const relPath = path.relative(GAMES_DIR, deepDir).replace(/\\/g, '/');
-                        return res.redirect('/' + relPath + '/');
-                    } else {
-                        const safePath = escapeHtml(req.path);
-                        return res.status(404).send(`
-                            <div style="background:#080608; color:#e8dfc8; font-family:'Cinzel', sans-serif; text-align:center; padding:50px; height:100vh; box-sizing:border-box;">
-                                <h1 style="color:#c9a84c;">Магия рассеялась...</h1>
-                                <p>В папке <b>${safePath}</b> не найден исполняемый файл <code>index.html</code>.</p>
-                            </div>
-                        `);
-                    }
+                    if (deepDir) return res.redirect('/' + path.relative(GAMES_DIR, deepDir).replace(/\\/g, '/') + '/');
+                    return res.status(404).send(`<div style="color:red; text-align:center; padding:50px;">Магия рассеялась... index.html не найден.</div>`);
                 }
             }
         }
@@ -662,7 +624,6 @@ app.get('*', async (req, res, next) => {
                 let html = await fsp.readFile(filePath, 'utf8');
                 html = html.replace(/<meta[^>]+http-equiv=['"]?Content-Security-Policy['"]?[^>]*>/gi, '');
                 html = html.replace('<body', '<body><script src="/rpg-fixes.js"></script><x ');
-                
                 res.setHeader('Content-Type', 'text/html');
                 res.setHeader('Access-Control-Allow-Origin', '*');
                 return res.send(html);
@@ -671,8 +632,11 @@ app.get('*', async (req, res, next) => {
             return res.sendFile(filePath);
         }
     } catch(e) {}
-    
     next();
 });
 
-app.listen(3000, () => console.log('🚀 RPG API: Secured, Queued, and Ready!'));
+// ⚡ ЗАПУСК СЕРВЕРА С БАЗОЙ ДАННЫХ
+initDB().then(async () => {
+    await syncDatabase();
+    app.listen(3000, () => console.log('🚀 RPG API: SQLite подключен, сервер готов!'));
+}).catch(console.error);
