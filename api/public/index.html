@@ -245,9 +245,27 @@
 
 <footer>RPG Library · Home Server</footer>
 
+<script src="/socket.io/socket.io.js"></script>
 <script>
 const ROMAN = ['Ⅰ','Ⅱ','Ⅲ','Ⅳ','Ⅴ','Ⅵ','Ⅶ','Ⅷ','Ⅸ','Ⅹ','Ⅺ','Ⅻ'];
 const API = ''; 
+// ⚡ ПОДКЛЮЧАЕМ СОКЕТЫ К БРАУЗЕРУ
+const socket = io();
+
+// Слушаем новости о распаковке архивов
+socket.on('upload-status', function(data) {
+    var progressWrap = document.getElementById('progress-wrap');
+    if (progressWrap.style.display === 'block') {
+        document.getElementById('progress-text').textContent = data.message;
+    }
+});
+
+// Слушаем новости о фоновом парсинге тегов
+socket.on('scrape-success', function(data) {
+    showToast(data.message, 'success');
+    loadGames(); // Мгновенно обновляем сетку игр, чтобы появились новые теги!
+});
+
 let allGames = [];
 let currentSort = 'newest';
 
