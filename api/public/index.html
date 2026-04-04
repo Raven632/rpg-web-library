@@ -230,7 +230,27 @@
             </div>
             <div class="modal-info">
                 <div class="modal-number" id="modal-number"></div>
-                <h2 id="modal-title"></h2>
+                <div class="modal-info">
+                <div class="modal-number" id="modal-number"></div>
+                
+                <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom: 25px;">
+                    <h2 id="modal-title" style="margin-bottom:0;"></h2>
+                    <button id="modal-edit-btn" style="background:none; border:none; color:var(--text-dim); cursor:pointer; font-size:1.5rem; transition:color 0.2s;" title="Редактировать метаданные">⚙️</button>
+                </div>
+
+                <div id="modal-edit-form" style="display:none; margin-bottom:25px; background:rgba(0,0,0,0.4); padding:15px; border:1px solid rgba(201,168,76,0.3); border-radius:6px; box-shadow: inset 0 0 20px rgba(0,0,0,0.8);">
+                    <input type="text" id="edit-title-input" placeholder="Название игры" style="width:100%; padding:10px; margin-bottom:10px; background:rgba(20,18,26,0.9); color:var(--text); border:1px solid var(--gold-dim); border-radius:4px; font-family:'Cinzel',serif; font-size:1rem; outline:none;">
+                    
+                    <input type="text" id="edit-rj-input" placeholder="RJ-код (например: RJ123456) — Оставьте пустым, если не нужно" style="width:100%; padding:10px; margin-bottom:15px; background:rgba(20,18,26,0.9); color:var(--text); border:1px solid var(--gold-dim); border-radius:4px; font-family:'Cinzel',serif; outline:none;">
+                    
+                    <div style="display:flex; gap:10px;">
+                        <button id="edit-save-btn" style="flex:1; padding:10px; background:var(--gold-dim); color:#000; border:none; border-radius:4px; cursor:pointer; font-family:'Cinzel',serif; font-weight:bold; transition:background 0.3s;">💾 Сохранить</button>
+                        <button id="edit-cancel-btn" style="padding:10px 15px; background:none; color:var(--text-dim); border:1px solid var(--text-dim); border-radius:4px; cursor:pointer; font-family:'Cinzel',serif; transition:all 0.3s;">Отмена</button>
+                    </div>
+                    <div id="edit-status" style="font-size:0.8rem; color:var(--gold-light); margin-top:12px; display:none; text-align:center; animation: blink 1.5s infinite;">Поиск данных на DLsite... (ожидание ~15 сек)</div>
+                </div>
+                
+                <div class="modal-meta">
                 <div class="modal-meta">
                     <span id="modal-added"></span>
                     <span id="modal-played"></span>
@@ -477,6 +497,97 @@ function renderGames(games) {
                     window.location.href = game.url; 
                 });
             };
+
+            // --- ⚡ ЛОГИКА ФОРМЫ РЕДАКТИРОВАНИЯ ---
+            const editForm = document.getElementById('modal-edit-form');
+            const titleDisplay = document.getElementById('modal-title');
+            const saveBtn = document.getElementById('edit-save-btn');
+            const statusEl = document.getElementById('edit-status');
+            
+            // Сброс состояния при открытии модалки
+            editForm.style.display = 'none';
+            titleDisplay.style.display = 'block';
+            document.getElementById('edit-title-input').value = game.title;
+            document.getElementById('edit-rj-input').value = ''; 
+
+            document.getElementById('modal-edit-btn').onclick = function() {
+                titleDisplay.style.display = 'none';
+                editForm.style.display = 'block';
+            };
+
+            document.getElementById('edit-cancel-btn').onclick = function() {
+                titleDisplay.style.display = 'block';
+                editForm.style.display = 'none';
+            };
+
+            saveBtn.onclick = async function() {
+                const newTitle = document.getElementById('edit-title-input').value.trim();
+                const newRj = document.getElementById('edit-rj-input').value.trim();
+                
+                statusEl.style.display = 'block';
+                statusEl.textContent = newRj ? 'Связь с серверами DLsite... (ожидание ~15 сек)' : 'Сохранение...';
+                saveBtn.disabled = true;
+                saveBtn.style.opacity = '0.5';
+
+                try {
+                    const res = await fetch(`${API}/api/games/${encodeURIComponent(game.id)}/edit`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'x-api-token': 'SuperSecretKey123' },
+                        body: JSON.stringify({ title: newTitle, rjCode: newRj })
+                    });
+                    
+                    const data = await res.json();
+                    if (data.success) {
+                        // ⚡ Если есть предупреждение (нет тегов), показываем его желтым/красным, иначе успех
+                        if (data.warning) {
+                            showToast(data.warning, 'error'); 
+                        } else {
+                            showToast('Том успешно переписан!', 'success');
+                        }
+                        // Обновляем локальный объект игры
+                        game.title = data.title;
+                        game.cover = data.cover;
+                        game.tags = data.tags;
+                        game.description = data.description;
+                        
+                        // Мгновенно обновляем UI модального окна
+                        titleDisplay.textContent = game.title;
+                        if (game.cover) {
+                            document.getElementById('modal-cover').src = game.cover;
+                            document.getElementById('modal-cover').style.display = 'block';
+                            document.getElementById('modal-cover-placeholder').style.display = 'none';
+                        }
+                        
+                        tagsDiv.innerHTML = '';
+                        if (game.tags && game.tags.length > 0) {
+                            game.tags.forEach(t => {
+                                const span = document.createElement('span'); span.className = 'tag'; span.textContent = t; tagsDiv.appendChild(span);
+                            });
+                        }
+                        
+                        if (game.description) {
+                            descDiv.textContent = game.description;
+                            descDiv.style.display = 'block';
+                        }
+
+                        // Закрываем форму
+                        titleDisplay.style.display = 'block';
+                        editForm.style.display = 'none';
+                        
+                        // Тихо обновляем главную сетку на фоне
+                        loadGames();
+                    } else {
+                        showToast(data.error, 'error');
+                    }
+                } catch(e) {
+                    showToast('Магическая сеть недоступна', 'error');
+                } finally {
+                    saveBtn.disabled = false;
+                    saveBtn.style.opacity = '1';
+                    statusEl.style.display = 'none';
+                }
+            };
+            // --- КОНЕЦ ЛОГИКИ РЕДАКТИРОВАНИЯ ---
 
             document.getElementById('game-modal').classList.add('active');
         });

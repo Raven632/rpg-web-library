@@ -219,123 +219,178 @@ async function processBackgroundScrape() {
     }
 }
 
-const MAX_PROXY_ATTEMPTS = 5;
-const DL_PAGE_TIMEOUT_MS = 25000;
-const DL_AJAX_TIMEOUT_MS = 8000;
-const PROXY_TTL_MS = 30 * 60 * 1000;
 const TAGS_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
-
 const dlsiteTagCache = new Map();
-const proxyPool = new Map();
 
 function nowMs() { return Date.now(); }
-function cleanupProxyPool() {
-    const now = nowMs();
-    for (const [proxy, meta] of proxyPool.entries()) {
-        if (now - meta.lastUsed > PROXY_TTL_MS) proxyPool.delete(proxy);
-    }
-}
 
-function updateProxyScore(proxy, isSuccess) {
-    if (!proxy || proxy === 'direct') return;
-    const meta = proxyPool.get(proxy) || { score: 0, fails: 0, lastUsed: nowMs() };
-    meta.lastUsed = nowMs();
-    if (isSuccess) { meta.score += 3; meta.fails = 0; }
-    else { meta.score -= 2; meta.fails += 1; }
-    if (meta.fails >= 2 || meta.score <= -3) proxyPool.delete(proxy);
-    else proxyPool.set(proxy, meta);
-}
-
-async function getPublicJapaneseProxies() {
+// ⚡ 1. УСИЛЕННЫЙ ЯПОНСКИЙ КАНАЛ (Используем 2 независимые базы прокси)
+// ⚡ 1. УСИЛЕННЫЙ ЯПОНСКИЙ КАНАЛ (ПАРАЛЛЕЛЬНАЯ АТАКА - ВЕЕРНЫЙ ЗАПРОС)
+async function fetchViaJapanProxy(url) {
     try {
-        const res = await fetch('https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=10000&country=JP');
-        if (!res.ok) throw new Error('Proxy API error');
-        const text = await res.text();
-        return text.split('\n').map(p => p.trim()).filter(p => p.includes(':')).sort(() => Math.random() - 0.5);
-    } catch (e) { return []; }
+        console.log('[Scraper] 📡 Собираем Японские прокси из нескольких баз...');
+        let proxies = [];
+
+        // База 1: ProxyScrape
+        try {
+            const res1 = await fetch('https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=10000&country=JP');
+            if (res1.ok) {
+                const text1 = await res1.text();
+                proxies.push(...text1.split('\n').map(p => p.trim()).filter(p => p.includes(':')));
+            }
+        } catch(e) {}
+
+        // База 2: Geonode
+        try {
+            const res2 = await fetch('https://proxylist.geonode.com/api/proxy-list?country=JP&protocols=http&limit=50&sort_by=lastChecked&sort_type=desc');
+            if (res2.ok) {
+                const json2 = await res2.json();
+                if (json2.data) proxies.push(...json2.data.map(p => `${p.ip}:${p.port}`));
+            }
+        } catch(e) {}
+
+        // База 3: Дополнительный GitHub-источник для страховки
+        try {
+            const res3 = await fetch('https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt');
+            if (res3.ok) {
+                const text3 = await res3.text();
+                // Так как тут весь мир, фильтруем хотя бы по порту 8080/3128/80 (частые для JP) для количества
+                proxies.push(...text3.split('\n').map(p => p.trim()).filter(p => p.includes(':')).slice(0, 20));
+            }
+        } catch(e) {}
+
+        // Убираем дубликаты и перемешиваем
+        proxies = [...new Set(proxies)].sort(() => Math.random() - 0.5);
+
+        if (proxies.length === 0) {
+            console.log('[Scraper] ⚠️ Японские прокси сейчас недоступны.');
+            return null;
+        }
+
+        // Берем до 20 прокси для одновременного удара
+        const maxConcurrent = Math.min(20, proxies.length);
+        const selectedProxies = proxies.slice(0, maxConcurrent);
+        
+        console.log(`[Scraper] 🚀 ЗАПУСК ПАРАЛЛЕЛЬНОЙ АТАКИ через ${maxConcurrent} прокси одновременно...`);
+
+        // Создаем массив одновременно выполняющихся задач (Promise)
+        const promises = selectedProxies.map((proxy, index) => {
+            return new Promise(async (resolve, reject) => {
+                try {
+                    // Уменьшаем таймаут до 7 секунд (кто не успел, тот опоздал)
+                    const { stdout } = await execFilePromise('curl', [
+                        '-sS', '-L', '-m', '7', 
+                        '-x', proxy, 
+                        '-H', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+                        url
+                    ]);
+                    
+                    const data = JSON.parse(stdout); 
+                    if (data && data[0] && data[0].work_name) {
+                        console.log(`[Scraper] 🎯 ПРОРЫВ! Прокси ${proxy} (Поток ${index + 1}) первым достал данные!`);
+                        resolve(data); // Первый успешный завершает всю гонку (Promise.any)
+                    } else {
+                        reject(new Error('Пустой JSON'));
+                    }
+                } catch (e) {
+                    reject(e); // Молча убиваем неудачные потоки
+                }
+            });
+        });
+
+        // ⚡ PROMISE.ANY: Магия NodeJS. Возвращает результат ПЕРВОГО успешного промиса
+        // и мгновенно игнорирует все остальные ошибки и таймауты!
+        try {
+            const winningData = await Promise.any(promises);
+            return winningData;
+        } catch (e) {
+            console.log(`[Scraper] 💀 Параллельная атака захлебнулась. Ни один из ${maxConcurrent} прокси не смог пробиться за 7 секунд.`);
+        }
+
+    } catch (e) {
+        console.error('[Scraper] ❌ Системная ошибка JP-канала:', e.message);
+    }
+    return null;
 }
 
-function buildProxyCandidates(publicList) {
-    cleanupProxyPool();
-    const remembered = [...proxyPool.entries()].sort((a, b) => b[1].score - a[1].score).map(entry => entry[0]);
-    const trustedProxy = process.env.DLSITE_JP_PROXY || null;
-    let candidates = new Set();
-    if (trustedProxy) candidates.add(trustedProxy);
-    remembered.forEach(p => candidates.add(p));
-    publicList.forEach(p => candidates.add(p));
-    if (candidates.size === 0) candidates.add('direct');
-    return Array.from(candidates).slice(0, MAX_PROXY_ATTEMPTS);
+// ⚡ 2. ОБРАБОТЧИК И ПЕРЕВОДЧИК
+async function processParsedData(gameData, rjCode) {
+    let tags = [];
+    if (gameData.genres) {
+        tags = gameData.genres.map(g => g.name);
+    }
+    
+    let description = gameData.intro_s || gameData.intro || '';
+    description = description.replace(/<[^>]*>?/gm, '').trim();
+
+    console.log(`[Scraper] 🏷️ Найдено тегов: ${tags.length}`);
+    
+    if (tags.length > 0) {
+        const uniqueTags = [...new Set(tags)];
+        console.log(`[Scraper] 🗣️ Переводим описание...`);
+        const translatedDesc = await translateText(description, 'en');
+        const finalData = { tags: uniqueTags, description: translatedDesc };
+        
+        dlsiteTagCache.set(rjCode, { data: finalData, expiresAt: nowMs() + TAGS_CACHE_TTL_MS }); 
+        console.log(`[Scraper] ✅ УСПЕХ! Данные расшифрованы.`);
+        return finalData;
+    }
+    return null;
 }
 
+// ⚡ 3. ГЛАВНАЯ ФУНКЦИЯ (С обходом Language Lock)
 async function executeFetchDLsiteTags(rjCode) {
     const cached = dlsiteTagCache.get(rjCode);
     if (cached && cached.expiresAt > nowMs()) return cached.data;
 
-    const publicList = await getPublicJapaneseProxies();
-    const candidates = buildProxyCandidates(publicList);
+    console.log(`\n[Scraper] 🚀=== СТАРТ БЫСТРОГО ПАРСИНГА ДЛЯ ${rjCode} ===🚀`);
+    
+    // ⚡ ХИТРОСТЬ: Пробуем сначала Английский магазин, затем Японский
+    const locales = ['en_US', 'ja_JP'];
 
-    for (let i = 0; i < candidates.length; i++) {
-        const proxy = candidates[i];
-        let browser;
-        try {
-            const args = ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--lang=en-US'];
-            if (proxy !== 'direct') args.push(`--proxy-server=http://${proxy}`);
+    for (const loc of locales) {
+        console.log(`[Scraper] 🌍 Проверяем локаль магазина: ${loc}...`);
+        const targetUrl = `https://www.dlsite.com/maniax/api/=/product.json?workno=${rjCode}&locale=${loc}`;
+        
+        const gateways = [
+            `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`,
+            `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetUrl)}`,
+            `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`
+        ];
 
-            browser = await puppeteer.launch({ headless: "new", executablePath: '/usr/bin/chromium', args });
-            const page = await browser.newPage();
-            page.setDefaultNavigationTimeout(DL_PAGE_TIMEOUT_MS);
-
-            await page.setCookie({ name: 'adultchecked', value: '1', domain: '.dlsite.com', path: '/' });
-            await page.setRequestInterception(true);
-            page.on('request', (req) => {
-                if (['image', 'stylesheet', 'font', 'media'].includes(req.resourceType())) req.abort();
-                else req.continue();
-            });
-
-            const url = `https://www.dlsite.com/maniax/work/=/product_id/${rjCode}.html?locale=en_US`;
-            await page.goto(url, { waitUntil: 'domcontentloaded' });
-            const pageTitle = await page.title();
-
-            if (!pageTitle.includes('DLsite') || pageTitle.includes('Google') || pageTitle === '') throw new Error('Blocked');
-
-            const scrapedData = await page.evaluate(async (rj, timeout) => {
-                let tags = [];
-                let description = '';
-                try {
-                    const controller = new AbortController();
-                    const timer = setTimeout(() => controller.abort(), timeout);
-                    const apiRes = await fetch(`https://www.dlsite.com/maniax/product/info/ajax?product_id=${rj}`, { signal: controller.signal });
-                    clearTimeout(timer);
-                    const data = await apiRes.json();
-                    if (data && data[rj] && data[rj].genres) tags = data[rj].genres.map(g => g.name);
-                } catch (e) {}
-
-                if (tags.length === 0) {
-                    const genreLinks = Array.from(document.querySelectorAll('a[href*="/genre/"]'));
-                    tags = genreLinks.map(el => el.innerText.trim()).filter(text => text.length > 0);
+        for (let i = 0; i < gateways.length; i++) {
+            console.log(`[Scraper] 🌐 Запрос через шлюз ${i + 1}...`);
+            try {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 8000); 
+                const res = await fetch(gateways[i], { signal: controller.signal });
+                clearTimeout(timeoutId);
+                
+                if (!res.ok) throw new Error(`Статус ${res.status}`);
+                const data = await res.json();
+                
+                // Если API вернуло данные - мы победили!
+                if (data && data[0] && data[0].work_name) {
+                    return await processParsedData(data[0], rjCode);
                 }
-                const descEl = document.querySelector('[itemprop="description"]') || document.querySelector('.work_parts_area');
-                if (descEl) description = descEl.innerText.trim();
-                return { tags, description };
-            }, rjCode, DL_AJAX_TIMEOUT_MS);
-
-            if (scrapedData && scrapedData.tags && scrapedData.tags.length > 0) {
-                const uniqueTags = [...new Set(scrapedData.tags)];
-                const translatedDesc = await translateText(scrapedData.description, 'en');
-                const finalData = { tags: uniqueTags, description: translatedDesc };
-
-                updateProxyScore(proxy, true);
-                dlsiteTagCache.set(rjCode, { data: finalData, expiresAt: nowMs() + TAGS_CACHE_TTL_MS });
-                await browser.close();
-                return finalData;
-            } else {
-                throw new Error('Soft-Lock');
+                throw new Error('Данные пусты (Регионлок)');
+            } catch (e) {
+                console.warn(`[Scraper] ⚠️ Шлюз ${i + 1} не справился:`, e.message);
             }
-        } catch (error) {
-            updateProxyScore(proxy, false);
-            if (browser) await browser.close();
         }
     }
+
+    // Если даже японская версия через шлюзы США не отдалась, значит это жесткий IP-блок
+    console.log(`[Scraper] 💀 Шлюзы бессильны (Жесткий IP-блок). Запуск Японского спецназа...`);
+    const jpUrl = `https://www.dlsite.com/maniax/api/=/product.json?workno=${rjCode}&locale=en_US`;
+    const jpData = await fetchViaJapanProxy(jpUrl);
+    
+    if (jpData && jpData[0] && jpData[0].work_name) {
+        console.log(`[Scraper] 🌸 Японский прокси успешно пробил защиту!`);
+        return await processParsedData(jpData[0], rjCode);
+    }
+
+    console.log(`[Scraper] ❌ Финальный отказ. Парсинг провален.`);
     return null;
 }
 
@@ -434,19 +489,60 @@ app.get('/api/games', async (req, res) => {
     } catch (e) { res.status(500).json({ error: 'DB Error' }); }
 });
 
-app.post('/api/games/:id/meta', async (req, res) => {
-    const id = path.basename(req.params.id);
+// 🔥 РУЧНОЕ РЕДАКТИРОВАНИЕ И ПРИНУДИТЕЛЬНЫЙ ПАРСИНГ (УЛУЧШЕНО)
+app.post('/api/games/:id/edit', async (req, res) => {
+    const folder = path.basename(req.params.id);
+    const { title, rjCode } = req.body;
+    const gamePath = path.join(GAMES_DIR, folder);
+
     try {
-        const updates = [];
-        const params = [];
-        if (typeof req.body.rating === 'number') { updates.push('rating = ?'); params.push(Math.max(0, Math.min(5, req.body.rating))); }
-        if (typeof req.body.lastPlayed === 'number') { updates.push('lastPlayed = ?'); params.push(req.body.lastPlayed); }
-        if (updates.length > 0) {
-            params.push(id);
-            await db.run(`UPDATE games SET ${updates.join(', ')} WHERE id = ?`, params);
+        let scrapeWarning = null;
+
+        // 1. Обновляем название игры
+        if (title) {
+            await db.run('UPDATE games SET title = ? WHERE id = ?', [title, folder]);
         }
-        res.json({ success: true });
-    } catch (e) { res.status(500).json({ error: 'DB Error' }); }
+
+        // 2. Если передан RJ-код, насильно скрейпим DLsite
+        if (rjCode && rjCode.match(/RJ\d+/i)) {
+            const cleanRj = rjCode.match(/RJ\d+/i)[0].toUpperCase();
+            console.log(`[Manual Edit] 🕵️‍♂️ Поиск для: ${cleanRj}`);
+
+            // Скачиваем обложку
+            const coverDest = path.join(gamePath, 'cover.jpg');
+            const coverSuccess = await fetchDLsiteCover(cleanRj, coverDest);
+            if (coverSuccess) {
+                await db.run('UPDATE games SET cover = ? WHERE id = ?', [`${folder}/cover.jpg`, folder]);
+            }
+
+            // Парсим теги и описание
+            const scrapedData = await executeFetchDLsiteTags(cleanRj);
+            if (scrapedData && scrapedData.tags && scrapedData.tags.length > 0) {
+                await db.run(
+                    'UPDATE games SET tags = ?, description = ?, scraped = 1 WHERE id = ?',
+                    [JSON.stringify(scrapedData.tags), scrapedData.description, folder]
+                );
+            } else {
+                // ⚡ ЕСЛИ ТЕГИ НЕ НАЙДЕНЫ — НЕ ВЫДАЕМ ОШИБКУ 404, А ПРОСТО ПРЕДУПРЕЖДАЕМ
+                scrapeWarning = 'Обложка обновлена, но теги не найдены (Возможно защита Cloudflare или игра из раздела Pro).';
+            }
+        }
+
+        // 3. Возвращаем обновленные данные (даже если теги не нашлись, мы вернем новое имя и обложку!)
+        const updatedGame = await db.get('SELECT * FROM games WHERE id = ?', [folder]);
+        res.json({
+            success: true,
+            warning: scrapeWarning,
+            title: updatedGame.title,
+            cover: updatedGame.cover,
+            tags: updatedGame.tags ? JSON.parse(updatedGame.tags) : [],
+            description: updatedGame.description
+        });
+
+    } catch (e) {
+        console.error('[Edit Error]', e);
+        res.status(500).json({ error: 'Сбой сервера при обновлении' });
+    }
 });
 
 // 🔥 БРОНЕБОЙНАЯ ЗАГРУЗКА И РАСПАКОВКА
