@@ -116,7 +116,7 @@ test('findRJCode skips large files and returns null when no code', async () => {
     const root = await fsp.mkdtemp(path.join(os.tmpdir(), 'rpg-tests-'));
     try {
         const largePath = path.join(root, 'big.txt');
-        await fsp.writeFile(largePath, 'A'.repeat(600000));
+        await fsp.writeFile(largePath, Buffer.alloc(600000, 65));
         const result = await findRJCode('NoCodeHere', root);
         assert.equal(result, null);
     } finally {
