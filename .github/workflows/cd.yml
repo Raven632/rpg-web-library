@@ -1,0 +1,27 @@
+name: Deploy to Home Server
+
+on:
+  workflow_run:
+    workflows: ["Node.js CI"] # Запускать только после успешных тестов
+    types:
+      - completed
+
+jobs:
+  deploy:
+    name: Auto Deploy
+    # Проверяем, что тесты прошли успешно (зеленая галочка)
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    # Выполнять НА ТВОЕМ ДОМАШНЕМ СЕРВЕРЕ
+    runs-on: self-hosted
+
+    steps:
+    - name: Переход в директорию проекта
+      run: cd /home/raven/docker/rpgm_v2
+
+    - name: Получение свежего кода с GitHub
+      run: git pull origin main
+
+    - name: Перезапуск Docker
+      run: |
+        docker compose down
+        docker compose up -d --build

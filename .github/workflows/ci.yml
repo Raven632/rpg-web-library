@@ -1,0 +1,29 @@
+name: Node.js CI
+
+on:
+  push:
+    branches: [ "main" ] # Запускает пайплайн при прямом пуше
+  pull_request:
+    branches: [ "main" ] # Проверяет код ДО слияния чужих веток
+
+jobs:
+  build-and-test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Скачивание кода
+      uses: actions/checkout@v4
+
+    - name: Настройка Node.js 20
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Установка пакетов (Strict Mode)
+      working-directory: ./api
+      run: npm ci
+
+    - name: Запуск тестов
+      working-directory: ./api
+      run: npm test
