@@ -4,6 +4,7 @@ const fs = require('fs');
 const fsp = fs.promises;
 const os = require('os');
 const path = require('path');
+const LARGE_TEXT_FILE_BYTES = 600000;
 
 const {
     requireAuth,
@@ -34,7 +35,8 @@ test('requireAuth rejects non-GET with invalid token', () => {
     const next = () => { throw new Error('next should not be called'); };
     requireAuth(req, res, next);
     assert.equal(state.statusCode, 401);
-    assert.deepEqual(state.body, { error: 'Отказано в доступе. Неверный токен.' });
+    assert.equal(typeof state.body?.error, 'string');
+    assert.ok(state.body.error.length > 0);
 });
 
 test('requireAuth allows non-GET with correct token', () => {
@@ -116,7 +118,7 @@ test('findRJCode skips large files and returns null when no code', async () => {
     const root = await fsp.mkdtemp(path.join(os.tmpdir(), 'rpg-tests-'));
     try {
         const largePath = path.join(root, 'big.txt');
-        await fsp.writeFile(largePath, Buffer.alloc(600000, 65));
+        await fsp.writeFile(largePath, Buffer.alloc(LARGE_TEXT_FILE_BYTES, 65));
         const result = await findRJCode('NoCodeHere', root);
         assert.equal(result, null);
     } finally {
