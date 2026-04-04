@@ -38,18 +38,28 @@ test('requireAuth rejects non-GET with invalid token', () => {
 });
 
 test('requireAuth allows non-GET with correct token', () => {
+    const previousToken = process.env.API_TOKEN;
+    const serverPath = require.resolve('./server');
+    const previousCachedModule = require.cache[serverPath];
     process.env.API_TOKEN = 'abc-token';
-    delete require.cache[require.resolve('./server')];
-    const { requireAuth: freshRequireAuth } = require('./server');
-    let called = false;
-    const req = { method: 'POST', headers: { 'x-api-token': 'abc-token' } };
-    const res = {
-        status() { throw new Error('status should not be called'); },
-        json() { throw new Error('json should not be called'); }
-    };
-    const next = () => { called = true; };
-    freshRequireAuth(req, res, next);
-    assert.equal(called, true);
+    delete require.cache[serverPath];
+    try {
+        const { requireAuth: freshRequireAuth } = require('./server');
+        let called = false;
+        const req = { method: 'POST', headers: { 'x-api-token': 'abc-token' } };
+        const res = {
+            status() { throw new Error('status should not be called'); },
+            json() { throw new Error('json should not be called'); }
+        };
+        const next = () => { called = true; };
+        freshRequireAuth(req, res, next);
+        assert.equal(called, true);
+    } finally {
+        if (previousToken === undefined) delete process.env.API_TOKEN;
+        else process.env.API_TOKEN = previousToken;
+        delete require.cache[serverPath];
+        if (previousCachedModule) require.cache[serverPath] = previousCachedModule;
+    }
 });
 
 test('findGameFolder finds direct www folder', async () => {
@@ -116,10 +126,10 @@ test('findRJCode skips large files and returns null when no code', async () => {
 
 test('processParsedData normalizes tags, strips html and translates description', async () => {
     const originalFetch = global.fetch;
-    global.fetch = async () => ({
-        json: async () => [[['Translated description']]]
-    });
     try {
+        global.fetch = async () => ({
+            json: async () => [[['Translated description']]]
+        });
         const out = await processParsedData(
             {
                 genres: [{ name: 'RPG' }, { name: 'RPG' }, { name: 'Fantasy' }],
