@@ -8,8 +8,6 @@ const multer = require('multer');
 const util = require('util');
 const { execFile, spawn } = require('child_process');
 const execFilePromise = util.promisify(execFile);
-const puppeteer = require('puppeteer-extra');
-const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const sqlite3 = require('sqlite3');
@@ -19,7 +17,6 @@ const { open } = require('sqlite');
 const http = require('http');
 const { Server } = require('socket.io');
 
-puppeteer.use(StealthPlugin());
 
 const app = express();
 
