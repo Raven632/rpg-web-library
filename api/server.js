@@ -728,20 +728,11 @@ app.get('*', async (req, res, next) => {
 });
 
 // ⚡ Снимаем таймауты, чтобы тяжёлые файлы не обрывались
-if (require.main === module) {
-    initDB().then(async () => {
-        await syncDatabase();
-        const srv = server.listen(3000, () => console.log('🚀 RPG API: SQLite и WebSockets подключены, сервер готов!'));
+initDB().then(async () => {
+    await syncDatabase();
+    const srv = server.listen(3000, () => console.log('🚀 RPG API: SQLite и WebSockets подключены, сервер готов!'));
 
-        srv.timeout = 0;          // нет таймаута на соединение
-        srv.requestTimeout = 0;   // нет таймаута на запрос
-        srv.keepAliveTimeout = 0; // нет таймаута keepalive
-    }).catch(console.error);
-}
-
-module.exports = {
-    requireAuth,
-    findGameFolder,
-    findRJCode,
-    processParsedData
-};
+    srv.timeout = 0;          // нет таймаута на соединение
+    srv.requestTimeout = 0;   // нет таймаута на запрос
+    srv.keepAliveTimeout = 0; // нет таймаута keepalive
+}).catch(console.error);
