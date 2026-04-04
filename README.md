@@ -26,7 +26,7 @@
 1. Клонируйте репозиторий:
 
    ```bash
-   git clone [https://github.com/Raven632/rpg-library.git](https://github.com/Raven632/rpg-library.git)
+   git clone https://github.com/Raven632/rpg-web-library
    cd rpg-web-library
    ```
 
