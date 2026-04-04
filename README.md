@@ -1,54 +1,59 @@
 # 🎮 RPG Library v2.0
 
-Локальный веб-сервис для каталогизации, хранения и запуска браузерных RPG Maker игр (MV/MZ) напрямую с вашего домашнего сервера. Проект спроектирован с упором на производительность, отказоустойчивость I/O операций и автоматический сбор метаданных.
+🇷🇺 [Русский](README.ru.md) | 🇩🇪 [Deutsch](README.de.md)
 
-![Скриншот интерфейса](/rest/img/Example.png)
+![Node.js](https://img.shields.io/badge/Node.js-20.x-43853D?style=for-the-badge&logo=node.js&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=for-the-badge&logo=docker&logoColor=white)
+![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)
 
-## ✨ Ключевые возможности
+A self-hosted web service designed to catalog, store, and play browser-based RPG Maker games (MV/MZ) directly from your home server. Engineered for high performance, I/O resilience, and fully automated metadata scraping.
 
-- **🌐 Веб-эмулятор ПК-движка:** Встроенный инжектор `rpg-fixes.js` на лету подменяет вызовы NW.js, позволяя играть в ПК-версии RPG Maker игр прямо в браузере мобильного телефона или планшета.
-- **☁️ Облачные сохранения:** Перехват `localStorage` игры с автоматической синхронизацией сейвов в базу данных сервера. Вы можете начать играть на ПК, а продолжить с того же места на смартфоне.
-- **📱 Мобильная адаптация:** Автоматический скейлинг холста без искажений (PIXI smoothing), виртуальный геймпад (D-Pad, Shift, Menu, Esc) и увеличение шрифтов для сенсорных экранов.
-- **🕵️‍♂️ Смарт-скрейпер (DLsite):** Автоматическое распознавание RJ-кодов игр. Сервер обходит европейские блокировки (GDPR) и Geo-блокировки авторов через API-шлюзы и параллельные запросы к японским прокси (через `cURL`), вытягивая обложки, теги и переводя описание на лету.
-- **📦 Бронебойная работа с архивами:** Загружайте архивы (ZIP, RAR, 7z) весом по 5-10 ГБ. Потоковая распаковка через `7zz` (с использованием `spawn` вместо `execFile`) предотвращает переполнение буфера Node.js и оперативной памяти сервера.
+![App Screenshot](/rest/img/Example.png)
 
-## 🛠 Технологический стек
+## ✨ Key Features
 
-- **Backend:** Node.js, Express, Socket.io (для realtime-уведомлений о распаковке).
-- **Database:** SQLite (`sqlite3` с предкомпиляцией).
-- **Frontend:** Vanilla JS / CSS (Grid, Flexbox). Без тяжелых фреймворков.
-- **Infrastructure:** Docker Engine, `7zip`, системный `curl`.
+- **🌐 Web Emulator:** A built-in `rpg-fixes.js` injector intercepts NW.js calls, allowing you to play PC-exclusive RPG Maker games directly in your desktop or mobile browser.
+- **☁️ Cloud Saves:** Intercepts the game's `localStorage` and automatically syncs save files to the server's SQLite database. Start playing on your PC and seamlessly continue on your smartphone.
+- **📱 Mobile Adaptation:** Automatic canvas scaling without pixel distortion (PIXI smoothing), a virtual gamepad (D-Pad, Shift, Menu, Esc), and optimized fonts for touch screens.
+- **🕵️‍♂️ Smart Scraper (DLsite):** Automatically detects RJ-codes. The server bypasses GDPR and Geo-blocks via API gateways and parallel cURL requests through anonymous proxies, fetching covers, tags, and translating descriptions on the fly.
+- **📦 Heavy Archive Support:** Upload archives (ZIP, RAR, 7z) up to 10GB. Stream-based extraction via `7zz` (using `spawn` instead of `execFile`) prevents buffer overflows and server RAM exhaustion.
 
-## 🚀 Установка и запуск
+## 🛠 Tech Stack
 
-Проект спроектирован для работы на **нативном Docker Engine** (Linux). Использование Docker Desktop не рекомендуется из-за сильного падения I/O производительности при работе с большими архивами через виртуальную машину.
+- **Backend:** Node.js, Express, Socket.io (for real-time extraction updates).
+- **Database:** SQLite (`sqlite3` precompiled).
+- **Frontend:** Vanilla JS / CSS (Grid, Flexbox). Zero heavy frameworks.
+- **Infrastructure:** Docker Engine, `7zip`, native `curl`.
 
-1. Клонируйте репозиторий:
+## 🚀 Installation & Usage
 
+This project is built for **native Docker Engine** (Linux). Using Docker Desktop is not recommended due to severe I/O performance drops when handling massive archives through a VM.
+
+1. Clone the repository:
    ```bash
-   git clone https://github.com/Raven632/rpg-web-library
+   git clone [https://github.com/Raven632/rpg-web-library.git](https://github.com/Raven632/rpg-web-library.git)
    cd rpg-web-library
    ```
 
-2. Запустите контейнер: 
+2. Start the container:
 
    ```bash
    docker compose up -d --build
    ```
 
-3. Откройте http://localhost:3000 or http://localhost (или IP вашего сервера) в браузере.
+3. Open http://localhost:3000 or http://localhost (or your server's IP) in your browser.
 
-## 📂 Структура директорий
-При первом запуске Docker пробросит папку ./games на ваш хост.
+## 📂 Directory Structure
+Upon first launch, Docker will bind-mount the ./games directory to your host:
 
-- /games — сюда распаковываются сами игры.
+- /games — Extracted games.
 
-- /games/library.db — файл базы данных (создается автоматически).
+- /games/library.db — The SQLite database file.
 
-- /games/_saves — JSON-файлы облачных сохранений игроков.
+- /games/_saves — JSON files containing players' cloud saves.
 
-- /games/_tmp_uploads — папка для буферизации тяжелых загрузок (позволяет избежать раздувания docker.raw и перегрузки RAM).
+- /games/_tmp_uploads — Buffer directory for heavy uploads to prevent RAM exhaustion.
 
-## 📝 Ручное редактирование
+## 📝 Manual editing
 
-Если автоматический парсер не нашел игру, вы можете открыть модальное окно игры на сайте, нажать на ⚙️ (Настройки) и вручную ввести RJ-код. Сервер мгновенно обновит метаданные.
+   If the automatic parser couldn't find the game, you can open the game's modal window on the website, click ⚙️ (Settings), and manually enter the RJ code. The server will update the metadata immediately.
