@@ -727,12 +727,23 @@ app.get('*', async (req, res, next) => {
     next();
 });
 
-// ⚡ Снимаем таймауты, чтобы тяжёлые файлы не обрывались
-initDB().then(async () => {
-    await syncDatabase();
-    const srv = server.listen(3000, () => console.log('🚀 RPG API: SQLite и WebSockets подключены, сервер готов!'));
+// ⚡ ЗАПУСК СЕРВЕРА (Только если файл запущен напрямую, а не импортирован тестами)
+if (require.main === module) {
+    initDB().then(async () => {
+        await syncDatabase();
+        const srv = server.listen(3000, () => console.log('🚀 RPG API: SQLite и WebSockets подключены, сервер готов!'));
 
-    srv.timeout = 0;          // нет таймаута на соединение
-    srv.requestTimeout = 0;   // нет таймаута на запрос
-    srv.keepAliveTimeout = 0; // нет таймаута keepalive
-}).catch(console.error);
+        srv.timeout = 0;          // нет таймаута на соединение
+        srv.requestTimeout = 0;   // нет таймаута на запрос
+        srv.keepAliveTimeout = 0; // нет таймаута keepalive
+    }).catch(console.error);
+}
+
+// ⚡ ЭКСПОРТ ФУНКЦИЙ ДЛЯ UNIT-ТЕСТОВ
+module.exports = {
+    app,
+    requireAuth,
+    processParsedData,
+    findRJCode,
+    translateText // Если будешь тестировать перевод
+};
