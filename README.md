@@ -31,7 +31,7 @@ This project is built for **native Docker Engine** (Linux). Using Docker Desktop
 
 1. Clone the repository:
    ```bash
-   git clone [https://github.com/Raven632/rpg-web-library.git](https://github.com/Raven632/rpg-web-library.git)
+   git clone https://github.com/Raven632/rpg-web-library.git
    cd rpg-web-library
    ```
 
