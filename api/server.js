@@ -731,19 +731,61 @@ app.get('*', async (req, res, next) => {
 if (require.main === module) {
     initDB().then(async () => {
         await syncDatabase();
+
         const srv = server.listen(3000, () => console.log('🚀 RPG API: SQLite и WebSockets подключены, сервер готов!'));
 
         srv.timeout = 0;          // нет таймаута на соединение
         srv.requestTimeout = 0;   // нет таймаута на запрос
         srv.keepAliveTimeout = 0; // нет таймаута keepalive
+
+        // 🔥 АВТО-СИНХРОНИЗАЦИЯ ПАПКИ /games (улучшенная)
+        let syncTimer = null;
+        let syncInProgress = false;
+        let pendingSync = false;
+
+        async function runSyncSafely(reason = 'watcher') {
+            if (syncInProgress) {
+                pendingSync = true;
+                return;
+            }
+
+            syncInProgress = true;
+            try {
+                console.log(`[Watcher] 🔄 Запуск синхронизации (${reason})...`);
+                await syncDatabase();
+                console.log('[Watcher] ✅ Библиотека успешно обновлена!');
+
+                // Уведомление в браузер
+                io.emit('scrape-success', { message: '🔄 Найдены изменения в /games. Обновите страницу.' });
+            } catch (e) {
+                console.error('[Watcher] ❌ Ошибка синхронизации:', e);
+            } finally {
+                syncInProgress = false;
+
+                // Если изменения пришли во время sync — запускаем ещё один проход
+                if (pendingSync) {
+                    pendingSync = false;
+                    setTimeout(() => runSyncSafely('pending'), 300);
+                }
+            }
+        }
+
+        const watcher = fs.watch(GAMES_DIR, { persistent: true }, (eventType, filename) => {
+            // Игнорируем служебные папки и пустые имена
+            if (!filename) return;
+            if (filename === '_tmp_uploads' || filename === '_saves' || filename === 'node_modules') return;
+
+            // Debounce: ждём 5 сек "тишины" (полезно при копировании больших игр)
+            clearTimeout(syncTimer);
+            syncTimer = setTimeout(() => {
+                runSyncSafely(`fs.watch:${eventType}:${filename}`);
+            }, 5000);
+        });
+
+        watcher.on('error', (err) => {
+            console.error('[Watcher] ❌ Ошибка watcher:', err.message);
+        });
+
+        console.log(`[Watcher] 👀 Наблюдение за ${GAMES_DIR} включено`);
     }).catch(console.error);
 }
-
-// ⚡ ЭКСПОРТ ФУНКЦИЙ ДЛЯ UNIT-ТЕСТОВ
-module.exports = {
-    app,
-    requireAuth,
-    processParsedData,
-    findRJCode,
-    translateText // Если будешь тестировать перевод
-};
