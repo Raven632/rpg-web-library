@@ -1,333 +1,565 @@
 /**
- * rpg-fixes.js — УЛЬТИМАТИВНЫЙ УНИВЕРСАЛЬНЫЙ ФИКС ДЛЯ RPG MAKER MV/MZ
- * Содержит: Защиту от вылетов, облачные сохранения, мобильный геймпад, 
- * идеальное масштабирование UI и фикс рассинхрона мыши на ПК.
+ * rpg-fixes.js — Облегчённый, стабильный и оптимизированный фикс
+ * Без авто-увеличения текста. Пиксель-перфект графика. Защита от утечек памяти.
  */
+(() => {
+  if (window.__RPG_FIXES_V2_APPLIED__) return;
+  window.__RPG_FIXES_V2_APPLIED__ = true;
 
-// ══════════════════════════════════════════════
-// 1. ЗАГЛУШКИ ДЛЯ БРАУЗЕРА (Анти-краш)
-// ОПИСАНИЕ: Игры RPG Maker часто ищут ПК-файлы или пытаются открыть внешние ссылки (Discord, Patreon) через ПК-движок NW.js.
-// Этот код притворяется ПК-движком, чтобы игра не зависала и не выдавала черный экран при клике на ссылки.
-// ══════════════════════════════════════════════
-window.require = function(m) {
-    if (m === 'path') return { dirname: function(p){return p.replace(/[/\\][^/\\]*$/, '')||'.';}, join: function(){return Array.from(arguments).join('/');}, basename: function(p){return p.split(/[/\\]/).pop();}, extname: function(p){var b=p.split(/[/\\]/).pop();var i=b.lastIndexOf('.');return i>0?b.slice(i):'';} };
-    if (m === 'fs') return { readFileSync: function(){return '';}, writeFileSync: function(){}, mkdirSync: function(){}, existsSync: function(){return false;}, readdirSync: function(){return [];}, unlinkSync: function(){}, statSync: function(){return {isDirectory: function(){return false;}};} };
-    if (m === 'nw.gui' || m === 'nw') return { Window: { get: function(){return {on: function(){}, maximize: function(){}, restore: function(){}, removeAllListeners: function(){}, close: function(){}};} }, App: { quit: function(){}, argv: [], manifest: {} }, Screen: { Init: function(){}, on: function(){} }, Shell: { openExternal: function(url){window.open(url, '_blank');} } };
+  // =========================
+  // 1) Browser stubs (anti-crash)
+  // =========================
+  window.require = function (m) {
+    if (m === 'path') {
+      return {
+        dirname: p => p.replace(/[/\\][^/\\]*$/, '') || '.',
+        join: (...a) => a.join('/'),
+        basename: p => p.split(/[/\\]/).pop(),
+        extname: p => {
+          const b = p.split(/[/\\]/).pop();
+          const i = b.lastIndexOf('.');
+          return i > 0 ? b.slice(i) : '';
+        }
+      };
+    }
+    if (m === 'fs') {
+      return {
+        readFileSync: () => '',
+        writeFileSync: () => {},
+        mkdirSync: () => {},
+        existsSync: () => false,
+        readdirSync: () => [],
+        unlinkSync: () => {},
+        statSync: () => ({ isDirectory: () => false })
+      };
+    }
+    if (m === 'nw.gui' || m === 'nw') {
+      return {
+        Window: { get: () => ({ on() {}, maximize() {}, restore() {}, removeAllListeners() {}, close() {} }) },
+        App: { quit() {}, argv: [], manifest: {} },
+        Screen: { Init() {}, on() {} },
+        Shell: { openExternal: url => window.open(url, '_blank') }
+      };
+    }
     return {};
-};
-window.process = { platform: 'browser', env: {}, mainModule: { filename: '' } };
-window.nw = window.require('nw');
+  };
 
-// Форсируем WEB-режим: заставляем игру скачивать звуки и картинки по http, а не искать их на жестком диске.
-setInterval(function() {
-    if (typeof Utils !== 'undefined') { Utils.isNwjs = function(){return false;}; Utils.isLocal = function(){return false;}; }
-}, 50);
+  window.process = { platform: 'browser', env: {}, mainModule: { filename: '' } };
+  window.nw = window.require('nw');
 
-// ══════════════════════════════════════════════
-// 2. ИДЕАЛЬНОЕ МАСШТАБИРОВАНИЕ И ФИКС МЫШИ
-// ОПИСАНИЕ: Замораживает попытки самой игры менять разрешение экрана (чтобы не ломались плагины UI).
-// Затем CSS-лупой растягивает картинку под экран, а скрипт пересчитывает координаты мыши, чтобы она не мазала на ПК.
-// ══════════════════════════════════════════════
-(function() {
-    var meta = document.querySelector('meta[name="viewport"]');
-    if (!meta) { meta = document.createElement('meta'); meta.name = 'viewport'; document.head.appendChild(meta); }
+  function forceWebMode() {
+    if (typeof Utils !== 'undefined') {
+      Utils.isNwjs = () => false;
+      Utils.isLocal = () => false;
+      return true;
+    }
+    return false;
+  }
+
+  if (!forceWebMode()) {
+    const t = setInterval(() => {
+      if (forceWebMode()) clearInterval(t);
+    }, 200);
+    setTimeout(() => clearInterval(t), 10000);
+  }
+
+  // =========================
+  // 2) Viewport + scaling + mouse sync
+  // =========================
+  (function setupViewportAndScale() {
+    let meta = document.querySelector('meta[name="viewport"]');
+    if (!meta) {
+      meta = document.createElement('meta');
+      meta.name = 'viewport';
+      document.head.appendChild(meta);
+    }
     meta.content = 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover';
 
-    var style = document.createElement('style');
+    const style = document.createElement('style');
     style.textContent = [
-        'html, body { margin: 0 !important; padding: 0 !important; width: 100vw !important; height: 100dvh !important; background: #000 !important; overflow: hidden !important; touch-action: none !important; }',
-        '#GameCanvas, canvas { display: block !important; position: absolute !important; top: 50% !important; left: 50% !important; transform: translate(-50%, -50%) !important; margin: 0 !important; padding: 0 !important; image-rendering: auto; }'
-    ].join('\n');
-    document.addEventListener('DOMContentLoaded', function() { document.head.appendChild(style); });
-
-    // Замораживаем изменение холста плагинами игры
-    var _freezeTimer = setInterval(function() {
-        if (typeof Graphics !== 'undefined') {
-            if (Graphics._updateCanvas) Graphics._updateCanvas = function() {}; 
-            if (Graphics._centerElement) Graphics._centerElement = function() {}; 
-            if (Graphics._onWindowResize) Graphics._onWindowResize = function() {};
-            clearInterval(_freezeTimer);
-        }
-    }, 50);
-
-    // Математический подгон холста под экран
-    function updateScale() {
-        var c = document.getElementById('GameCanvas') || document.querySelector('canvas');
-        if (!c || c.width === 0) return;
-        var scale = Math.min(window.innerWidth / c.width, window.innerHeight / c.height);
-        c.style.setProperty('width', Math.floor(c.width * scale) + 'px', 'important');
-        c.style.setProperty('height', Math.floor(c.height * scale) + 'px', 'important');
-    }
-    window.addEventListener('load', function() { updateScale(); setInterval(updateScale, 100); });
-    window.addEventListener('resize', updateScale);
-    window.addEventListener('orientationchange', function() { setTimeout(updateScale, 300); });
-
-    // Супер-фикс: пересчет координат курсора мыши для ПК
-    var _mousePatchTimer = setInterval(function() {
-        if (typeof Graphics !== 'undefined' && Graphics.pageToCanvasX) {
-            clearInterval(_mousePatchTimer);
-            Graphics.pageToCanvasX = function(x) {
-                if (this._canvas) {
-                    var rect = this._canvas.getBoundingClientRect();
-                    return Math.round((x - rect.left) * (this._canvas.width / rect.width));
-                }
-                return 0;
-            };
-            Graphics.pageToCanvasY = function(y) {
-                if (this._canvas) {
-                    var rect = this._canvas.getBoundingClientRect();
-                    return Math.round((y - rect.top) * (this._canvas.height / rect.height));
-                }
-                return 0;
-            };
-        }
-    }, 100);
-
-    // Сглаживание пикселей для красивых аниме-артов
-    // Сглаживание пикселей для красивых аниме-артов (Без спама в консоль)
-    var _pixiTimer = setInterval(function() {
-        if (typeof PIXI !== 'undefined') {
-            clearInterval(_pixiTimer); // Останавливаем таймер, выполняем только один раз!
-            
-            // Временно "глушим" консоль, чтобы скрыть системные ворчания PIXI
-            var _originalWarn = console.warn;
-            console.warn = function() {};
-            
-            try {
-                if (PIXI.settings && PIXI.SCALE_MODES) {
-                    PIXI.settings.SCALE_MODE = PIXI.SCALE_MODES.LINEAR;
-                } else if (PIXI.scaleModes) {
-                    PIXI.scaleModes.DEFAULT = PIXI.scaleModes.LINEAR;
-                }
-            } catch(e) {}
-            
-            // Возвращаем консоль в нормальное состояние
-            console.warn = _originalWarn;
-        }
-    }, 100);
-})();
-
-// ══════════════════════════════════════════════
-// 3. СИНХРОНИЗАЦИЯ: ОБЛАЧНЫЕ СОХРАНЕНИЯ (СЕРВЕР)
-// ОПИСАНИЕ: Сохраняет прогресс игры не только в браузер (откуда он может удалиться), 
-// но и отправляет JSON-копию на твой сервер Node.js.
-// ══════════════════════════════════════════════
-window.addEventListener('load', function() {
-    if (typeof StorageManager !== 'undefined') StorageManager.isLocalMode = function() { return false; };
-    if (typeof DataManager !== 'undefined') {
-        if (!DataManager.setAutoSaveFileId) DataManager.setAutoSaveFileId = function() {};
-        if (!DataManager.autoSaveFileId)    DataManager.autoSaveFileId    = function() { return 1; };
-    }
-});
-
-(function() {
-    var gameId = location.pathname.split('/').filter(Boolean)[0] || 'unknown';
-    try {
-        // Подтягиваем сохранения с сервера при запуске
-        var xhr = new XMLHttpRequest();
-        xhr.open('GET', '/api/saves/' + encodeURIComponent(gameId), false);
-        xhr.send(null);
-        if (xhr.status === 200) {
-            var saves = JSON.parse(xhr.responseText);
-            Object.keys(saves).forEach(function(key) {
-                Storage.prototype.setItem.call(localStorage, key, saves[key]);
-            });
-            console.log('☁️ Облачные сохранения успешно подтянуты с сервера!');
-        }
-    } catch(e) {}
-
-    // Отправляем сохранения на сервер в момент записи
-    var originalSetItem = Storage.prototype.setItem;
-    Storage.prototype.setItem = function(key, value) {
-        originalSetItem.call(this, key, value); 
-        if (key.indexOf('RPG ') === 0) { 
-            fetch('/api/saves/' + encodeURIComponent(gameId) + '/' + encodeURIComponent(key), {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'x-api-token': 'SuperSecretKey123' },
-                body: JSON.stringify({ value: value })
-            }).catch(function(e) {});
-        }
-    };
-
-    // Удаляем сохранения с сервера, если они удалены в игре
-    var originalRemoveItem = Storage.prototype.removeItem;
-    Storage.prototype.removeItem = function(key) {
-        originalRemoveItem.call(this, key);
-        if (key.indexOf('RPG ') === 0) {
-            fetch('/api/saves/' + encodeURIComponent(gameId) + '/' + encodeURIComponent(key), {
-                method: 'DELETE',
-                headers: { 'x-api-token': 'SuperSecretKey123' }
-            }).catch(function(e) {});
-        }
-    };
-})();
-
-// ══════════════════════════════════════════════
-// 4. ОПТИМИЗАЦИЯ АУДИО (IOS И ЗАГЛУШКИ ОШИБОК)
-// ОПИСАНИЕ: 1) Убирает черный экран с ошибкой "Failed to load audio", если разработчик забыл звук.
-// 2) Принудительно "будит" звуковую карту на iPhone при первом тапе.
-// ══════════════════════════════════════════════
-setInterval(function() {
-    if (typeof AudioManager !== 'undefined') AudioManager.checkErrors = function() {};
-    if (typeof WebAudio !== 'undefined') {
-        var _orig = WebAudio.prototype._onError;
-        WebAudio.prototype._onError = function() { this._isError = false; this._hasError = false; };
-    }
-}, 500);
-
-(function() {
-    var audioUnlocked = false;
-    function unlockAudio() {
-        if (audioUnlocked) return;
-        if (typeof WebAudio !== 'undefined' && WebAudio._context) {
-            if (WebAudio._context.state === 'suspended') {
-                WebAudio._context.resume().then(function() { audioUnlocked = true; });
-            } else { audioUnlocked = true; }
-        }
-        var AudioContext = window.AudioContext || window.webkitAudioContext;
-        if (AudioContext && !audioUnlocked) {
-            var ctx = new AudioContext();
-            var buffer = ctx.createBuffer(1, 1, 22050);
-            var source = ctx.createBufferSource();
-            source.buffer = buffer; source.connect(ctx.destination);
-            if (source.start) source.start(0); else source.noteOn(0);
-            ctx.resume().then(function() { audioUnlocked = true; });
-        }
-        if (audioUnlocked) {
-            document.removeEventListener('touchstart', unlockAudio);
-            document.removeEventListener('touchend', unlockAudio);
-            document.removeEventListener('click', unlockAudio);
-        }
-    }
-    document.addEventListener('touchstart', unlockAudio, { passive: true });
-    document.addEventListener('touchend',   unlockAudio, { passive: true });
-    document.addEventListener('click', unlockAudio, { passive: true });
-})();
-
-// ══════════════════════════════════════════════
-// 5. МОБИЛЬНЫЕ УЛУЧШЕНИЯ: ШРИФТЫ И БЛОКИРОВКА ТАЧА
-// ОПИСАНИЕ: Делает текст на телефоне читаемым (+35%).
-// Отключает беготню персонажа за пальцем, чтобы играть можно было только с джойстика.
-// ══════════════════════════════════════════════
-setInterval(function() {
-    var isMobile = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
-    
-    // Блокируем тач-клики и беготню по карте (если мы на мобилке)
-    if (isMobile) {
-        if (typeof Scene_Map !== 'undefined') Scene_Map.prototype.processMapTouch = function() {};
-        if (typeof TouchInput !== 'undefined') {
-            TouchInput.isPressed = function() { return false; };
-            TouchInput.isTriggered = function() { return false; };
-            TouchInput.isMoved = function() { return false; };
-            TouchInput.isReleased = function() { return false; };
-        }
-    }
-
-    // Увеличение шрифтов на 35% для мобилок
-    if (isMobile && typeof Window_Base !== 'undefined' && typeof Window_Base.prototype.standardFontSize === 'function') {
-        var scale = 1.35; 
-        var _origMV = Window_Base.prototype.standardFontSize;
-        Window_Base.prototype.standardFontSize = function() { return Math.floor(_origMV.call(this) * scale); };
-        if (typeof Window_Base.prototype.systemFontSize === 'function') {
-            var _origMZ = Window_Base.prototype.systemFontSize;
-            Window_Base.prototype.systemFontSize = function() { return Math.floor(_origMZ.call(this) * scale); };
-        }
-    }
-}, 1000);
-
-// ══════════════════════════════════════════════
-// 6. ВИРТУАЛЬНЫЙ ГЕЙМПАД И FULLSCREEN
-// ОПИСАНИЕ: Отрисовывает поверх игры D-Pad (со свайпами) и 4 кнопки действия (Shift, OK, Menu, Esc).
-// ══════════════════════════════════════════════
-document.addEventListener('DOMContentLoaded', function() {
-    if (document.getElementById('_fs_btn')) return;
-
-    var style = document.createElement('style');
-    style.textContent = [
-        '#_fs_btn { position:fixed; top:12px; right:12px; z-index:9999; width:40px; height:40px; background:rgba(0,0,0,0.6); border:1px solid rgba(255,255,255,0.25); border-radius:8px; cursor:pointer; display:flex; align-items:center; justify-content:center; transition:background 0.2s; -webkit-tap-highlight-color:transparent; }',
-        '#_fs_btn svg { width:20px; height:20px; fill:white; }',
-        '#_mob_ctrl { display:none; position:fixed; bottom:0; left:0; right:0; z-index:9998; pointer-events:none; padding:16px; height:220px; }',
-        '@media (pointer:coarse) { #_mob_ctrl { display:block; } }',
-        '#_dpad { position:absolute; bottom:20px; left:20px; width:190px; height:190px; pointer-events:all; }',
-        '._dpad_btn { position:absolute; width:58px; height:58px; background:rgba(0,0,0,0.4); border:1px solid rgba(255,255,255,0.3); border-radius:10px; display:flex; align-items:center; justify-content:center; -webkit-tap-highlight-color:transparent; user-select:none; touch-action:none; }',
-        '._dpad_btn:active, ._dpad_btn._on { background:rgba(255,255,255,0.6); }',
-        '._dpad_btn svg { width:24px; height:24px; fill:rgba(255,255,255,0.95); }',
-        '#_d_up    { top:0;    left:66px; }',
-        '#_d_down  { bottom:0; left:66px; }',
-        '#_d_left  { top:66px; left:0; }',
-        '#_d_right { top:66px; right:0; }',
-        '#_d_mid   { position:absolute; top:66px; left:66px; width:58px; height:58px; background:rgba(255,255,255,0.05); border-radius:10px; }',
-        '#_act_btns { position:absolute; bottom:20px; right:20px; display:grid; grid-template-columns:1fr 1fr; gap:12px; pointer-events:all; }',
-        '._act_btn { width:70px; height:70px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:13px; font-family:sans-serif; font-weight:700; color:white; -webkit-tap-highlight-color:transparent; user-select:none; touch-action:none; border:1.5px solid rgba(255,255,255,0.3); }',
-        '._act_btn:active, ._act_btn._on { filter:brightness(1.5); }',
-        '#_a_ok    { background:rgba(40,160,40,0.6); }',
-        '#_a_esc   { background:rgba(200,40,40,0.6); }',
-        '#_a_menu  { background:rgba(40,100,200,0.6); }',
-        '#_a_shift { background:rgba(180,140,20,0.6); }',
+      'html, body { margin:0!important; padding:0!important; width:100vw!important; height:100dvh!important; background:#000!important; overflow:hidden!important; touch-action:none!important; }',
+      '#GameCanvas, canvas { display:block!important; position:absolute!important; top:50%!important; left:50%!important; transform:translate(-50%, -50%)!important; margin:0!important; padding:0!important; image-rendering:pixelated; }'
     ].join('\n');
     document.head.appendChild(style);
 
-    var pad = document.createElement('div');
+    function freezeGraphicsHooks() {
+      if (typeof Graphics === 'undefined') return false;
+      if (Graphics._updateCanvas) Graphics._updateCanvas = function () {};
+      if (Graphics._centerElement) Graphics._centerElement = function () {};
+      if (Graphics._onWindowResize) Graphics._onWindowResize = function () {};
+      return true;
+    }
+
+    if (!freezeGraphicsHooks()) {
+      const freezeTimer = setInterval(() => {
+        if (freezeGraphicsHooks()) clearInterval(freezeTimer);
+      }, 200);
+      setTimeout(() => clearInterval(freezeTimer), 10000);
+    }
+
+    function updateScale() {
+      const c = document.getElementById('GameCanvas') || document.querySelector('canvas');
+      if (!c || !c.width || !c.height) return;
+      const scale = Math.min(window.innerWidth / c.width, window.innerHeight / c.height);
+      c.style.setProperty('width', Math.floor(c.width * scale) + 'px', 'important');
+      c.style.setProperty('height', Math.floor(c.height * scale) + 'px', 'important');
+    }
+
+    let rafPending = false;
+    function scheduleScale() {
+      if (rafPending) return;
+      rafPending = true;
+      requestAnimationFrame(() => {
+        rafPending = false;
+        updateScale();
+      });
+    }
+
+    window.addEventListener('load', scheduleScale);
+    window.addEventListener('resize', scheduleScale);
+    window.addEventListener('orientationchange', () => setTimeout(scheduleScale, 250));
+
+    // ⚡ АВТО-ПИНОК: Заставляем PIXI.js отрисовать первый кадр (Устраняем черный экран)
+    const bootKick = setInterval(() => {
+      scheduleScale();
+      // Симулируем системный ресайз, чтобы "разбудить" движок
+      window.dispatchEvent(new Event('resize'));
+      
+      // Как только игра загрузила титульный экран - прекращаем пинать
+      if (typeof SceneManager !== 'undefined' && SceneManager._scene) {
+        clearInterval(bootKick);
+      }
+    }, 200);
+    
+    // Предохранитель: останавливаем через 5 секунд в любом случае
+    setTimeout(() => clearInterval(bootKick), 5000);
+
+    function patchMouseCoords() {
+      if (typeof Graphics === 'undefined' || !Graphics.pageToCanvasX) return false;
+      Graphics.pageToCanvasX = function (x) {
+        if (!this._canvas) return 0;
+        const rect = this._canvas.getBoundingClientRect();
+        return Math.round((x - rect.left) * (this._canvas.width / rect.width));
+      };
+      Graphics.pageToCanvasY = function (y) {
+        if (!this._canvas) return 0;
+        const rect = this._canvas.getBoundingClientRect();
+        return Math.round((y - rect.top) * (this._canvas.height / rect.height));
+      };
+      return true;
+    }
+
+    if (!patchMouseCoords()) {
+      const mouseTimer = setInterval(() => {
+        if (patchMouseCoords()) clearInterval(mouseTimer);
+      }, 200);
+      setTimeout(() => clearInterval(mouseTimer), 10000);
+    }
+
+    // ⚡ ИСПРАВЛЕНО НА NEAREST ДЛЯ ЧЕТКИХ ПИКСЕЛЕЙ ⚡
+    function patchPixi() {
+      if (typeof PIXI === 'undefined') return false;
+      try {
+        if (PIXI.settings && PIXI.SCALE_MODES) PIXI.settings.SCALE_MODE = PIXI.SCALE_MODES.NEAREST;
+        else if (PIXI.scaleModes) PIXI.scaleModes.DEFAULT = PIXI.scaleModes.NEAREST;
+      } catch (_) {}
+      return true;
+    }
+
+    if (!patchPixi()) {
+      const pixiTimer = setInterval(() => {
+        if (patchPixi()) clearInterval(pixiTimer);
+      }, 300);
+      setTimeout(() => clearInterval(pixiTimer), 10000);
+    }
+  })();
+
+  // =========================
+  // 3) Cloud saves (Ultimate Engine-Level Injection v2)
+  // =========================
+  window.addEventListener('load', function () {
+    if (typeof StorageManager !== 'undefined') StorageManager.isLocalMode = () => false;
+    if (typeof DataManager !== 'undefined') {
+      if (!DataManager.setAutoSaveFileId) DataManager.setAutoSaveFileId = function () {};
+      if (!DataManager.autoSaveFileId) DataManager.autoSaveFileId = function () { return 1; };
+    }
+  });
+
+  (function setupCloudSaves() {
+    function resolveGameId() {
+      const parts = location.pathname.split('/').filter(Boolean).map(p => decodeURIComponent(p));
+      if (!parts.length) return 'unknown';
+      return parts[0].replace(/[^a-zA-Z0-9._\-а-яА-Я]/g, '_');
+    }
+
+    const gameId = resolveGameId();
+    let pulledSaves = {};
+
+    // 🔥 УЛУЧШЕННЫЙ UI ИНДИКАТОР (Зеленый/Красный)
+    const syncDiv = document.createElement('div');
+    syncDiv.id = '_cloud_sync_ui';
+    syncDiv.style.cssText = 'display:none; position:fixed; top:15px; left:50%; transform:translateX(-50%); background:rgba(0,0,0,0.85); color:#fff; padding:6px 20px; border-radius:20px; z-index:999999; font-size:13px; font-family:sans-serif; font-weight:bold; border:1px solid rgba(255,255,255,0.2); pointer-events:none; box-shadow: 0 4px 10px rgba(0,0,0,0.5); transition: background 0.3s;';
+    document.body.appendChild(syncDiv);
+
+    let syncCount = 0;
+    function startSync() {
+      syncCount++;
+      const ui = document.getElementById('_cloud_sync_ui');
+      ui.innerHTML = '☁️ Синхронизация...';
+      ui.style.background = 'rgba(0,0,0,0.85)';
+      ui.style.display = 'block';
+    }
+    function endSync(ok = true) {
+      syncCount--;
+      if (syncCount <= 0) {
+        syncCount = 0;
+        const ui = document.getElementById('_cloud_sync_ui');
+        ui.innerHTML = ok ? '✅ Сохранено' : '⚠️ Ошибка сервера';
+        ui.style.background = ok ? 'rgba(40,140,40,0.9)' : 'rgba(170,60,60,0.9)';
+        setTimeout(() => { if (syncCount === 0) ui.style.display = 'none'; }, 2000);
+      }
+    }
+
+    function uploadToCloud(key, value) {
+      startSync();
+      fetch('/api/saves/' + encodeURIComponent(gameId) + '/' + encodeURIComponent(key), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-token': 'SuperSecretKey123' }, // ⚡ ВАШ ТОКЕН
+        body: JSON.stringify({ value: String(value) })
+      }).then(r => endSync(r.ok)).catch(e => { console.error('[Cloud] Upload Error:', e); endSync(false); });
+    }
+
+    function deleteFromCloud(key) {
+      startSync();
+      fetch('/api/saves/' + encodeURIComponent(gameId) + '/' + encodeURIComponent(key), {
+        method: 'DELETE',
+        headers: { 'x-api-token': 'SuperSecretKey123' } // ⚡ ВАШ ТОКЕН
+      }).then(r => endSync(r.ok)).catch(e => { console.error('[Cloud] Delete Error:', e); endSync(false); });
+    }
+
+    // 1) Скачиваем сейвы с сервера ДО старта движка
+    try {
+      const xhr = new XMLHttpRequest();
+      xhr.open('GET', '/api/saves/' + encodeURIComponent(gameId), false);
+      xhr.send(null);
+      if (xhr.status === 200) {
+        pulledSaves = JSON.parse(xhr.responseText || '{}');
+        console.log(`[CloudSave] ☁️ Скачано с сервера: ${Object.keys(pulledSaves).length} файлов.`);
+      }
+    } catch (e) {}
+
+    // Внедряемся в ядро движка
+    const hookTimer = setInterval(() => {
+      if (typeof StorageManager !== 'undefined') {
+        if (StorageManager.saveToForage) {
+          clearInterval(hookTimer);
+          injectMZEngine();
+        } else if (StorageManager.saveToWebStorage) {
+          clearInterval(hookTimer);
+          injectMVEngine();
+        }
+      }
+    }, 150);
+
+    // ==========================================
+    // ИНЪЕКЦИЯ ДЛЯ НОВЫХ ИГР (MZ / VisuStella)
+    // ==========================================
+    function injectMZEngine() {
+      console.log('[CloudSave] ☁️ Инъекция в ядро MZ активирована!');
+
+      const _saveToForage = StorageManager.saveToForage;
+      StorageManager.saveToForage = function(saveName, zip) {
+        const cloudKey = 'MZ_' + saveName;
+        pulledSaves[cloudKey] = zip;
+        uploadToCloud(cloudKey, zip);
+        return _saveToForage.apply(this, arguments);
+      };
+
+      const _loadFromForage = StorageManager.loadFromForage;
+      StorageManager.loadFromForage = function(saveName) {
+        const cloudKey = 'MZ_' + saveName;
+        if (pulledSaves[cloudKey] !== undefined) {
+          return Promise.resolve(pulledSaves[cloudKey]);
+        }
+        return _loadFromForage.apply(this, arguments);
+      };
+
+      const _removeForage = StorageManager.removeForage;
+      StorageManager.removeForage = function(saveName) {
+        const cloudKey = 'MZ_' + saveName;
+        delete pulledSaves[cloudKey];
+        deleteFromCloud(cloudKey);
+        return _removeForage.apply(this, arguments);
+      };
+
+      // ⚡ ГЕНИАЛЬНЫЙ ФИКС (ВМЕСТО updateForageKeys)
+      // Просто перехватываем проверку "Существует ли файл?"
+      // Это на 100% отвязывает нас от $dataSystem и спасает от крашей!
+      const _forageExists = StorageManager.forageExists;
+      StorageManager.forageExists = function(saveName) {
+        const cloudKey = 'MZ_' + saveName;
+        if (pulledSaves[cloudKey] !== undefined) {
+          return true; // Обманываем игру, говоря что файл есть!
+        }
+        return _forageExists.apply(this, arguments);
+      };
+    }
+
+    // ==========================================
+    // ИНЪЕКЦИЯ ДЛЯ СТАРЫХ ИГР (MV)
+    // ==========================================
+    function injectMVEngine() {
+      console.log('[CloudSave] ☁️ Инъекция в ядро MV активирована!');
+      
+      Object.keys(pulledSaves).forEach(key => {
+        if (key.startsWith('RPG ')) {
+          try { localStorage.setItem(key, pulledSaves[key]); } catch (e) {}
+        }
+      });
+
+      const _saveToWebStorage = StorageManager.saveToWebStorage;
+      StorageManager.saveToWebStorage = function(saveFileId, json) {
+        const key = this.webStorageKey(saveFileId);
+        pulledSaves[key] = json;
+        uploadToCloud(key, json);
+        return _saveToWebStorage.apply(this, arguments);
+      };
+
+      const _removeWebStorage = StorageManager.removeWebStorage;
+      StorageManager.removeWebStorage = function(saveFileId) {
+        const key = this.webStorageKey(saveFileId);
+        delete pulledSaves[key];
+        deleteFromCloud(key);
+        return _removeWebStorage.apply(this, arguments);
+      };
+    }
+  })();
+
+  // =========================
+  // 4) Audio fixes
+  // =========================
+  function patchAudio() {
+    if (typeof AudioManager !== 'undefined') AudioManager.checkErrors = function () {};
+    if (typeof WebAudio !== 'undefined' && WebAudio.prototype && !WebAudio.prototype.__patchedOnError) {
+      WebAudio.prototype.__patchedOnError = true;
+      WebAudio.prototype._onError = function () {
+        this._isError = false;
+        this._hasError = false;
+      };
+    }
+  }
+  patchAudio();
+  const audioPatchTimer = setInterval(() => {
+    patchAudio();
+    if (typeof AudioManager !== 'undefined' && typeof WebAudio !== 'undefined') clearInterval(audioPatchTimer);
+  }, 400);
+  setTimeout(() => clearInterval(audioPatchTimer), 10000);
+
+  (function unlockAudioOnGesture() {
+    let unlocked = false;
+    function unlock() {
+      if (unlocked) return;
+      try {
+        if (typeof WebAudio !== 'undefined' && WebAudio._context) {
+          if (WebAudio._context.state === 'suspended') {
+            WebAudio._context.resume().then(() => { unlocked = true; cleanup(); });
+            return;
+          }
+          unlocked = true;
+          cleanup();
+          return;
+        }
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (AC) {
+          const ctx = new AC();
+          const buffer = ctx.createBuffer(1, 1, 22050);
+          const source = ctx.createBufferSource();
+          source.buffer = buffer;
+          source.connect(ctx.destination);
+          source.start ? source.start(0) : source.noteOn(0);
+          ctx.resume().then(() => { unlocked = true; cleanup(); });
+        }
+      } catch (_) {}
+    }
+    function cleanup() {
+      document.removeEventListener('touchstart', unlock);
+      document.removeEventListener('touchend', unlock);
+      document.removeEventListener('click', unlock);
+    }
+    document.addEventListener('touchstart', unlock, { passive: true });
+    document.addEventListener('touchend', unlock, { passive: true });
+    document.addEventListener('click', unlock, { passive: true });
+  })();
+
+  // =========================
+  // 5) Mobile improvements (NO font scaling)
+  // =========================
+  (function mobileInputFixes() {
+    const isMobile = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+    if (!isMobile) return;
+
+    const timer = setInterval(() => {
+      if (typeof Scene_Map !== 'undefined' && Scene_Map.prototype.processMapTouch) {
+        Scene_Map.prototype.processMapTouch = function () {};
+      }
+      if (typeof TouchInput !== 'undefined') {
+        TouchInput.isPressed = () => false;
+        TouchInput.isTriggered = () => false;
+        TouchInput.isMoved = () => false;
+        TouchInput.isReleased = () => false;
+      }
+
+      if (typeof Window_Base !== 'undefined' && typeof Scene_Map !== 'undefined') {
+        clearInterval(timer);
+      }
+    }, 500);
+
+    setTimeout(() => clearInterval(timer), 10000);
+  })();
+
+  // =========================
+  // 6) Virtual gamepad + fullscreen
+  // =========================
+  document.addEventListener('DOMContentLoaded', function () {
+    if (document.getElementById('_fs_btn')) return;
+
+    const style = document.createElement('style');
+    style.textContent = [
+      '#_fs_btn { position:fixed; top:12px; right:12px; z-index:9999; width:40px; height:40px; background:rgba(0,0,0,0.6); border:1px solid rgba(255,255,255,0.25); border-radius:8px; cursor:pointer; display:flex; align-items:center; justify-content:center; transition:background 0.2s; -webkit-tap-highlight-color:transparent; }',
+      '#_fs_btn svg { width:20px; height:20px; fill:white; }',
+      '#_mob_ctrl { display:none; position:fixed; bottom:0; left:0; right:0; z-index:9998; pointer-events:none; padding:16px; height:220px; }',
+      '@media (pointer:coarse) { #_mob_ctrl { display:block; } }',
+      '#_dpad { position:absolute; bottom:20px; left:20px; width:190px; height:190px; pointer-events:all; }',
+      '._dpad_btn { position:absolute; width:58px; height:58px; background:rgba(0,0,0,0.4); border:1px solid rgba(255,255,255,0.3); border-radius:10px; display:flex; align-items:center; justify-content:center; -webkit-tap-highlight-color:transparent; user-select:none; touch-action:none; }',
+      '._dpad_btn:active, ._dpad_btn._on { background:rgba(255,255,255,0.6); }',
+      '._dpad_btn svg { width:24px; height:24px; fill:rgba(255,255,255,0.95); }',
+      '#_d_up { top:0; left:66px; }',
+      '#_d_down { bottom:0; left:66px; }',
+      '#_d_left { top:66px; left:0; }',
+      '#_d_right { top:66px; right:0; }',
+      '#_d_mid { position:absolute; top:66px; left:66px; width:58px; height:58px; background:rgba(255,255,255,0.05); border-radius:10px; }',
+      '#_act_btns { position:absolute; bottom:20px; right:20px; display:grid; grid-template-columns:1fr 1fr; gap:12px; pointer-events:all; }',
+      '._act_btn { width:70px; height:70px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:13px; font-family:sans-serif; font-weight:700; color:white; -webkit-tap-highlight-color:transparent; user-select:none; touch-action:none; border:1.5px solid rgba(255,255,255,0.3); }',
+      '._act_btn:active, ._act_btn._on { filter:brightness(1.5); }',
+      '#_a_ok { background:rgba(40,160,40,0.6); }',
+      '#_a_esc { background:rgba(200,40,40,0.6); }',
+      '#_a_menu { background:rgba(40,100,200,0.6); }',
+      '#_a_shift { background:rgba(180,140,20,0.6); }'
+    ].join('\n');
+    document.head.appendChild(style);
+
+    const pad = document.createElement('div');
     pad.innerHTML =
-        '<div id="_fs_btn" title="Fullscreen"><svg viewBox="0 0 24 24"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg></div>' +
-        '<div id="_mob_ctrl">' +
-            '<div id="_dpad"><div class="_dpad_btn" id="_d_up"><svg viewBox="0 0 24 24"><path d="M12 8l-6 6 1.41 1.41L12 10.83l4.59 4.58L18 14z"/></svg></div><div class="_dpad_btn" id="_d_down"><svg viewBox="0 0 24 24"><path d="M16.59 8.59L12 13.17 7.41 8.59 6 10l6 6 6-6z"/></svg></div><div class="_dpad_btn" id="_d_left"><svg viewBox="0 0 24 24"><path d="M15.41 16.59L10.83 12l4.58-4.59L14 6l-6 6 6 6z"/></svg></div><div class="_dpad_btn" id="_d_right"><svg viewBox="0 0 24 24"><path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z"/></svg></div><div id="_d_mid"></div></div>' +
-            '<div id="_act_btns"><div class="_act_btn" id="_a_shift">SHIFT</div><div class="_act_btn" id="_a_ok">OK</div><div class="_act_btn" id="_a_menu">MENU</div><div class="_act_btn" id="_a_esc">ESC</div></div>' +
-        '</div>';
+      '<div id="_fs_btn" title="Fullscreen"><svg viewBox="0 0 24 24"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg></div>' +
+      '<div id="_mob_ctrl">' +
+      '<div id="_dpad"><div class="_dpad_btn" id="_d_up"><svg viewBox="0 0 24 24"><path d="M12 8l-6 6 1.41 1.41L12 10.83l4.59 4.58L18 14z"/></svg></div><div class="_dpad_btn" id="_d_down"><svg viewBox="0 0 24 24"><path d="M16.59 8.59L12 13.17 7.41 8.59 6 10l6 6 6-6z"/></svg></div><div class="_dpad_btn" id="_d_left"><svg viewBox="0 0 24 24"><path d="M15.41 16.59L10.83 12l4.58-4.59L14 6l-6 6 6 6z"/></svg></div><div class="_dpad_btn" id="_d_right"><svg viewBox="0 0 24 24"><path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z"/></svg></div><div id="_d_mid"></div></div>' +
+      '<div id="_act_btns"><div class="_act_btn" id="_a_shift">SHIFT</div><div class="_act_btn" id="_a_ok">OK</div><div class="_act_btn" id="_a_menu">MENU</div><div class="_act_btn" id="_a_esc">ESC</div></div>' +
+      '</div>';
     document.body.appendChild(pad);
 
-    document.getElementById('_fs_btn').addEventListener('click', function() {
-        var el = document.documentElement;
-        var canFs = el.requestFullscreen || el.webkitRequestFullscreen;
-        if (!canFs) return;
-        if (document.fullscreenElement || document.webkitFullscreenElement) { (document.exitFullscreen || document.webkitExitFullscreen).call(document); } 
-        else { canFs.call(el); }
+    document.getElementById('_fs_btn').addEventListener('click', function () {
+      const el = document.documentElement;
+      const req = el.requestFullscreen || el.webkitRequestFullscreen;
+      if (!req) return;
+      if (document.fullscreenElement || document.webkitFullscreenElement) (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+      else req.call(el);
     });
 
-    var keyMap = {
-        '_d_up': {key:'ArrowUp', code:'ArrowUp', keyCode:38}, '_d_down': {key:'ArrowDown', code:'ArrowDown', keyCode:40},
-        '_d_left': {key:'ArrowLeft', code:'ArrowLeft', keyCode:37}, '_d_right': {key:'ArrowRight', code:'ArrowRight', keyCode:39},
-        '_a_ok': {key:'Enter', code:'Enter', keyCode:13}, '_a_esc': {key:'Escape', code:'Escape', keyCode:27},
-        '_a_menu': {key:'x', code:'KeyX', keyCode:88}, '_a_shift': {key:'Shift', code:'ShiftLeft', keyCode:16}
+    const keyMap = {
+      _d_up: { key: 'ArrowUp', code: 'ArrowUp', keyCode: 38 },
+      _d_down: { key: 'ArrowDown', code: 'ArrowDown', keyCode: 40 },
+      _d_left: { key: 'ArrowLeft', code: 'ArrowLeft', keyCode: 37 },
+      _d_right: { key: 'ArrowRight', code: 'ArrowRight', keyCode: 39 },
+      _a_ok: { key: 'Enter', code: 'Enter', keyCode: 13 },
+      _a_esc: { key: 'Escape', code: 'Escape', keyCode: 27 },
+      _a_menu: { key: 'x', code: 'KeyX', keyCode: 88 },
+      _a_shift: { key: 'Shift', code: 'ShiftLeft', keyCode: 16 }
     };
 
     function fireKey(type, m) {
-        var ev = new KeyboardEvent(type, { key:m.key, code:m.code, bubbles:true, cancelable:true });
-        Object.defineProperty(ev, 'keyCode', { get: function() { return m.keyCode; } });
-        Object.defineProperty(ev, 'which',   { get: function() { return m.keyCode; } });
-        document.dispatchEvent(ev);
+      const ev = new KeyboardEvent(type, { key: m.key, code: m.code, bubbles: true, cancelable: true });
+      Object.defineProperty(ev, 'keyCode', { get: () => m.keyCode });
+      Object.defineProperty(ev, 'which', { get: () => m.keyCode });
+      document.dispatchEvent(ev);
     }
 
-    var held = {};
-    Object.keys(keyMap).forEach(function(id) {
-        var el = document.getElementById(id);
-        var m = keyMap[id];
-        function dn(e) { if(e.cancelable) e.preventDefault(); if (held[id]) return; held[id]=true; el.classList.add('_on'); fireKey('keydown',m); }
-        function up(e) { if(e.cancelable) e.preventDefault(); if (!held[id]) return; held[id]=false; el.classList.remove('_on'); fireKey('keyup',m); }
-        if (el) { el.addEventListener('touchstart', dn, {passive:false}); el.addEventListener('touchend', up, {passive:false}); el.addEventListener('touchcancel', up, {passive:false}); }
+    const held = {};
+    Object.keys(keyMap).forEach(id => {
+      const el = document.getElementById(id);
+      const m = keyMap[id];
+      function dn(e) { if (e.cancelable) e.preventDefault(); if (held[id]) return; held[id] = true; el.classList.add('_on'); fireKey('keydown', m); }
+      function up(e) { if (e.cancelable) e.preventDefault(); if (!held[id]) return; held[id] = false; el.classList.remove('_on'); fireKey('keyup', m); }
+      if (el) {
+        el.addEventListener('touchstart', dn, { passive: false });
+        el.addEventListener('touchend', up, { passive: false });
+        el.addEventListener('touchcancel', up, { passive: false });
+      }
     });
 
-    var sx, sy, sa = null;
-    document.addEventListener('touchstart', function(e) {
-        if (e.target.closest('#_mob_ctrl') || e.target.closest('#_fs_btn')) return;
-        var t = e.touches[0]; if (t.clientX > window.innerWidth / 2) return;
-        sx = t.clientX; sy = t.clientY;
-    }, {passive:true});
-    
-    document.addEventListener('touchmove', function(e) {
-        if (sx == null) return;
-        if (e.cancelable) e.preventDefault();
-        var t = e.touches[0], dx = t.clientX-sx, dy = t.clientY-sy, dir = null;
-        if (Math.abs(dx) > Math.abs(dy)) { if (dx>20) dir='_d_right'; else if (dx<-20) dir='_d_left'; }
-        else                             { if (dy>20) dir='_d_down';  else if (dy<-20) dir='_d_up'; }
-        if (dir && dir !== sa) {
-            if (sa) { held[sa]=false; fireKey('keyup',keyMap[sa]); document.getElementById(sa).classList.remove('_on'); }
-            sa=dir; held[dir]=true; document.getElementById(dir).classList.add('_on'); fireKey('keydown',keyMap[dir]);
+    let sx = null, sy = null, sa = null;
+
+    document.addEventListener('touchstart', function (e) {
+      if (e.target.closest('#_mob_ctrl') || e.target.closest('#_fs_btn')) return;
+      const t = e.touches[0];
+      if (!t || t.clientX > window.innerWidth / 2) return;
+      sx = t.clientX; sy = t.clientY;
+    }, { passive: true });
+
+    document.addEventListener('touchmove', function (e) {
+      if (sx == null) return;
+      if (e.cancelable) e.preventDefault();
+      const t = e.touches[0];
+      const dx = t.clientX - sx;
+      const dy = t.clientY - sy;
+      let dir = null;
+
+      if (Math.abs(dx) > Math.abs(dy)) {
+        if (dx > 20) dir = '_d_right';
+        else if (dx < -20) dir = '_d_left';
+      } else {
+        if (dy > 20) dir = '_d_down';
+        else if (dy < -20) dir = '_d_up';
+      }
+
+      if (dir && dir !== sa) {
+        if (sa) {
+          held[sa] = false;
+          fireKey('keyup', keyMap[sa]);
+          document.getElementById(sa).classList.remove('_on');
         }
-    }, {passive:false});
-    
-    document.addEventListener('touchend', function() {
-        if (sa) { held[sa]=false; fireKey('keyup',keyMap[sa]); document.getElementById(sa).classList.remove('_on'); sa=null; }
-        sx = sy = null;
-    }, {passive:true});
-});
+        sa = dir;
+        held[dir] = true;
+        document.getElementById(dir).classList.add('_on');
+        fireKey('keydown', keyMap[dir]);
+      }
+    }, { passive: false });
+
+    document.addEventListener('touchend', function () {
+      if (sa) {
+        held[sa] = false;
+        fireKey('keyup', keyMap[sa]);
+        document.getElementById(sa).classList.remove('_on');
+        sa = null;
+      }
+      sx = sy = null;
+    }, { passive: true });
+  });
+})();
+
+// =========================
+  // 7) MZ CanvasTextAlign Bugfix
+  // =========================
+  (function fixMZCanvasSpam() {
+    const timer = setInterval(() => {
+      if (typeof Bitmap !== 'undefined' && Bitmap.prototype && Bitmap.prototype.drawText) {
+        const origDrawText = Bitmap.prototype.drawText;
+        Bitmap.prototype.drawText = function(text, x, y, maxWidth, lineHeight, align) {
+          // Если игра забыла передать align, подставляем 'left' по умолчанию
+          return origDrawText.call(this, text, x, y, maxWidth, lineHeight, align || 'left');
+        };
+        clearInterval(timer);
+        console.log('[Fix] 🛠️ Устранен спам CanvasTextAlign');
+      }
+    }, 500);
+    setTimeout(() => clearInterval(timer), 10000);
+  })();
