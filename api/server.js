@@ -789,3 +789,12 @@ if (require.main === module) {
         console.log(`[Watcher] 👀 Наблюдение за ${GAMES_DIR} включено`);
     }).catch(console.error);
 }
+
+// ⚡ ЭКСПОРТ ФУНКЦИЙ ДЛЯ UNIT-ТЕСТОВ
+module.exports = {
+    app,
+    requireAuth,
+    processParsedData,
+    findRJCode,
+    translateText // Если будешь тестировать перевод
+};
