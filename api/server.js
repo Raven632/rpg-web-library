@@ -396,9 +396,31 @@ async function initDB() {
     await db.exec(`
         CREATE TABLE IF NOT EXISTS games (
             id TEXT PRIMARY KEY, title TEXT, cover TEXT, tags TEXT, description TEXT,
-            rating INTEGER DEFAULT 0, lastPlayed INTEGER DEFAULT 0, addedAt INTEGER DEFAULT 0, scraped INTEGER DEFAULT 0
+            rating INTEGER DEFAULT 0, lastPlayed INTEGER DEFAULT 0, addedAt INTEGER DEFAULT 0, scraped INTEGER DEFAULT 0,
+            ready INTEGER DEFAULT 0
         )
     `);
+
+    // миграция для добавления колонки (если её ещё нет)
+    try {
+        await db.exec('ALTER TABLE games ADD COLUMN ready INTEGER DEFAULT 0');
+    } catch (_) {}
+
+    // 🔥 СПАСАТЕЛЬНЫЙ КРУГ ДЛЯ СТАРЫХ ИГР 🔥
+    // Находим все старые игры, которые застряли со статусом ready = 0, 
+    // но у которых уже есть название или обложка, и принудительно делаем их "готовыми".
+    try {
+        const result = await db.run(`
+            UPDATE games 
+            SET ready = 1 
+            WHERE ready = 0 AND (title IS NOT NULL OR cover IS NOT NULL)
+        `);
+        if (result.changes > 0) {
+            console.log(`[DB Migration] 🚀 Восстановлено старых игр: ${result.changes}`);
+        }
+    } catch (e) {
+        console.error('[DB Migration Error]', e);
+    }
 }
 
 async function addGameToDB(folder, gamePath) {
@@ -416,6 +438,7 @@ async function addGameToDB(folder, gamePath) {
     else if (await checkExists(path.join(gamePath, 'cover.png'))) cover = `${folder}/cover.png`;
 
     const rjCode = await findRJCode(folder, gamePath);
+
     if (rjCode && !cover) {
         const success = await fetchDLsiteCover(rjCode, path.join(gamePath, 'cover.jpg'));
         if (success) cover = `${folder}/cover.jpg`;
@@ -431,16 +454,36 @@ async function addGameToDB(folder, gamePath) {
     }
 
     const stat = await fsp.stat(gamePath);
+
+    // Черновик (не виден на сайте, пока ready=0)
     await db.run(
-        `INSERT OR IGNORE INTO games (id, title, cover, tags, description, rating, lastPlayed, addedAt, scraped)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [folder, title, cover, '[]', '', 0, 0, stat.birthtimeMs || stat.mtimeMs || Date.now(), 0]
+        `INSERT OR REPLACE INTO games
+         (id, title, cover, tags, description, rating, lastPlayed, addedAt, scraped, ready)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [folder, title, cover, '[]', '', 0, 0, stat.birthtimeMs || stat.mtimeMs || Date.now(), 0, 0]
     );
 
-    if (rjCode && !queuedScrapes.has(rjCode)) {
-        queuedScrapes.add(rjCode);
-        backgroundScrapeQueue.push({ rjCode, folder });
-        processBackgroundScrape();
+    // Пытаемся дотянуть теги/описание сразу (не в фоне), чтобы игра появилась уже "готовой"
+    if (rjCode) {
+        try {
+            const scrapedData = await executeFetchDLsiteTags(rjCode);
+            if (scrapedData && scrapedData.tags && scrapedData.tags.length > 0) {
+                await db.run(
+                    'UPDATE games SET tags = ?, description = ?, scraped = 1 WHERE id = ?',
+                    [JSON.stringify(scrapedData.tags), scrapedData.description, folder]
+                );
+            }
+        } catch (e) {
+            console.warn(`[AddGame] scrape fail for ${folder}:`, e.message);
+        }
+    }
+
+    // Публикуем только после всех шагов
+    await db.run('UPDATE games SET ready = 1 WHERE id = ?', [folder]);
+
+    // ⚡ БОНУС: Уведомляем сайт точечно, с названием конкретной игры!
+    if (io) {
+        io.emit('scrape-success', { message: `✅ Игра "${title}" полностью обработана и добавлена!` });
     }
 }
 
@@ -474,16 +517,25 @@ async function syncDatabase() {
 
 app.get('/api/games', async (req, res) => {
     try {
-        const rows = await db.all('SELECT * FROM games');
+        const rows = await db.all('SELECT * FROM games WHERE ready = 1');
         const games = rows.map(row => ({
-            id: row.id, title: row.title, cover: row.cover,
+            id: row.id,
+            title: row.title,
+            cover: row.cover,
             tags: row.tags ? JSON.parse(row.tags) : [],
-            description: row.description, url: `/${row.id}/`, number: 0,
-            addedAt: row.addedAt, lastPlayed: row.lastPlayed, rating: row.rating
+            description: row.description,
+            url: `/${row.id}/`,
+            number: 0,
+            addedAt: row.addedAt,
+            lastPlayed: row.lastPlayed,
+            rating: row.rating
         }));
+
         games.sort((a, b) => a.addedAt - b.addedAt).forEach((g, i) => g.number = i + 1);
         res.json(games);
-    } catch (e) { res.status(500).json({ error: 'DB Error' }); }
+    } catch (e) {
+        res.status(500).json({ error: 'DB Error' });
+    }
 });
 
 // 🔥 РУЧНОЕ РЕДАКТИРОВАНИЕ И ПРИНУДИТЕЛЬНЫЙ ПАРСИНГ (УЛУЧШЕНО)
@@ -733,15 +785,22 @@ if (require.main === module) {
         await syncDatabase();
 
         const srv = server.listen(3000, () => console.log('🚀 RPG API: SQLite и WebSockets подключены, сервер готов!'));
+        srv.timeout = 0;
+        srv.requestTimeout = 0;
+        srv.keepAliveTimeout = 0;
 
-        srv.timeout = 0;          // нет таймаута на соединение
-        srv.requestTimeout = 0;   // нет таймаута на запрос
-        srv.keepAliveTimeout = 0; // нет таймаута keepalive
-
-        // 🔥 АВТО-СИНХРОНИЗАЦИЯ ПАПКИ /games (улучшенная)
+        // ---- Hybrid watcher ----
         let syncTimer = null;
         let syncInProgress = false;
         let pendingSync = false;
+        let lastReadyCount = 0;
+
+        async function getReadyCount() {
+            const row = await db.get('SELECT COUNT(*) as c FROM games WHERE ready = 1');
+            return row?.c || 0;
+        }
+
+        lastReadyCount = await getReadyCount();
 
         async function runSyncSafely(reason = 'watcher') {
             if (syncInProgress) {
@@ -753,16 +812,24 @@ if (require.main === module) {
             try {
                 console.log(`[Watcher] 🔄 Запуск синхронизации (${reason})...`);
                 await syncDatabase();
-                console.log('[Watcher] ✅ Библиотека успешно обновлена!');
 
-                // Уведомление в браузер
-                io.emit('scrape-success', { message: '🔄 Найдены изменения в /games. Обновите страницу.' });
+                const newReadyCount = await getReadyCount();
+                if (newReadyCount !== lastReadyCount) {
+                    const diff = newReadyCount - lastReadyCount;
+                    lastReadyCount = newReadyCount;
+
+                    io.emit('scrape-success', {
+                        message: diff > 0
+                            ? `✅ Добавлено готовых игр: ${diff}`
+                            : '🔄 Библиотек�� обновлена'
+                    });
+                }
+
+                console.log('[Watcher] ✅ Синхронизация завершена');
             } catch (e) {
                 console.error('[Watcher] ❌ Ошибка синхронизации:', e);
             } finally {
                 syncInProgress = false;
-
-                // Если изменения пришли во время sync — запускаем ещё один проход
                 if (pendingSync) {
                     pendingSync = false;
                     setTimeout(() => runSyncSafely('pending'), 300);
@@ -771,11 +838,9 @@ if (require.main === module) {
         }
 
         const watcher = fs.watch(GAMES_DIR, { persistent: true }, (eventType, filename) => {
-            // Игнорируем служебные папки и пустые имена
             if (!filename) return;
             if (filename === '_tmp_uploads' || filename === '_saves' || filename === 'node_modules') return;
 
-            // Debounce: ждём 5 сек "тишины" (полезно при копировании больших игр)
             clearTimeout(syncTimer);
             syncTimer = setTimeout(() => {
                 runSyncSafely(`fs.watch:${eventType}:${filename}`);
