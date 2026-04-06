@@ -64,7 +64,7 @@
   }
 
   // =========================
-  // 2) Viewport + scaling + mouse sync
+  // 2) Viewport + GPU Scaling + Mouse Sync
   // =========================
   (function setupViewportAndScale() {
     let meta = document.querySelector('meta[name="viewport"]');
@@ -78,31 +78,36 @@
     const style = document.createElement('style');
     style.textContent = [
       'html, body { margin:0!important; padding:0!important; width:100vw!important; height:100dvh!important; background:#000!important; overflow:hidden!important; touch-action:none!important; }',
-      '#GameCanvas, canvas { display:block!important; position:absolute!important; top:50%!important; left:50%!important; transform:translate(-50%, -50%)!important; margin:0!important; padding:0!important; image-rendering:pixelated; }'
+      '#GameCanvas, canvas { display:block!important; position:absolute!important; top:50%!important; left:50%!important; transform-origin:center center!important; margin:0!important; padding:0!important; image-rendering:pixelated; }'
     ].join('\n');
     document.head.appendChild(style);
 
-    function freezeGraphicsHooks() {
-      if (typeof Graphics === 'undefined') return false;
-      if (Graphics._updateCanvas) Graphics._updateCanvas = function () {};
-      if (Graphics._centerElement) Graphics._centerElement = function () {};
-      if (Graphics._onWindowResize) Graphics._onWindowResize = function () {};
-      return true;
-    }
-
-    if (!freezeGraphicsHooks()) {
-      const freezeTimer = setInterval(() => {
-        if (freezeGraphicsHooks()) clearInterval(freezeTimer);
-      }, 200);
-      setTimeout(() => clearInterval(freezeTimer), 10000);
-    }
+    // ⚡ ГЛОБАЛЬНАЯ ПЕРЕМЕННАЯ И ФУНКЦИЯ ДЛЯ КНОПКИ
+    let isStretched = false;
+    window.__toggleRpgStretch = function() {
+      isStretched = !isStretched;
+      scheduleScale();
+    };
 
     function updateScale() {
       const c = document.getElementById('GameCanvas') || document.querySelector('canvas');
       if (!c || !c.width || !c.height) return;
-      const scale = Math.min(window.innerWidth / c.width, window.innerHeight / c.height);
-      c.style.setProperty('width', Math.floor(c.width * scale) + 'px', 'important');
-      c.style.setProperty('height', Math.floor(c.height * scale) + 'px', 'important');
+
+      c.style.setProperty('width', c.width + 'px', 'important');
+      c.style.setProperty('height', c.height + 'px', 'important');
+
+      let scaleX = window.innerWidth / c.width;
+      let scaleY = window.innerHeight / c.height;
+
+      // Если режим растягивания ВЫКЛЮЧЕН - сохраняем оригинальные пропорции
+      if (!isStretched) {
+        const scale = Math.min(scaleX, scaleY);
+        scaleX = scale;
+        scaleY = scale;
+      }
+
+      // Применяем X и Y масштаб через GPU
+      c.style.setProperty('transform', `translate(-50%, -50%) scale(${scaleX}, ${scaleY})`, 'important');
     }
 
     let rafPending = false;
@@ -119,20 +124,14 @@
     window.addEventListener('resize', scheduleScale);
     window.addEventListener('orientationchange', () => setTimeout(scheduleScale, 250));
 
-    // ⚡ АВТО-ПИНОК: Заставляем PIXI.js отрисовать первый кадр (Устраняем черный экран)
-    const bootKick = setInterval(() => {
-      scheduleScale();
-      // Симулируем системный ресайз, чтобы "разбудить" движок
-      window.dispatchEvent(new Event('resize'));
-      
-      // Как только игра загрузила титульный экран - прекращаем пинать
-      if (typeof SceneManager !== 'undefined' && SceneManager._scene) {
-        clearInterval(bootKick);
+    const bootTimer = setInterval(() => {
+      const c = document.getElementById('GameCanvas') || document.querySelector('canvas');
+      if (c && c.width) {
+        scheduleScale();
+        if (typeof SceneManager !== 'undefined' && SceneManager._scene) clearInterval(bootTimer);
       }
-    }, 200);
-    
-    // Предохранитель: останавливаем через 5 секунд в любом случае
-    setTimeout(() => clearInterval(bootKick), 5000);
+    }, 100);
+    setTimeout(() => clearInterval(bootTimer), 5000);
 
     function patchMouseCoords() {
       if (typeof Graphics === 'undefined' || !Graphics.pageToCanvasX) return false;
@@ -156,7 +155,6 @@
       setTimeout(() => clearInterval(mouseTimer), 10000);
     }
 
-    // ⚡ ИСПРАВЛЕНО НА NEAREST ДЛЯ ЧЕТКИХ ПИКСЕЛЕЙ ⚡
     function patchPixi() {
       if (typeof PIXI === 'undefined') return false;
       try {
@@ -418,15 +416,24 @@
   })();
 
   // =========================
-  // 6) Virtual gamepad + fullscreen
+  // 6) Virtual gamepad + fullscreen + stretch toggle
   // =========================
   document.addEventListener('DOMContentLoaded', function () {
-    if (document.getElementById('_fs_btn')) return;
+    if (document.getElementById('_mob_ctrl')) return; // Защита от двойного создания
+
+    // ⚡ НАДЕЖНОЕ ОПРЕДЕЛЕНИЕ iOS (iPhone, iPod, iPad)
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || 
+                  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
     const style = document.createElement('style');
     style.textContent = [
       '#_fs_btn { position:fixed; top:12px; right:12px; z-index:9999; width:40px; height:40px; background:rgba(0,0,0,0.6); border:1px solid rgba(255,255,255,0.25); border-radius:8px; cursor:pointer; display:flex; align-items:center; justify-content:center; transition:background 0.2s; -webkit-tap-highlight-color:transparent; }',
       '#_fs_btn svg { width:20px; height:20px; fill:white; }',
+      
+      // Сдвигаем кнопку растягивания вправо, если кнопки Fullscreen нет!
+      `#_stretch_btn { position:fixed; top:12px; right:${isIOS ? '12px' : '60px'}; z-index:9999; width:40px; height:40px; background:rgba(0,0,0,0.6); border:1px solid rgba(255,255,255,0.25); border-radius:8px; cursor:pointer; display:flex; align-items:center; justify-content:center; transition:background 0.2s; -webkit-tap-highlight-color:transparent; }`,
+      '#_stretch_btn svg { width:22px; height:22px; fill:white; }',
+      
       '#_mob_ctrl { display:none; position:fixed; bottom:0; left:0; right:0; z-index:9998; pointer-events:none; padding:16px; height:220px; }',
       '@media (pointer:coarse) { #_mob_ctrl { display:block; } }',
       '#_dpad { position:absolute; bottom:20px; left:20px; width:190px; height:190px; pointer-events:all; }',
@@ -448,23 +455,55 @@
     ].join('\n');
     document.head.appendChild(style);
 
+    // Генерируем кнопку Fullscreen только если это НЕ iOS
+    const fsBtnHtml = isIOS ? '' : '<div id="_fs_btn" title="Fullscreen"><svg viewBox="0 0 24 24"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg></div>';
+
     const pad = document.createElement('div');
     pad.innerHTML =
-      '<div id="_fs_btn" title="Fullscreen"><svg viewBox="0 0 24 24"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg></div>' +
+      fsBtnHtml + 
+      '<div id="_stretch_btn" title="Stretch Screen"><svg viewBox="0 0 24 24"><path d="M10 21v-2H6.41l4.5-4.5-1.41-1.41-4.5 4.5V14H3v7h7zm11-7h-2v3.59l-4.5-4.5-1.41 1.41 4.5 4.5H14v2h7v-7zM3 3v7h2V6.41l4.5 4.5 1.41-1.41-4.5-4.5H10V3H3zm11 0v2h3.59l-4.5 4.5 1.41 1.41 4.5-4.5V10h2V3h-7z"/></svg></div>' +
       '<div id="_mob_ctrl">' +
       '<div id="_dpad"><div class="_dpad_btn" id="_d_up"><svg viewBox="0 0 24 24"><path d="M12 8l-6 6 1.41 1.41L12 10.83l4.59 4.58L18 14z"/></svg></div><div class="_dpad_btn" id="_d_down"><svg viewBox="0 0 24 24"><path d="M16.59 8.59L12 13.17 7.41 8.59 6 10l6 6 6-6z"/></svg></div><div class="_dpad_btn" id="_d_left"><svg viewBox="0 0 24 24"><path d="M15.41 16.59L10.83 12l4.58-4.59L14 6l-6 6 6 6z"/></svg></div><div class="_dpad_btn" id="_d_right"><svg viewBox="0 0 24 24"><path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z"/></svg></div><div id="_d_mid"></div></div>' +
       '<div id="_act_btns"><div class="_act_btn" id="_a_shift">SHIFT</div><div class="_act_btn" id="_a_ok">OK</div><div class="_act_btn" id="_a_menu">MENU</div><div class="_act_btn" id="_a_esc">ESC</div></div>' +
       '</div>';
     document.body.appendChild(pad);
 
-    document.getElementById('_fs_btn').addEventListener('click', function () {
+    // Умный биндинг
+    function bindUiButton(id, action) {
+      const btn = document.getElementById(id);
+      if (!btn) return; // Если кнопки нет (как _fs_btn на iOS), ошибки не будет!
+      let lastTrigger = 0;
+      function handler(e) {
+        if (e.cancelable) e.preventDefault();
+        const now = Date.now();
+        if (now - lastTrigger < 300) return;
+        lastTrigger = now;
+        action(e);
+      }
+      btn.addEventListener('touchstart', handler, { passive: false });
+      btn.addEventListener('click', handler);
+    }
+
+    // Биндим кнопки
+    bindUiButton('_fs_btn', function () {
       const el = document.documentElement;
-      const req = el.requestFullscreen || el.webkitRequestFullscreen;
-      if (!req) return;
-      if (document.fullscreenElement || document.webkitFullscreenElement) (document.exitFullscreen || document.webkitExitFullscreen).call(document);
-      else req.call(el);
+      const req = el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen || el.msRequestFullscreen;
+      if (req) {
+        if (document.fullscreenElement || document.webkitFullscreenElement) {
+          const exit = document.exitFullscreen || document.webkitExitFullscreen || document.mozCancelFullScreen || document.msExitFullscreen;
+          if (exit) exit.call(document);
+        } else {
+          req.call(el).catch(() => console.log("Фулскрин заблокирован."));
+        }
+      }
     });
 
+    bindUiButton('_stretch_btn', function () {
+      if (window.__toggleRpgStretch) window.__toggleRpgStretch();
+    });
+
+    // ----------------------------------------------------
+    // Ниже остается твой старый код геймпада
     const keyMap = {
       _d_up: { key: 'ArrowUp', code: 'ArrowUp', keyCode: 38 },
       _d_down: { key: 'ArrowDown', code: 'ArrowDown', keyCode: 40 },

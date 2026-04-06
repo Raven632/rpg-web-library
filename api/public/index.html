@@ -77,7 +77,6 @@
         .card-cover img { width:100%; height:100%; object-fit:cover; display:block; transition:transform 0.6s cubic-bezier(0.25, 0.46, 0.45, 0.94), filter 0.4s; filter:brightness(0.7) saturate(0.8); }
         .game-card:hover .card-cover img { transform:scale(1.08); filter:brightness(1.05) saturate(1.2); }
         
-        /* Звёзды (Оценки) */
         .card-rating { position:absolute; top:10px; left:10px; z-index:10; display:flex; gap:2px; background:rgba(0,0,0,0.6); padding:4px 8px; border-radius:12px; border:1px solid rgba(201,168,76,0.2); backdrop-filter:blur(4px); opacity: 0; transition: opacity 0.3s; }
         .game-card:hover .card-rating, .card-rating.has-rating { opacity: 1; }
         .card-rating .star { color: rgba(255,255,255,0.2); font-size: 16px; cursor:pointer; transition: 0.2s; line-height: 1;}
@@ -121,49 +120,99 @@
         .library-info { position:relative; z-index:1; text-align:center; font-family:'Cinzel',serif; font-size:0.75rem; color:var(--text-dim); letter-spacing:0.2em; padding-bottom:20px; }
         footer { position:relative; z-index:1; text-align:center; padding:25px; border-top:1px solid rgba(201,168,76,0.1); background: rgba(0,0,0,0.3); font-size:0.75rem; color:var(--text-dim); letter-spacing:0.1em; }
 
-        /* --- Стили для всплывающего окна (Modal) --- */
+        /* ========================================================= */
+        /* --- СТИЛИ ВСПЛЫВАЮЩЕГО ОКНА (ИДЕАЛЬНЫЙ DESKTOP UI) --- */
+        /* ========================================================= */
+        
         .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.85); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); z-index: 2000; display: flex; align-items: center; justify-content: center; opacity: 0; pointer-events: none; transition: opacity 0.3s ease; padding: 20px; }
         .modal-overlay.active { opacity: 1; pointer-events: all; }
         
-        .modal-content { background: var(--bg-card); border: 1px solid rgba(201,168,76,0.3); border-radius: 8px; max-width: 1050px; width: 100%; max-height: 90vh; display: flex; flex-direction: column; position: relative; transform: translateY(30px) scale(0.95); transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); box-shadow: 0 25px 60px rgba(0,0,0,0.9), 0 0 40px rgba(201,168,76,0.1); overflow: hidden; }
+        /* ⚡ ФИКС 1: Окно теперь может быть широким (до 1400px), занимая 92% ширины экрана! */
+        .modal-content { background: var(--bg-card); border: 1px solid rgba(201,168,76,0.3); border-radius: 8px; max-width: 1400px; width: 92vw; max-height: 90vh; display: flex; flex-direction: column; position: relative; transform: translateY(30px) scale(0.95); transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); box-shadow: 0 25px 60px rgba(0,0,0,0.9), 0 0 40px rgba(201,168,76,0.1); overflow: hidden; margin: 0 auto; }
         .modal-overlay.active .modal-content { transform: translateY(0) scale(1); }
         
         .modal-close { position: absolute; top: 15px; right: 20px; font-size: 2.5rem; color: var(--text-dim); cursor: pointer; line-height: 1; transition: color 0.2s; z-index: 100; font-family: sans-serif; text-shadow: 0 2px 10px rgba(0,0,0,0.8); }
         .modal-close:hover { color: var(--gold-light); }
         
-        .modal-header { display: flex; flex-wrap: wrap; gap: 30px; padding: 35px; background: linear-gradient(to bottom right, rgba(201,168,76,0.05), transparent); overflow-y: auto; flex: 1; }
+        /* ⚡ ФИКС 2: Отключаем перенос (flex-wrap: nowrap), чтобы картинка и текст всегда стояли в 2 ровные колонки */
+        .modal-header { display: flex; flex-wrap: nowrap; gap: 40px; padding: 40px; background: linear-gradient(to bottom right, rgba(201,168,76,0.05), transparent); overflow-y: auto; flex: 1; }
         
-        .modal-cover-wrapper { width: 45%; min-width: 320px; max-width: 480px; border-radius: 8px; overflow: hidden; border: 1px solid rgba(201,168,76,0.2); background: #0f0d15; position: relative; box-shadow: 0 10px 30px rgba(0,0,0,0.6); align-self: flex-start; flex-shrink: 0; }
-        #modal-cover { width: 100%; display: block; }
+        /* ⚡ ФИКС 3: Умная обложка (Steam-style). Не обрезается и парит при скролле текста */
+        .modal-cover-wrapper { width: 40%; min-width: 320px; max-width: 550px; border-radius: 8px; overflow: hidden; border: 1px solid rgba(201,168,76,0.2); 
+            background: #0f0d15; 
+            position: sticky; /* Магия: картинка прилипает к верху при прокрутке */
+            top: 0; 
+            align-self: flex-start; /* Убираем жесткое растягивание */
+            flex-shrink: 0; 
+            box-shadow: 0 10px 30px rgba(0,0,0,0.6); 
+        }
         
-        .modal-info { flex: 1; min-width: 250px; display: flex; flex-direction: column; position: relative; }
-        #modal-number { font-family: 'Cinzel', serif; font-size: 0.8rem; color: var(--gold-dim); letter-spacing: 0.2em; margin-bottom: 12px; text-transform: uppercase; display: flex; align-items: center; gap: 8px;}
+        #modal-cover { 
+            width: 100%; 
+            height: auto; /* Высота подстраивается под пропорции */
+            max-height: 75vh; /* Не дает картинке вылезти за пределы экрана */
+            object-fit: contain; /* ⚡ Картинка ВСЕГДА помещается целиком, без обрезки! */
+            display: block; 
+        }
+        
+        /* ⚡ ФИКС 4: Текст забирает все оставшиеся 60% ширины и имеет жесткую относительную позицию для кнопки */
+        .modal-info { flex: 1; min-width: 300px; display: flex; flex-direction: column; position: relative; }
+        
+        #modal-number { font-family: 'Cinzel', serif; font-size: 0.85rem; color: var(--gold-dim); letter-spacing: 0.2em; margin-bottom: 15px; text-transform: uppercase; display: flex; align-items: center; gap: 8px;}
         #modal-number::before { content: ''; width: 6px; height: 6px; background: var(--gold); border-radius: 50%; display: inline-block; box-shadow: 0 0 8px var(--gold);}
-        #modal-title { font-family: 'Cinzel', serif; font-size: 1.8rem; color: var(--text); line-height: 1.25; margin-bottom: 25px; text-shadow: 0 0 20px rgba(201,168,76,0.2); padding-right: 30px; }
+        #modal-title { font-family: 'Cinzel', serif; font-size: 2rem; color: var(--text); line-height: 1.25; margin-bottom: 25px; text-shadow: 0 0 20px rgba(201,168,76,0.2); padding-right: 40px; }
         
-        .modal-meta { display: flex; flex-direction: column; gap: 8px; margin-bottom: 25px; font-family: 'Cinzel', serif; font-size: 0.85rem; color: var(--text-dim); letter-spacing: 0.05em; }
+        .modal-meta { display: flex; flex-direction: column; gap: 10px; margin-bottom: 30px; font-family: 'Cinzel', serif; font-size: 0.9rem; color: var(--text-dim); letter-spacing: 0.05em; }
         .modal-meta b { color: var(--gold-dim); font-weight: normal; margin-right: 5px; }
         
-        .modal-tags { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 30px; }
-        .modal-tags .tag { padding: 5px 12px; font-size: 0.7rem; border-color: rgba(201,168,76,0.3); background: rgba(20,18,26,0.8); }
+        .modal-tags { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 30px; max-height: 130px; overflow-y: auto; padding-right: 10px; align-content: flex-start; }
+        .modal-tags::-webkit-scrollbar { width: 4px; }
+        .modal-tags::-webkit-scrollbar-track { background: rgba(0,0,0,0.2); border-radius: 2px; }
+        .modal-tags::-webkit-scrollbar-thumb { background: var(--gold-dim); border-radius: 2px; }
+        .modal-tags .tag { padding: 6px 14px; font-size: 0.75rem; border-color: rgba(201,168,76,0.3); background: rgba(20,18,26,0.8); }
         
-        /* ⚡ Стили для описания */
-        .modal-description { font-family: 'Crimson Text', serif; font-size: 1rem; line-height: 1.6; color: var(--text-dim); margin-bottom: 25px; white-space: pre-wrap; max-height: 250px; overflow-y: auto; padding-right: 15px; border-left: 2px solid rgba(201,168,76,0.3); padding-left: 15px; }
+        .modal-description { font-family: 'Crimson Text', serif; font-size: 1.05rem; line-height: 1.7; color: var(--text-dim); white-space: pre-wrap; padding-right: 20px; border-left: 2px solid rgba(201,168,76,0.3); padding-left: 15px; 
+            margin-bottom: 60px; /* ⚡ СОЗДАЕМ БУФЕР: Текст отъедет вверх на высоту кнопки */
+        }
         .modal-description::-webkit-scrollbar { width: 6px; }
         .modal-description::-webkit-scrollbar-track { background: rgba(0,0,0,0.2); }
         .modal-description::-webkit-scrollbar-thumb { background: var(--gold-dim); border-radius: 3px; }
         
-        #modal-play-btn { position: sticky; bottom: -5px; margin-top: auto; width: 100%; padding: 16px; background: rgba(20, 18, 26, 0.95); border: 1px solid var(--gold); border-radius: 4px; color: var(--gold-light); font-family: 'Cinzel', serif; font-size: 1.1rem; font-weight: 700; letter-spacing: 0.15em; text-transform: uppercase; cursor: pointer; transition: all 0.3s; display: inline-flex; align-items: center; justify-content: center; gap: 12px; text-decoration: none; box-shadow: 0 -15px 30px rgba(0,0,0,0.8); backdrop-filter: blur(10px); }
+        /* ⚡ ФИКС 5: Парящая кнопка приклеена к самому низу текстового блока! */
+        #modal-play-btn { 
+            position: sticky; 
+            bottom: 0; /* ⚡ Идеально прилипает ровно к нижнему краю окна прокрутки */
+            margin-top: auto; 
+            width: 100%; z-index: 10;
+            padding: 18px; background: rgba(20, 18, 26, 0.95); border: 1px solid var(--gold); border-radius: 6px; color: var(--gold-light); font-family: 'Cinzel', serif; font-size: 1.2rem; font-weight: 700; letter-spacing: 0.15em; text-transform: uppercase; cursor: pointer; transition: all 0.3s; display: inline-flex; align-items: center; justify-content: center; gap: 12px; text-decoration: none; box-shadow: 0 -15px 30px rgba(0,0,0,0.8); backdrop-filter: blur(10px); 
+        }
         #modal-play-btn:hover { background: var(--gold); color: var(--bg-deep); box-shadow: 0 0 25px rgba(201,168,76,0.6); transform: translateY(-2px); }
-        
+       
+        /* ========================================================= */
+        /* --- МОБИЛЬНАЯ АДАПТАЦИЯ --- */
+        /* ========================================================= */
         @media (max-width: 700px) { 
-            .modal-overlay { padding: 10px; align-items: flex-end; }
-            .modal-content { max-height: 85vh; border-radius: 16px 16px 8px 8px; }
-            .modal-header { padding: 25px 20px; gap: 20px; } 
-            .modal-cover-wrapper { width: 100%; max-height: 200px; }
-            #modal-cover { height: 100%; object-fit: cover; object-position: top; }
-            #modal-title { font-size: 1.4rem; } 
-            #modal-play-btn { font-size: 1rem; padding: 14px; bottom: 0; }
+            html, body { max-width: 100vw; overflow-x: hidden; }
+            .search-box, .sort-box, .upload-btn { min-width: 100%; }
+            .controls-zone { gap: 10px; margin-bottom: 20px; }
+
+            .modal-overlay { padding: 10px; align-items: center; justify-content: center; } 
+            .modal-content { width: 100%; max-width: calc(100vw - 20px); max-height: 90vh; border-radius: 12px; margin: 0; }
+            .modal-header { padding: 15px; gap: 15px; display: flex; flex-direction: column; flex-wrap: nowrap; } 
+            
+            /* ⚡ ФИКС 3: Умная обложка (Steam-style). Не обрезается и парит при скролле текста */
+            .modal-cover-wrapper { width: 100%; min-width: 0 !important; max-width: none; max-height: 220px; align-self: center; position: relative; display: flex; align-items: center; justify-content: center; }
+        
+            #modal-cover { width: 100%; height: auto; /* Высота подстраивается под пропорции */max-height: 75vh; /* Не дает картинке вылезти за пределы экрана */object-fit: contain; /* ⚡ Картинка ВСЕГДА помещается целиком, без обрезки! */display: block; }
+            
+            .modal-info { width: 100%; min-width: 0 !important; }
+            
+            #modal-title { font-size: 1.3rem; margin-bottom: 12px; padding-right: 25px; word-break: break-word; } 
+            .modal-description { font-size: 0.95rem; padding-left: 10px; padding-right: 5px; 
+                margin-bottom: 60px; /* ⚡ Такой же буфер для мобилок */
+                border-left-width: 1px; 
+            }
+            #modal-play-btn { font-size: 1rem; padding: 14px; position: sticky; bottom: 0; width: 100%; }
         }
     </style>
 </head>
@@ -249,7 +298,6 @@
                 </div>
                 
                 <div class="modal-meta">
-                <div class="modal-meta">
                     <span id="modal-added"></span>
                     <span id="modal-played"></span>
                 </div>
@@ -267,10 +315,8 @@
 <script>
 const ROMAN = ['Ⅰ','Ⅱ','Ⅲ','Ⅳ','Ⅴ','Ⅵ','Ⅶ','Ⅷ','Ⅸ','Ⅹ','Ⅺ','Ⅻ'];
 const API = ''; 
-// ⚡ ПОДКЛЮЧАЕМ СОКЕТЫ К БРАУЗЕРУ
 const socket = io();
 
-// Слушаем новости о распаковке архивов
 socket.on('upload-status', function(data) {
     var progressWrap = document.getElementById('progress-wrap');
     if (progressWrap.style.display === 'block') {
@@ -278,10 +324,9 @@ socket.on('upload-status', function(data) {
     }
 });
 
-// Слушаем новости о фоновом парсинге тегов
 socket.on('scrape-success', function(data) {
     showToast(data.message, 'success');
-    loadGames(); // Мгновенно обновляем сетку игр, чтобы появились новые теги!
+    loadGames();
 });
 
 let allGames = [];
@@ -295,29 +340,21 @@ function showToast(msg, type) {
     setTimeout(function() { t.classList.remove('show'); }, 4000);
 }
 
-// ⚡ НОВАЯ ФУНКЦИЯ: Собирает все уникальные теги из базы и считает их
 function populateTagFilter(games) {
     const tagSelect = document.getElementById('tag-filter');
     const tagCounts = {};
     
-    // Считаем, сколько раз встречается каждый тег
     games.forEach(g => {
         if (g.tags && g.tags.length > 0) {
-            g.tags.forEach(t => {
-                tagCounts[t] = (tagCounts[t] || 0) + 1;
-            });
+            g.tags.forEach(t => { tagCounts[t] = (tagCounts[t] || 0) + 1; });
         }
     });
 
-    // ⚡ Сортируем теги строго по алфавиту
     const sortedTags = Object.keys(tagCounts).sort((a, b) => a.localeCompare(b));
-
-    // Заполняем выпадающий список
     tagSelect.innerHTML = '<option value="all">Все жанры</option>';
     sortedTags.forEach(tag => {
         const opt = document.createElement('option');
-        opt.value = tag;
-        opt.textContent = `${tag} (${tagCounts[tag]})`;
+        opt.value = tag; opt.textContent = `${tag} (${tagCounts[tag]})`;
         tagSelect.appendChild(opt);
     });
 }
@@ -328,12 +365,9 @@ async function loadGames() {
         if (!res.ok) throw new Error();
         let rawGames = await res.json();
         
-        // ⚡ МАГИЯ ОЧИСТКИ ТЕГОВ
         rawGames.forEach(g => {
             if (g.tags && g.tags.length > 0) {
-                // Отрезаем пробел и цифры в скобках в конце строки (например " (18)")
                 let cleanedTags = g.tags.map(t => t.replace(/\s*\(\d+\)$/, '').trim());
-                // Оставляем только уникальные теги (убираем дубликаты)
                 g.tags = [...new Set(cleanedTags)]; 
             }
         });
@@ -348,7 +382,6 @@ async function loadGames() {
 
 document.getElementById('search-input').addEventListener('input', function() { renderGames(allGames); });
 document.getElementById('sort-select').addEventListener('change', function(e) { currentSort = e.target.value; renderGames(allGames); });
-// ⚡ Слушатель для нового фильтра:
 document.getElementById('tag-filter').addEventListener('change', function() { renderGames(allGames); });
 
 function renderGames(games) {
@@ -356,26 +389,18 @@ function renderGames(games) {
     var lib = document.getElementById('library');
     lib.innerHTML = '';
 
-    // ⚡ ИЗМЕНЕННАЯ ФИЛЬТРАЦИЯ (Поиск + Выбранный тег)
     var query = document.getElementById('search-input').value.toLowerCase();
     var selectedTag = document.getElementById('tag-filter').value;
 
     var filtered = games.filter(function(g) {
-        // Проверка поиска по названию и тегам
         var matchTitle = g.title.toLowerCase().includes(query) || g.id.toLowerCase().includes(query);
         var matchTags = g.tags && g.tags.some(t => t.toLowerCase().includes(query));
         var passesSearch = matchTitle || matchTags;
-
-        // Проверка выбранного жанра в выпадающем списке
         var passesTag = true;
-        if (selectedTag !== 'all') {
-            passesTag = g.tags && g.tags.includes(selectedTag);
-        }
-
+        if (selectedTag !== 'all') passesTag = g.tags && g.tags.includes(selectedTag);
         return passesSearch && passesTag;
     });
 
-    // 2. Сортировка
     if (currentSort === 'newest') filtered.sort((a,b) => b.addedAt - a.addedAt);
     if (currentSort === 'recent') filtered.sort((a,b) => b.lastPlayed - a.lastPlayed);
     if (currentSort === 'rating') filtered.sort((a,b) => b.rating - a.rating);
@@ -479,8 +504,7 @@ function renderGames(games) {
 
             const descDiv = document.getElementById('modal-description');
             if (game.description) {
-                descDiv.textContent = game.description;
-                descDiv.style.display = 'block';
+                descDiv.textContent = game.description; descDiv.style.display = 'block';
             } else {
                 descDiv.style.display = 'none';
             }
@@ -488,104 +512,51 @@ function renderGames(games) {
             document.getElementById('modal-play-btn').onclick = function() {
                 game.lastPlayed = Date.now();
                 fetch(API + '/api/games/' + encodeURIComponent(game.id) + '/meta', {
-                    method: 'POST', 
-                    headers: {'Content-Type': 'application/json', 'x-api-token': 'SuperSecretKey123'}, 
-                    body: JSON.stringify({ lastPlayed: game.lastPlayed })
-                }).finally(() => {
-                    window.location.href = game.url; 
-                });
+                    method: 'POST', headers: {'Content-Type': 'application/json', 'x-api-token': 'SuperSecretKey123'}, body: JSON.stringify({ lastPlayed: game.lastPlayed })
+                }).finally(() => { window.location.href = game.url; });
             };
 
-            // --- ⚡ ЛОГИКА ФОРМЫ РЕДАКТИРОВАНИЯ ---
             const editForm = document.getElementById('modal-edit-form');
             const titleDisplay = document.getElementById('modal-title');
             const saveBtn = document.getElementById('edit-save-btn');
             const statusEl = document.getElementById('edit-status');
             
-            // Сброс состояния при открытии модалки
-            editForm.style.display = 'none';
-            titleDisplay.style.display = 'block';
+            editForm.style.display = 'none'; titleDisplay.style.display = 'block';
             document.getElementById('edit-title-input').value = game.title;
             document.getElementById('edit-rj-input').value = ''; 
 
-            document.getElementById('modal-edit-btn').onclick = function() {
-                titleDisplay.style.display = 'none';
-                editForm.style.display = 'block';
-            };
-
-            document.getElementById('edit-cancel-btn').onclick = function() {
-                titleDisplay.style.display = 'block';
-                editForm.style.display = 'none';
-            };
+            document.getElementById('modal-edit-btn').onclick = function() { titleDisplay.style.display = 'none'; editForm.style.display = 'block'; };
+            document.getElementById('edit-cancel-btn').onclick = function() { titleDisplay.style.display = 'block'; editForm.style.display = 'none'; };
 
             saveBtn.onclick = async function() {
                 const newTitle = document.getElementById('edit-title-input').value.trim();
                 const newRj = document.getElementById('edit-rj-input').value.trim();
                 
-                statusEl.style.display = 'block';
-                statusEl.textContent = newRj ? 'Связь с серверами DLsite... (ожидание ~15 сек)' : 'Сохранение...';
-                saveBtn.disabled = true;
-                saveBtn.style.opacity = '0.5';
+                statusEl.style.display = 'block'; statusEl.textContent = newRj ? 'Связь с серверами DLsite... (ожидание ~15 сек)' : 'Сохранение...';
+                saveBtn.disabled = true; saveBtn.style.opacity = '0.5';
 
                 try {
                     const res = await fetch(`${API}/api/games/${encodeURIComponent(game.id)}/edit`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json', 'x-api-token': 'SuperSecretKey123' },
-                        body: JSON.stringify({ title: newTitle, rjCode: newRj })
+                        method: 'POST', headers: { 'Content-Type': 'application/json', 'x-api-token': 'SuperSecretKey123' }, body: JSON.stringify({ title: newTitle, rjCode: newRj })
                     });
-                    
                     const data = await res.json();
                     if (data.success) {
-                        // ⚡ Если есть предупреждение (нет тегов), показываем его желтым/красным, иначе успех
-                        if (data.warning) {
-                            showToast(data.warning, 'error'); 
-                        } else {
-                            showToast('Том успешно переписан!', 'success');
-                        }
-                        // Обновляем локальный объект игры
-                        game.title = data.title;
-                        game.cover = data.cover;
-                        game.tags = data.tags;
-                        game.description = data.description;
+                        if (data.warning) showToast(data.warning, 'error'); else showToast('Том успешно переписан!', 'success');
+                        game.title = data.title; game.cover = data.cover; game.tags = data.tags; game.description = data.description;
                         
-                        // Мгновенно обновляем UI модального окна
                         titleDisplay.textContent = game.title;
-                        if (game.cover) {
-                            document.getElementById('modal-cover').src = game.cover;
-                            document.getElementById('modal-cover').style.display = 'block';
-                            document.getElementById('modal-cover-placeholder').style.display = 'none';
-                        }
+                        if (game.cover) { document.getElementById('modal-cover').src = game.cover; document.getElementById('modal-cover').style.display = 'block'; document.getElementById('modal-cover-placeholder').style.display = 'none'; }
                         
                         tagsDiv.innerHTML = '';
-                        if (game.tags && game.tags.length > 0) {
-                            game.tags.forEach(t => {
-                                const span = document.createElement('span'); span.className = 'tag'; span.textContent = t; tagsDiv.appendChild(span);
-                            });
-                        }
-                        
-                        if (game.description) {
-                            descDiv.textContent = game.description;
-                            descDiv.style.display = 'block';
-                        }
+                        if (game.tags && game.tags.length > 0) { game.tags.forEach(t => { const span = document.createElement('span'); span.className = 'tag'; span.textContent = t; tagsDiv.appendChild(span); }); }
+                        if (game.description) { descDiv.textContent = game.description; descDiv.style.display = 'block'; }
 
-                        // Закрываем форму
-                        titleDisplay.style.display = 'block';
-                        editForm.style.display = 'none';
-                        
-                        // Тихо обновляем главную сетку на фоне
+                        titleDisplay.style.display = 'block'; editForm.style.display = 'none';
                         loadGames();
-                    } else {
-                        showToast(data.error, 'error');
-                    }
-                } catch(e) {
-                    showToast('Магическая сеть недоступна', 'error');
-                } finally {
-                    saveBtn.disabled = false;
-                    saveBtn.style.opacity = '1';
-                    statusEl.style.display = 'none';
-                }
+                    } else showToast(data.error, 'error');
+                } catch(e) { showToast('Магическая сеть недоступна', 'error'); } 
+                finally { saveBtn.disabled = false; saveBtn.style.opacity = '1'; statusEl.style.display = 'none'; }
             };
-            // --- КОНЕЦ ЛОГИКИ РЕДАКТИРОВАНИЯ ---
 
             document.getElementById('game-modal').classList.add('active');
         });
