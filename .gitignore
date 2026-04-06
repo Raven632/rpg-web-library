@@ -2,3 +2,4 @@ games/
 api/node_modules/
 tmp/
 .DS_Store
+.env
