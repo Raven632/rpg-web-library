@@ -544,9 +544,16 @@
       sx = t.clientX; sy = t.clientY;
     }, { passive: true });
 
+    let lastMoveTime = 0;
     document.addEventListener('touchmove', function (e) {
       if (sx == null) return;
       if (e.cancelable) e.preventDefault();
+      
+      // ⚡ ОХЛАЖДЕНИЕ: Обрабатываем свайпы геймпада не чаще 1 раза в 16 миллисекунд (~60 раз в секунду)
+      const now = Date.now();
+      if (now - lastMoveTime < 16) return;
+      lastMoveTime = now;
+
       const t = e.touches[0];
       const dx = t.clientX - sx;
       const dy = t.clientY - sy;
@@ -585,7 +592,7 @@
   });
 })();
 
-// =========================
+  // =========================
   // 7) MZ CanvasTextAlign Bugfix
   // =========================
   (function fixMZCanvasSpam() {
@@ -601,4 +608,29 @@
       }
     }, 500);
     setTimeout(() => clearInterval(timer), 10000);
+  })();
+
+  // =========================
+  // 8) 120Hz ProMotion Display Heater Fix (Cap at 60 FPS)
+  // =========================
+  (function capFramerate() {
+    const fpsTimer = setInterval(() => {
+      // Ищем главное ядро PIXI
+      if (typeof PIXI !== 'undefined') {
+        // Ограничиваем глобальный тикер
+        if (PIXI.Ticker && PIXI.Ticker.shared) {
+          PIXI.Ticker.shared.maxFPS = 60;
+        }
+        // Ограничиваем тикер самого приложения (движка)
+        if (typeof Graphics !== 'undefined' && Graphics.app && Graphics.app.ticker) {
+          Graphics.app.ticker.maxFPS = 60;
+        }
+        
+        clearInterval(fpsTimer);
+        console.log('[Fix] ❄️ Установлен жесткий лимит 60 FPS (защита от перегрева)');
+      }
+    }, 500);
+
+    // Предохранитель
+    setTimeout(() => clearInterval(fpsTimer), 10000);
   })();
