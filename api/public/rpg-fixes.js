@@ -258,7 +258,8 @@
         }
       }
     }, 150);
-
+    
+    setTimeout(() => clearInterval(hookTimer), 15000);
     // ==========================================
     // ИНЪЕКЦИЯ ДЛЯ НОВЫХ ИГР (MZ / VisuStella)
     // ==========================================
@@ -307,29 +308,49 @@
     // ИНЪЕКЦИЯ ДЛЯ СТАРЫХ ИГР (MV)
     // ==========================================
     function injectMVEngine() {
-      console.log('[CloudSave] ☁️ Инъекция в ядро MV активирована!');
-      
-      Object.keys(pulledSaves).forEach(key => {
-        if (key.startsWith('RPG ')) {
-          try { localStorage.setItem(key, pulledSaves[key]); } catch (e) {}
+        console.log('[CloudSave] ☁️ Инъекция в ядро MV активирована (API Hooking)!');
+
+        // 1. Перехватываем Чтение
+        const _loadFromWebStorage = StorageManager.loadFromWebStorage;
+        StorageManager.loadFromWebStorage = function(saveFileId) {
+            const key = this.webStorageKey(saveFileId);
+            
+            // ⚡ ПРИОРИТЕТ ОБЛАКУ: Если сервер отдал сейв, берем его (Синхронизация ПК -> Телефон)
+            if (pulledSaves[key] !== undefined) {
+                return pulledSaves[key];
+            }
+            
+            // Иначе грузим то, что осталось локально
+            return _loadFromWebStorage.apply(this, arguments);
+        };
+
+        // 2. Перехватываем Проверку существования (нужно для зажигания кнопки "Продолжить")
+        if (StorageManager.webStorageExists) {
+            const _webStorageExists = StorageManager.webStorageExists;
+            StorageManager.webStorageExists = function(saveFileId) {
+                const key = this.webStorageKey(saveFileId);
+                if (pulledSaves[key] !== undefined) return true;
+                return _webStorageExists.apply(this, arguments);
+            };
         }
-      });
 
-      const _saveToWebStorage = StorageManager.saveToWebStorage;
-      StorageManager.saveToWebStorage = function(saveFileId, json) {
-        const key = this.webStorageKey(saveFileId);
-        pulledSaves[key] = json;
-        uploadToCloud(key, json);
-        return _saveToWebStorage.apply(this, arguments);
-      };
+        // 3. Перехватываем Запись (Шлем на сервер + сохраняем локально)
+        const _saveToWebStorage = StorageManager.saveToWebStorage;
+        StorageManager.saveToWebStorage = function(saveFileId, json) {
+            const key = this.webStorageKey(saveFileId);
+            pulledSaves[key] = json; // Обновляем наш кэш
+            uploadToCloud(key, json); // Фоновая отправка на сервер
+            return _saveToWebStorage.apply(this, arguments); // Пусть движок запишет и локально для надежности
+        };
 
-      const _removeWebStorage = StorageManager.removeWebStorage;
-      StorageManager.removeWebStorage = function(saveFileId) {
-        const key = this.webStorageKey(saveFileId);
-        delete pulledSaves[key];
-        deleteFromCloud(key);
-        return _removeWebStorage.apply(this, arguments);
-      };
+        // 4. Перехватываем Удаление
+        const _removeWebStorage = StorageManager.removeWebStorage;
+        StorageManager.removeWebStorage = function(saveFileId) {
+            const key = this.webStorageKey(saveFileId);
+            delete pulledSaves[key];
+            deleteFromCloud(key);
+            return _removeWebStorage.apply(this, arguments);
+        };
     }
   })();
 
@@ -590,7 +611,7 @@
       sx = sy = null;
     }, { passive: true });
   });
-})();
+
 
   // =========================
   // 7) MZ CanvasTextAlign Bugfix
@@ -633,4 +654,5 @@
 
     // Предохранитель
     setTimeout(() => clearInterval(fpsTimer), 10000);
+  })();
   })();
