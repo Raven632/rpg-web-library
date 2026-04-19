@@ -7,8 +7,17 @@
     <link rel="manifest" href="/manifest.json">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="apple-mobile-web-app-title" content="RPG Library">
-    <link rel="apple-touch-icon" href="/icon-192.png">
+    <meta name="apple-mobile-web-app-title" content="RPG Lib">
+    <link rel="apple-touch-icon" href="/icon.png">
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+            navigator.serviceWorker.register('/sw.js')
+                .then(reg => console.log('✅ ServiceWorker зарегистрирован!', reg.scope))
+                .catch(err => console.error('❌ Ошибка ServiceWorker:', err));
+            });
+        }
+    </script>
     <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700;900&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
     <style>
         :root {
@@ -101,7 +110,7 @@
         .game-card:hover .card-number { color: var(--gold); }
         .game-card:hover .card-number::before { background: var(--gold-light); box-shadow: 0 0 8px var(--gold-light); }
         
-        .card-title { font-family:'Cinzel',serif; font-size:1.1rem; font-weight:700; color:var(--text); letter-spacing:0.02em; line-height:1.3; transition:color 0.3s; min-height:2.6em; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+        .card-title { font-family:'Cinzel',serif; font-size:1.1rem; font-weight:700; color:var(--text); letter-spacing:0.02em; line-height:1.3; transition:color 0.3s; min-height:2.6em; display:-webkit-box; -webkit-line-clamp:2; line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
         .game-card:hover .card-title { color:var(--gold-light); }
         
         .card-launch { margin-top: 15px; display:inline-flex; align-items:center; gap:8px; font-size:0.75rem; color:var(--text-dim); font-family:'Cinzel',serif; letter-spacing:0.15em; text-transform:uppercase; transition:all 0.3s; padding: 6px 12px; border: 1px solid transparent; border-radius: 4px;}
