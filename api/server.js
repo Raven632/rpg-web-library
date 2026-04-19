@@ -746,16 +746,28 @@ app.get('*', async (req, res, next) => {
             }
         }
 
-        if (reqPath.endsWith('.ogg')) {
-            try { await fsp.access(filePath); } catch {
-                try { await fsp.access(filePath + '_'); filePath += '_'; } catch {
-                    try { const p = filePath.replace(/\.ogg$/, '.rpgmvo'); await fsp.access(p); filePath = p; } catch {}
-                }
-            }
-        } else if (reqPath.endsWith('.m4a')) {
-            try { await fsp.access(filePath); } catch {
-                try { await fsp.access(filePath + '_'); filePath += '_'; } catch {
-                    try { const p = filePath.replace(/\.m4a$/, '.rpgmvm'); await fsp.access(p); filePath = p; } catch {}
+        // ⚡ УМНЫЙ РОУТИНГ АУДИО (Smart Audio Fallback 2026)
+        // Если движок (iOS) просит .m4a, но его нет, сервер сам найдет .ogg или зашифрованный файл
+        const ext = path.extname(filePath).toLowerCase();
+        
+        async function tryPath(p) {
+            try { await fsp.access(p); return p; } catch { return null; }
+        }
+
+        if (ext === '.m4a' || ext === '.ogg') {
+            const base = filePath.slice(0, -4); // Отрезаем расширение
+            
+            // Формируем список приоритетов (что ищем в первую очередь)
+            const pathsToTry = ext === '.m4a' 
+                ? [filePath, base + '.ogg', filePath + '_', base + '.rpgmvo', base + '.rpgmvm'] // iOS Priority
+                : [filePath, base + '.m4a', filePath + '_', base + '.rpgmvm', base + '.rpgmvo']; // PC Priority
+
+            // Каскадный поиск: отдаем первый найденный файл из списка
+            for (const p of pathsToTry) {
+                const found = await tryPath(p);
+                if (found) { 
+                    filePath = found; 
+                    break; 
                 }
             }
         }
