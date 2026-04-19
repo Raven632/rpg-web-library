@@ -1,11 +1,12 @@
 /**
- * rpg-fixes.js — Ultimate Enterprise Edition v3.3
- * [FIX] D-Pad Classic: Раздельные кнопки с зажатием вместо свайпов
- * [FIX] Audio OGG Enforcer: Обход ошибки отсутствующих .m4a на iOS
+ * rpg-fixes.js — Ultimate Enterprise Edition v3.4
+ * [NEW] Unified System Menu (FAB)
+ * [NEW] Return to Library Button
+ * [NEW] Turbo Mode (3x Speedhack) Integration
  */
 (() => {
-  if (window.__RPG_FIXES_ULTIMATE_V33__) return;
-  window.__RPG_FIXES_ULTIMATE_V33__ = true;
+  if (window.__RPG_FIXES_ULTIMATE_V34__) return;
+  window.__RPG_FIXES_ULTIMATE_V34__ = true;
 
   const API_TOKEN = document.querySelector('meta[name="api-token"]')?.content || 'SuperSecretKey123';
   const CLOUD_BASE = '/api/saves';
@@ -166,15 +167,17 @@
   })();
 
   // =========================
-  // 4) AUDIO FIXES (Sync Unlock & OGG Enforcer)
+  // 4) AUDIO FIXES
   // =========================
   (function setupSecureAudio() {
     if (typeof AudioManager !== 'undefined' && !AudioManager.__PatchedCheck) {
-      AudioManager.__PatchedCheck = true; const orig = AudioManager.checkErrors; AudioManager.checkErrors = function () { try { if (orig) orig.apply(this, arguments); } catch (e) { console.warn('[Audio]', e); } };
+      AudioManager.__PatchedCheck = true; const orig = AudioManager.checkErrors; AudioManager.checkErrors = function () { try { if (orig) orig.apply(this, arguments); } catch (e) {} };
+    }
+    if (typeof WebAudio !== 'undefined' && WebAudio.prototype && !WebAudio.prototype.__PatchedErr) {
+      WebAudio.prototype.__PatchedErr = true; const origErr = WebAudio.prototype._onError; WebAudio.prototype._onError = function () { if (origErr) return origErr.apply(this, arguments); };
     }
 
     let unlocked = false;
-
     function syncUnlockAudio() {
       if (unlocked) return;
       const contexts = [];
@@ -201,26 +204,29 @@
         ['pointerdown', 'touchstart', 'touchend', 'click'].forEach(e => document.removeEventListener(e, syncUnlockAudio, true));
       }
     }
-
     ['pointerdown', 'touchstart', 'touchend', 'click'].forEach(e => document.addEventListener(e, syncUnlockAudio, { passive: true, capture: true }));
     document.addEventListener('visibilitychange', () => { if (!document.hidden) { unlocked = false; syncUnlockAudio(); } });
   })();
 
   // =========================
-  // 5) VIRTUAL GAMEPAD (Classic D-Pad + Key Spammer)
+  // 5) VIRTUAL GAMEPAD & SYSTEM MENU
   // =========================
   document.addEventListener('DOMContentLoaded', () => {
-    if (document.getElementById('_mob_ctrl')) return;
-    const isMobile = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
-    if (!isMobile) return;
-
+    if (document.getElementById('_sys_menu_container')) return;
     const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-
+    
+    // ⚡ Стили для Системного Меню и Геймпада
     const style = document.createElement('style');
     style.textContent = `
-      #_fs_btn, #_stretch_btn { position:fixed; top:12px; z-index:9999; width:40px; height:40px; background:rgba(0,0,0,0.6); border:1px solid rgba(255,255,255,0.25); border-radius:8px; display:flex; align-items:center; justify-content:center; touch-action:none; -webkit-touch-callout:none; -webkit-user-select:none; }
-      #_fs_btn { right:12px; } #_stretch_btn { right:${isIOS ? '12px' : '60px'}; }
-      #_fs_btn svg, #_stretch_btn svg { width:22px; fill:#fff; pointer-events:none; }
+      #_sys_menu_container { position: fixed; top: max(16px, env(safe-area-inset-top));  right: max(16px, env(safe-area-inset-right)); z-index: 9999; display: flex; flex-direction: column; align-items: flex-end; touch-action: none; -webkit-touch-callout: none; -webkit-user-select: none; }
+      #_sys_btn { width: 44px; height: 44px; background: rgba(0,0,0,0.6); border: 1px solid rgba(255,255,255,0.25); border-radius: 50%; display: flex; justify-content: center; align-items: center; font-size: 24px; color: white; cursor: pointer; transition: background 0.2s; }
+      #_sys_btn:active { background: rgba(255,255,255,0.2); }
+      #_sys_panel { display: none; background: rgba(0,0,0,0.85); border: 1px solid rgba(255,255,255,0.15); border-radius: 12px; margin-top: 8px; padding: 6px; flex-direction: column; gap: 4px; box-shadow: 0 8px 16px rgba(0,0,0,0.5); backdrop-filter: blur(4px); }
+      #_sys_panel._open { display: flex; }
+      ._sys_item { padding: 12px 16px; color: #fff; font-family: sans-serif; font-size: 14px; font-weight: 600; background: rgba(255,255,255,0.05); border-radius: 8px; white-space: nowrap; transition: background 0.2s; display: flex; align-items: center; gap: 8px; }
+      ._sys_item:active { background: rgba(255,255,255,0.2); }
+      ._sys_item._active { background: rgba(200, 150, 40, 0.4); border: 1px solid rgba(200, 150, 40, 0.8); }
+
       #_mob_ctrl { position:fixed; bottom:0; left:0; right:0; z-index:9998; pointer-events:none; padding:16px; height:220px; touch-action:none; -webkit-touch-callout:none; -webkit-user-select:none; user-select:none; }
       #_dpad { position:absolute; bottom:20px; left:20px; width:190px; height:190px; pointer-events:auto; touch-action:none; }
       ._dpad_btn { position:absolute; width:58px; height:58px; background:rgba(0,0,0,0.4); border:1px solid rgba(255,255,255,0.3); border-radius:10px; display:flex; align-items:center; justify-content:center; }
@@ -232,28 +238,116 @@
       ._act_btn._on { filter:brightness(1.5); }
       #_a_ok { background:rgba(40,160,40,0.6); } #_a_esc { background:rgba(200,40,40,0.6); }
       #_a_menu { background:rgba(40,100,200,0.6); } #_a_shift { background:rgba(180,140,20,0.6); }
+      
+      @media (pointer: fine) { #_mob_ctrl { display: none; } }
     `;
     document.head.appendChild(style);
 
-    const fsBtn = isIOS ? '' : '<div id="_fs_btn" title="Fullscreen"><svg viewBox="0 0 24 24"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg></div>';
+    // ⚡ Генерируем единое системное меню
+    const sysMenuHtml = `
+      <div id="_sys_menu_container">
+        <div id="_sys_btn">⚙️</div>
+        <div id="_sys_panel">
+          <div class="_sys_item" id="_sys_home">🏠 В библиотеку</div>
+          <div class="_sys_item" id="_sys_stretch">📺 Растянуть экран</div>
+          <div class="_sys_item" id="_sys_turbo">⏩ Турбо-режим (3x)</div>
+          ${isIOS ? '' : '<div class="_sys_item" id="_sys_fs">⛶ На весь экран</div>'}
+        </div>
+      </div>
+    `;
+
+    const mobCtrlHtml = `
+      <div id="_mob_ctrl">
+        <div id="_dpad">
+          <div class="_dpad_btn" id="_d_up"><svg viewBox="0 0 24 24"><path d="M12 8l-6 6 1.41 1.41L12 10.83l4.59 4.58L18 14z"/></svg></div>
+          <div class="_dpad_btn" id="_d_down"><svg viewBox="0 0 24 24"><path d="M16.59 8.59L12 13.17 7.41 8.59 6 10l6 6 6-6z"/></svg></div>
+          <div class="_dpad_btn" id="_d_left"><svg viewBox="0 0 24 24"><path d="M15.41 16.59L10.83 12l4.58-4.59L14 6l-6 6 6 6z"/></svg></div>
+          <div class="_dpad_btn" id="_d_right"><svg viewBox="0 0 24 24"><path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z"/></svg></div>
+        </div>
+        <div id="_act_btns">
+          <div class="_act_btn" id="_a_shift">SHIFT</div><div class="_act_btn" id="_a_ok">OK</div>
+          <div class="_act_btn" id="_a_menu">MENU</div><div class="_act_btn" id="_a_esc">ESC</div>
+        </div>
+      </div>
+    `;
+
     const ui = document.createElement('div');
-    ui.innerHTML = fsBtn +
-      '<div id="_stretch_btn" title="Stretch Screen"><svg viewBox="0 0 24 24"><path d="M10 21v-2H6.41l4.5-4.5-1.41-1.41-4.5 4.5V14H3v7h7zm11-7h-2v3.59l-4.5-4.5-1.41 1.41 4.5 4.5H14v2h7v-7zM3 3v7h2V6.41l4.5 4.5 1.41-1.41-4.5-4.5H10V3H3zm11 0v2h3.59l-4.5 4.5 1.41 1.41 4.5-4.5V10h2V3h-7z"/></svg></div>' +
-      '<div id="_mob_ctrl"><div id="_dpad"><div class="_dpad_btn" id="_d_up"><svg viewBox="0 0 24 24"><path d="M12 8l-6 6 1.41 1.41L12 10.83l4.59 4.58L18 14z"/></svg></div><div class="_dpad_btn" id="_d_down"><svg viewBox="0 0 24 24"><path d="M16.59 8.59L12 13.17 7.41 8.59 6 10l6 6 6-6z"/></svg></div><div class="_dpad_btn" id="_d_left"><svg viewBox="0 0 24 24"><path d="M15.41 16.59L10.83 12l4.58-4.59L14 6l-6 6 6 6z"/></svg></div><div class="_dpad_btn" id="_d_right"><svg viewBox="0 0 24 24"><path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z"/></svg></div></div>' +
-      '<div id="_act_btns"><div class="_act_btn" id="_a_shift">SHIFT</div><div class="_act_btn" id="_a_ok">OK</div><div class="_act_btn" id="_a_menu">MENU</div><div class="_act_btn" id="_a_esc">ESC</div></div></div>';
+    ui.innerHTML = sysMenuHtml + mobCtrlHtml;
     document.body.appendChild(ui);
 
-    document.addEventListener('contextmenu', e => { if (e.target.closest('#_mob_ctrl') || e.target.closest('#_fs_btn') || e.target.closest('#_stretch_btn')) e.preventDefault(); });
-    document.getElementById('_mob_ctrl').addEventListener('pointerdown', e => e.stopPropagation(), { passive: false });
-    document.getElementById('_stretch_btn')?.addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); window.__toggleRpgStretch(); }, { passive: false });
+    // Логика Системного Меню
+    const sysBtn = document.getElementById('_sys_btn');
+    const sysPanel = document.getElementById('_sys_panel');
+
+    sysBtn.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); sysPanel.classList.toggle('_open'); }, { passive: false });
     
+    // Возврат в библиотеку
+    document.getElementById('_sys_home').addEventListener('pointerdown', (e) => { 
+      e.preventDefault(); e.stopPropagation(); 
+      window.location.href = '/'; 
+    }, { passive: false });
+
+    // Растягивание экрана
+    document.getElementById('_sys_stretch').addEventListener('pointerdown', (e) => { 
+      e.preventDefault(); e.stopPropagation(); 
+      window.__toggleRpgStretch(); 
+      sysPanel.classList.remove('_open'); 
+    }, { passive: false });
+
+    // Фулскрин (для ПК/Android)
     if (!isIOS) {
-      document.getElementById('_fs_btn')?.addEventListener('pointerdown', (e) => {
-        e.preventDefault(); e.stopPropagation(); const el = document.documentElement;
+      document.getElementById('_sys_fs')?.addEventListener('pointerdown', (e) => {
+        e.preventDefault(); e.stopPropagation();
+        sysPanel.classList.remove('_open');
+        const el = document.documentElement;
         (!document.fullscreenElement) ? (el.requestFullscreen || el.webkitRequestFullscreen).call(el).catch(()=>{}) : (document.exitFullscreen || document.webkitExitFullscreen).call(document);
       }, { passive: false });
     }
 
+    // ⚡ ТУРБО РЕЖИМ (Спидхак)
+    window.__rpgTurbo = false;
+    document.getElementById('_sys_turbo').addEventListener('pointerdown', (e) => {
+      e.preventDefault(); e.stopPropagation();
+      window.__rpgTurbo = !window.__rpgTurbo;
+      e.currentTarget.classList.toggle('_active', window.__rpgTurbo);
+      sysPanel.classList.remove('_open');
+
+      if (!window.__turboHookInjected) {
+        window.__turboHookInjected = true;
+        const turboHook = setInterval(() => {
+          if (typeof SceneManager !== 'undefined' && SceneManager.updateMain && !SceneManager.__turboPatched) {
+            SceneManager.__turboPatched = true;
+            const origUpdate = SceneManager.updateMain;
+            SceneManager.updateMain = function() {
+              origUpdate.call(this);
+              if (window.__rpgTurbo) {
+                for (let i = 0; i < 2; i++) { // Ускоряем в 3 раза
+                  if (this.updateInputData) this.updateInputData();
+                  if (this.updateManagers) this.updateManagers();
+                  if (this.updateScene) this.updateScene();
+                }
+              }
+            };
+            clearInterval(turboHook);
+          }
+        }, 500);
+      }
+    }, { passive: false });
+
+    // Закрытие меню при клике мимо него
+    document.addEventListener('pointerdown', (e) => {
+      if (!sysPanel.contains(e.target) && e.target !== sysBtn) {
+        sysPanel.classList.remove('_open');
+      }
+    });
+
+    // Запрет выделения текста на кнопках
+    document.addEventListener('contextmenu', e => {
+      if (e.target.closest('#_mob_ctrl') || e.target.closest('#_sys_menu_container')) e.preventDefault();
+    });
+    document.getElementById('_mob_ctrl').addEventListener('pointerdown', e => e.stopPropagation(), { passive: false });
+
+    // Логика виртуального геймпада
     const keyMap = {
       _d_up: { key: 'ArrowUp', code: 'ArrowUp', keyCode: 38 }, _d_down: { key: 'ArrowDown', code: 'ArrowDown', keyCode: 40 },
       _d_left: { key: 'ArrowLeft', code: 'ArrowLeft', keyCode: 37 }, _d_right: { key: 'ArrowRight', code: 'ArrowRight', keyCode: 39 },
@@ -267,38 +361,32 @@
       document.dispatchEvent(ev);
     }
 
-    // ⚡ ЭМУЛЯТОР ЗАЖАТИЯ (Auto-Repeat / Key Spammer)
     const keyIntervals = {};
     function holdKeyStart(id) {
       if (keyIntervals[id]) return;
       fireKey('keydown', keyMap[id]);
-      keyIntervals[id] = setInterval(() => fireKey('keydown', keyMap[id]), 40); // 25 нажатий в секунду
+      keyIntervals[id] = setInterval(() => fireKey('keydown', keyMap[id]), 40);
     }
     function holdKeyStop(id) {
       if (keyIntervals[id]) { clearInterval(keyIntervals[id]); delete keyIntervals[id]; }
       fireKey('keyup', keyMap[id]);
     }
 
-    // Привязываем логику ко ВСЕМ кнопкам сразу (и крестовина, и действия)
     const allButtons = ['_a_ok', '_a_esc', '_a_menu', '_a_shift', '_d_up', '_d_down', '_d_left', '_d_right'];
     allButtons.forEach(id => {
       const el = document.getElementById(id);
       if (!el) return;
-
       el.addEventListener('pointerdown', (e) => {
         e.preventDefault(); e.stopPropagation(); el.classList.add('_on');
         try { el.setPointerCapture(e.pointerId); } catch (_) {}
         holdKeyStart(id);
       });
-
       const onUp = (e) => {
         e.preventDefault(); e.stopPropagation(); el.classList.remove('_on');
         try { if (el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId); } catch (_) {}
         holdKeyStop(id);
       };
-
-      el.addEventListener('pointerup', onUp);
-      el.addEventListener('pointercancel', onUp);
+      el.addEventListener('pointerup', onUp); el.addEventListener('pointercancel', onUp);
     });
   });
 
