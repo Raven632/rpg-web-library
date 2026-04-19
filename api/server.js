@@ -594,6 +594,41 @@ app.post('/api/games/:id/edit', async (req, res) => {
     }
 });
 
+// 🔥 ОБНОВЛЕНИЕ МЕТАДАННЫХ (Рейтинг и Последний запуск)
+app.post('/api/games/:id/meta', async (req, res) => {
+    const folder = path.basename(req.params.id);
+    const { rating, lastPlayed } = req.body;
+
+    try {
+        // Проверяем, существует ли игра в базе
+        const game = await db.get('SELECT id FROM games WHERE id = ?', [folder]);
+        if (!game) return res.status(404).json({ error: 'Игра не найдена' });
+
+        // Умный динамический апдейт: обновляем только то, что прислал фронтенд
+        const updates = [];
+        const params = [];
+        
+        if (rating !== undefined) {
+            updates.push('rating = ?');
+            params.push(rating);
+        }
+        if (lastPlayed !== undefined) {
+            updates.push('lastPlayed = ?');
+            params.push(lastPlayed);
+        }
+
+        if (updates.length > 0) {
+            params.push(folder);
+            await db.run(`UPDATE games SET ${updates.join(', ')} WHERE id = ?`, params);
+        }
+
+        res.json({ success: true });
+    } catch (e) {
+        console.error('[Meta Update Error]', e);
+        res.status(500).json({ error: 'Ошибка при сохранении метаданных' });
+    }
+});
+
 // 🔥 БРОНЕБОЙНАЯ ЗАГРУЗКА И РАСПАКОВКА
 app.post('/api/upload', uploadLimiter, upload.single('game'), async (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'Файл не получен' });

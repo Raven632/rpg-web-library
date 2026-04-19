@@ -370,7 +370,7 @@ function populateTagFilter(games) {
 
 async function loadGames() {
     try {
-        var res = await fetch(API + '/api/games');
+        var res = await fetch(API + '/api/games?_t=' + Date.now(), { cache: 'no-store' });
         if (!res.ok) throw new Error();
         let rawGames = await res.json();
         
@@ -518,11 +518,39 @@ function renderGames(games) {
                 descDiv.style.display = 'none';
             }
 
-            document.getElementById('modal-play-btn').onclick = function() {
+            // ⚡ ИСПРАВЛЕННЫЙ ЗАПУСК ИГРЫ (Safe Navigation + Keepalive)
+            document.getElementById('modal-play-btn').onclick = async function(e) {
+                e.preventDefault();
                 game.lastPlayed = Date.now();
-                fetch(API + '/api/games/' + encodeURIComponent(game.id) + '/meta', {
-                    method: 'POST', headers: {'Content-Type': 'application/json', 'x-api-token': 'SuperSecretKey123'}, body: JSON.stringify({ lastPlayed: game.lastPlayed })
-                }).finally(() => { window.location.href = game.url; });
+                
+                const btn = e.currentTarget;
+                const originalText = btn.innerHTML;
+                btn.style.opacity = '0.7';
+                btn.style.pointerEvents = 'none';
+                btn.innerHTML = 'Запуск... <span class="launch-arrow">→</span>';
+
+                try {
+                    // Используем await, чтобы дать запросу стартовать
+                    await fetch(API + '/api/games/' + encodeURIComponent(game.id) + '/meta', {
+                        method: 'POST', 
+                        headers: {'Content-Type': 'application/json', 'x-api-token': 'SuperSecretKey123'}, 
+                        body: JSON.stringify({ lastPlayed: game.lastPlayed }),
+                        // ⚡ МАГИЯ: Заставляет браузер завершить запрос даже при смене URL
+                        keepalive: true 
+                    });
+                } catch(err) {
+                    console.warn('[Meta] Не удалось обновить статус', err);
+                } finally {
+                    // Перенаправляем на игру
+                    window.location.href = game.url;
+                    
+                    // Восстанавливаем кнопку на случай возврата "Назад" в браузере
+                    setTimeout(() => { 
+                        btn.innerHTML = originalText; 
+                        btn.style.opacity = '1'; 
+                        btn.style.pointerEvents = 'auto';
+                    }, 1000);
+                }
             };
 
             const editForm = document.getElementById('modal-edit-form');
@@ -627,6 +655,28 @@ document.addEventListener('keydown', (e) => {
 });
 
 loadGames();
+
+// ==========================================
+// ⚡ УМНОЕ ОБНОВЛЕНИЕ ДАННЫХ (Reactivation)
+// ==========================================
+
+// 1. Слушаем возврат на страницу через кнопку "Назад" или свайп (BFCache)
+window.addEventListener('pageshow', function(event) {
+    // event.persisted означает, что страница была "разморожена" из памяти
+    if (event.persisted) {
+        console.log('🔄 Возврат из BFCache, обновляем данные...');
+        loadGames();
+    }
+});
+
+// 2. Слушаем возврат в PWA-приложение (если ты сворачивал его в фон)
+document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) {
+        console.log('🔄 Приложение снова активно, обновляем данные...');
+        loadGames();
+    }
+});
+
 </script>
 </body>
 </html>
