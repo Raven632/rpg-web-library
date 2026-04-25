@@ -18,6 +18,8 @@ const http = require('http');
 const { Server } = require('socket.io');
 
 const cookieParser = require('cookie-parser');
+const crypto = require('crypto');
+const bcrypt = require('bcrypt');
 
 const app = express();
 
@@ -33,7 +35,7 @@ const EXTRACT_TMP = path.join(GAMES_DIR, '_tmp_uploads'); // РЕАЛЬНЫЙ Д
 const UPLOAD_TMP = EXTRACT_TMP; // Грузим сразу на диск, чтобы не убить Docker
 const SAVES_DIR = path.join(GAMES_DIR, '_saves');
 
-const API_TOKEN = process.env.API_TOKEN || 'SuperSecretKey123';
+const SESSION_TOKEN = crypto.randomBytes(32).toString('hex');
 
 let db;
 
@@ -49,36 +51,60 @@ const apiLimiter = rateLimit({ windowMs: 60 * 1000, max: 200, message: { error: 
 const uploadLimiter = rateLimit({ windowMs: 60 * 1000, max: 5, message: { error: 'Слишком много загрузок' } });
 app.use('/api/', apiLimiter);
 
-function requireAuth(req, res, next) {
-    // Теперь проверяем куку, а не заголовок
-    const token = req.cookies.auth_token;
-    
-    if (token !== API_TOKEN) {
-        return res.status(401).json({ error: 'Требуется авторизация' });
-    }
-    next();
-}
+// ⚡ ПРОВЕРКА СТАТУСА НАСТРОЙКИ (Открыто для всех)
+app.get('/api/setup/status', async (req, res) => {
+    const adminSet = await db.get('SELECT value FROM settings WHERE key = "admin_user"');
+    res.json({ initialized: !!adminSet });
+});
 
-// ⚡ МАРШРУТ АВТОРИЗАЦИИ (Открыт для всех)
-app.post('/api/login', apiLimiter, (req, res) => {
-    const { password } = req.body;
-    if (password === API_TOKEN) {
-        // Ставим безопасную куку на 30 дней
-        res.cookie('auth_token', API_TOKEN, {
-            httpOnly: true,  // Защита от кражи через JS (XSS)
-            secure: false,   // Ставь true, если используешь HTTPS
-            sameSite: 'lax',
-            maxAge: 30 * 24 * 60 * 60 * 1000 
-        });
-        return res.json({ success: true });
+// ⚡ ПЕРВИЧНАЯ НАСТРОЙКА АДМИНА (Сработает только один раз!)
+app.post('/api/setup/init', apiLimiter, async (req, res) => {
+    const adminSet = await db.get('SELECT value FROM settings WHERE key = "admin_user"');
+    if (adminSet) return res.status(403).json({ error: 'Сервер уже настроен!' });
+
+    const { username, password } = req.body;
+    if (!username || !password || username.length < 3 || password.length < 4) {
+        return res.status(400).json({ error: 'Слишком короткий логин или пароль' });
     }
-    res.status(401).json({ error: 'Неверный пароль' });
+
+    const hashedPass = await bcrypt.hash(password, 10);
+    await db.run('INSERT INTO settings (key, value) VALUES (?, ?)', ['admin_user', username]);
+    await db.run('INSERT INTO settings (key, value) VALUES (?, ?)', ['admin_pass', hashedPass]);
+
+    res.json({ success: true });
+});
+
+// ⚡ ВХОД В БИБЛИОТЕКУ
+app.post('/api/login', apiLimiter, async (req, res) => {
+    const { username, password } = req.body;
+    
+    const dbUser = await db.get('SELECT value FROM settings WHERE key = "admin_user"');
+    const dbPass = await db.get('SELECT value FROM settings WHERE key = "admin_pass"');
+
+    if (dbUser && dbPass && username === dbUser.value) {
+        const match = await bcrypt.compare(password, dbPass.value);
+        if (match) {
+            res.cookie('auth_token', SESSION_TOKEN, {
+                httpOnly: true, sameSite: 'lax', maxAge: 30 * 24 * 60 * 60 * 1000 
+            });
+            return res.json({ success: true });
+        }
+    }
+    res.status(401).json({ error: 'Неверный логин или пароль' });
 });
 
 app.post('/api/logout', (req, res) => {
     res.clearCookie('auth_token');
     res.json({ success: true });
 });
+
+// ⚡ ЖЕСТКИЙ ФИЛЬТР БЕЗОПАСНОСТИ ДЛЯ ОСТАЛЬНОГО API
+function requireAuth(req, res, next) {
+    if (req.cookies.auth_token !== SESSION_TOKEN) {
+        return res.status(401).json({ error: 'Требуется авторизация' });
+    }
+    next();
+}
 app.use('/api/', requireAuth);
 
 const storage = multer.diskStorage({
@@ -426,6 +452,14 @@ async function initDB() {
         )
     `);
 
+    // Таблица для хранения логина и зашифрованного пароля владельца
+    await db.exec(`
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        )
+    `);
+
     // миграция для добавления колонки (если её ещё нет)
     try {
         await db.exec('ALTER TABLE games ADD COLUMN ready INTEGER DEFAULT 0');
@@ -665,6 +699,12 @@ app.post('/api/upload', uploadLimiter, upload.single('game'), async (req, res) =
         .replace(/\.(zip|7z|rar)$/i, '')
         .replace(/[^\w\s\-\.а-яА-Я\[\]]/g, '_')
         .trim() || 'game_archive';
+    
+    // ⚡ ДОБАВИТЬ ЧЕРНЫЙ СПИСОК ИМЕН:
+    const blacklist = ['_saves', '_tmp_uploads', 'api', 'socket.io', 'public', 'node_modules'];
+    if (blacklist.includes(originalName.toLowerCase())) {
+        originalName = 'game_' + Date.now();
+    }    
 
     const tmpExtractDir = path.join(EXTRACT_TMP, 'ext_' + Date.now());
 
@@ -697,6 +737,9 @@ app.post('/api/upload', uploadLimiter, upload.single('game'), async (req, res) =
                 }
             }
         }
+
+        //  логика проверки путей перед распаковкой
+        await validateArchivePaths(archivePath);
 
         // 7zz справляется со всем: zip, 7z, rar, rar5
         await spawnExtract('7zz', ['x', archivePath, `-o${tmpExtractDir}`, '-y']);
@@ -852,7 +895,10 @@ app.get('*', async (req, res, next) => {
             if (filePath.endsWith('index.html')) {
                 let html = await fsp.readFile(filePath, 'utf8');
                 html = html.replace(/<meta[^>]+http-equiv=['"]?Content-Security-Policy['"]?[^>]*>/gi, '');
-                html = html.replace('<body', '<body><script src="/rpg-fixes.js"></script><x ');
+                
+                // ⚡ ИСПРАВЛЕННЫЙ ИНЖЕКТ (Сохраняет все атрибуты body разработчика):
+                html = html.replace(/(<body[^>]*>)/i, '$1<script src="/rpg-fixes.js"></script>');
+                
                 res.setHeader('Content-Type', 'text/html');
                 res.setHeader('Access-Control-Allow-Origin', '*');
                 return res.send(html);

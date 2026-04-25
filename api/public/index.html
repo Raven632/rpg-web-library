@@ -275,12 +275,13 @@
 <div class="library-info" id="library-info"></div>
 <div class="toast" id="toast"></div>
 
-<div class="modal-overlay" id="login-modal" style="background: rgba(0,0,0,0.95);">
-    <div class="modal-content" style="max-width: 400px; padding: 40px; text-align: center; margin: auto;">
-        <h2 style="font-family: 'Cinzel', serif; color: var(--gold); margin-bottom: 20px;">Вход в библиотеку</h2>
-        <input type="password" id="login-password" placeholder="Введите пароль..." style="width: 100%; padding: 15px; margin-bottom: 20px; background: rgba(20,18,26,0.9); color: var(--text); border: 1px solid var(--gold-dim); border-radius: 4px; font-family: 'Cinzel', serif; font-size: 1rem; outline: none; text-align: center;">
-        <button id="login-btn" style="width: 100%; padding: 15px; background: var(--gold-dim); color: #000; border: none; border-radius: 4px; cursor: pointer; font-family: 'Cinzel', serif; font-weight: bold; font-size: 1.1rem; transition: background 0.3s;">Войти</button>
-        <div id="login-error" style="color: #f44; margin-top: 15px; font-size: 0.9rem; display: none;">Неверный пароль</div>
+<div class="modal-overlay" id="login-modal" style="background: rgba(0,0,0,0.95); z-index: 9999;">
+    <div class="modal-content" style="max-width: 350px; padding: 40px; text-align: center; margin: auto;">
+        <h2 id="login-header" style="font-family: 'Cinzel', serif; color: var(--gold); margin-bottom: 25px;">Хранилище</h2>
+        <input type="text" id="login-username" placeholder="Имя мастера..." style="width: 100%; padding: 15px; margin-bottom: 15px; background: rgba(20,18,26,0.9); color: var(--text); border: 1px solid var(--gold-dim); border-radius: 4px; font-family: 'Cinzel', serif; font-size: 1rem; outline: none; text-align: center;">
+        <input type="password" id="login-password" placeholder="Тайное слово..." style="width: 100%; padding: 15px; margin-bottom: 25px; background: rgba(20,18,26,0.9); color: var(--text); border: 1px solid var(--gold-dim); border-radius: 4px; font-family: 'Cinzel', serif; font-size: 1rem; outline: none; text-align: center;">
+        <button id="login-btn" data-mode="login" style="width: 100%; padding: 15px; background: var(--gold-dim); color: #000; border: none; border-radius: 4px; cursor: pointer; font-family: 'Cinzel', serif; font-weight: bold; font-size: 1.1rem; transition: background 0.3s;">Открыть Врата</button>
+        <div id="login-error" style="color: #f44; margin-top: 15px; font-size: 0.9rem; display: none;">Магия отвергла вас</div>
     </div>
 </div>
 
@@ -379,10 +380,31 @@ function populateTagFilter(games) {
 
 async function loadGames() {
     try {
+        // Сначала спрашиваем сервер: есть ли в базе админ?
+        const statusRes = await fetch('/api/setup/status');
+        const status = await statusRes.json();
+
+        // Если админа нет — включаем режим СОЗДАНИЯ
+        if (!status.initialized) {
+            const btn = document.getElementById('login-btn');
+            document.getElementById('login-header').textContent = 'Первая Настройка';
+            btn.textContent = 'Создать Мастера';
+            btn.dataset.mode = 'setup';
+            
+            document.getElementById('login-modal').classList.add('active');
+            document.getElementById('status').style.display = 'none';
+            return;
+        }
+
+        // Если админ есть — пытаемся скачать игры
         var res = await fetch(API + '/api/games?_t=' + Date.now(), { cache: 'no-store' });
         
-        // ⚡ ЕСЛИ СЕРВЕР ТРЕБУЕТ ПАРОЛЬ:
+        // Если просит пароль — включаем режим ВХОДА
         if (res.status === 401) {
+            document.getElementById('login-header').textContent = 'Хранилище';
+            document.getElementById('login-btn').textContent = 'Открыть Врата';
+            document.getElementById('login-btn').dataset.mode = 'login';
+            
             document.getElementById('login-modal').classList.add('active');
             document.getElementById('status').style.display = 'none';
             return;
@@ -406,27 +428,51 @@ async function loadGames() {
     }
 }
 
-// ⚡ ЛОГИКА АВТОРИЗАЦИИ
+// ⚡ ЛОГИКА АВТОРИЗАЦИИ И ПЕРВИЧНОЙ НАСТРОЙКИ
 document.getElementById('login-btn').addEventListener('click', async () => {
-    const pwd = document.getElementById('login-password').value;
+    const btn = document.getElementById('login-btn');
+    const mode = btn.dataset.mode; // 'setup' или 'login'
+    
+    const user = document.getElementById('login-username').value.trim();
+    const pwd = document.getElementById('login-password').value.trim();
+    
+    const originalText = btn.textContent;
+    btn.textContent = 'Проверка...';
+    
+    const endpoint = mode === 'setup' ? '/api/setup/init' : '/api/login';
+    
     try {
-        const res = await fetch(API + '/api/login', {
+        const res = await fetch(API + endpoint, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ password: pwd })
+            body: JSON.stringify({ username: user, password: pwd })
         });
         const data = await res.json();
+        
         if (data.success) {
-            document.getElementById('login-modal').classList.remove('active');
-            document.getElementById('login-error').style.display = 'none';
-            document.getElementById('status').style.display = 'block'; // Показываем загрузку
-            loadGames(); // Загружаем игры
+            if (mode === 'setup') {
+                // Если мы успешно создали админа
+                document.getElementById('login-username').value = '';
+                document.getElementById('login-password').value = '';
+                document.getElementById('login-error').style.display = 'none';
+                alert('Мастер успешно создан! Теперь введите эти данные для входа.');
+                location.reload(); // Перезагружаем, чтобы показать обычное окно входа
+            } else {
+                // Если мы успешно вошли
+                document.getElementById('login-modal').classList.remove('active');
+                document.getElementById('login-error').style.display = 'none';
+                document.getElementById('status').style.display = 'block';
+                loadGames(); 
+            }
         } else {
+            document.getElementById('login-error').textContent = data.error || 'Ошибка';
             document.getElementById('login-error').style.display = 'block';
+            btn.textContent = originalText;
         }
     } catch(e) {
-        document.getElementById('login-error').textContent = 'Ошибка связи с сервером';
+        document.getElementById('login-error').textContent = 'Связь с сервером потеряна';
         document.getElementById('login-error').style.display = 'block';
+        btn.textContent = originalText;
     }
 });
 
