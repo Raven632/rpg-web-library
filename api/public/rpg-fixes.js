@@ -301,7 +301,7 @@
   })();
 
   // =========================
-  // 4) AUDIO FIXES
+  // 4) AUDIO FIXES (UNIVERSAL & GAPLESS)
   // =========================
   (function setupSecureAudio() {
     if (typeof AudioManager !== 'undefined' && !AudioManager.__PatchedCheck) {
@@ -311,20 +311,36 @@
       WebAudio.prototype.__PatchedErr = true; const origErr = WebAudio.prototype._onError; WebAudio.prototype._onError = function () { if (origErr) return origErr.apply(this, arguments); };
     }
 
+    const audioInitTimer = setInterval(() => {
+        if (typeof AudioManager !== 'undefined') {
+            AudioManager.shouldUseHtml5Audio = function() { return false; };
+            if (AudioManager._audioBuffers) AudioManager._audioBuffers = []; 
+            clearInterval(audioInitTimer);
+        }
+    }, 100);
+    setTimeout(() => clearInterval(audioInitTimer), 5000);
+
     let unlocked = false;
     function syncUnlockAudio() {
       if (unlocked) return;
       const contexts = [];
-      if (typeof WebAudio !== 'undefined' && WebAudio._context) contexts.push(WebAudio._context);
-      if (!window.__globalIOSAudioContext) {
-        const AC = window.AudioContext || window.webkitAudioContext;
-        if (AC) window.__globalIOSAudioContext = new AC();
+      
+      // ИСПРАВЛЕНО: Защита от создания лишних AudioContext на iOS
+      if (typeof WebAudio !== 'undefined' && WebAudio._context) {
+          contexts.push(WebAudio._context);
+      } else {
+          if (!window.__globalIOSAudioContext) {
+            const AC = window.AudioContext || window.webkitAudioContext;
+            if (AC) window.__globalIOSAudioContext = new AC();
+          }
+          if (window.__globalIOSAudioContext) contexts.push(window.__globalIOSAudioContext);
       }
-      if (window.__globalIOSAudioContext) contexts.push(window.__globalIOSAudioContext);
 
       let anyResumed = false;
       contexts.forEach(ctx => {
-        if (ctx.state === 'suspended') ctx.resume();
+        if (ctx && ctx.state === 'suspended') {
+            try { ctx.resume(); } catch (e) {}
+        }
         try {
           const buffer = ctx.createBuffer(1, 1, 22050);
           const source = ctx.createBufferSource();
@@ -335,11 +351,24 @@
 
       if (anyResumed) {
         unlocked = true;
-        ['pointerdown', 'touchstart', 'touchend', 'click'].forEach(e => document.removeEventListener(e, syncUnlockAudio, true));
+        // ИСПРАВЛЕНО: Заменено document на window
+        ['pointerdown', 'touchstart', 'touchend', 'click', 'keydown'].forEach(e => window.removeEventListener(e, syncUnlockAudio, true));
+        console.log('[Audio Engine] 🎵 Universal WebAudio API аппаратно разблокирован!');
       }
     }
-    ['pointerdown', 'touchstart', 'touchend', 'click'].forEach(e => document.addEventListener(e, syncUnlockAudio, { passive: true, capture: true }));
-    document.addEventListener('visibilitychange', () => { if (!document.hidden) { unlocked = false; syncUnlockAudio(); } });
+    
+    // ИСПРАВЛЕНО: Заменено document на window для обхода Touch Mode
+    ['pointerdown', 'touchstart', 'touchend', 'click', 'keydown'].forEach(e => window.addEventListener(e, syncUnlockAudio, { passive: true, capture: true }));
+    
+    document.addEventListener('visibilitychange', () => { 
+        if (!document.hidden) { 
+            unlocked = false; 
+            syncUnlockAudio(); 
+            if (typeof WebAudio !== 'undefined' && WebAudio._context && WebAudio._context.state === 'suspended') {
+                try { WebAudio._context.resume(); } catch(e) {}
+            }
+        } 
+    });
   })();
 
   // =========================
@@ -912,7 +941,10 @@
       if (typeof PIXI === 'undefined' || typeof ImageManager === 'undefined' || typeof SceneManager === 'undefined') return;
 
       // Оптимальный кэш (~80 МБ ОЗУ). Защита от перегрева
-      ImageManager.cache.limit = 20 * 1000 * 1000;
+      // Обернуто в проверку на случай старых версий RPG Maker, где объекта cache нет
+      if (ImageManager && ImageManager.cache) {
+          ImageManager.cache.limit = 20 * 1000 * 1000;
+      }
 
       // ФИКС СПАЙКОВ: Отключаем авто-очистку VRAM
       if (PIXI.settings) {
