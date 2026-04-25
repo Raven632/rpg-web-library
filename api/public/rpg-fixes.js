@@ -122,7 +122,7 @@
   })();
 
   // =========================
-  // 3) CLOUD SAVES
+  // 3) CLOUD SAVES (v2)
   // =========================
   window.addEventListener('load', () => {
     if (typeof StorageManager !== 'undefined') StorageManager.isLocalMode = () => false;
@@ -131,7 +131,16 @@
 
   (function setupCloudSaves() {
     function resolveGameId() { const parts = location.pathname.split('/').filter(Boolean).map(decodeURIComponent); return parts.length ? parts[0].replace(/[^a-zA-Z0-9._\-а-яА-Я]/g, '_') : 'unknown'; }
-    const gameId = resolveGameId(); let pulledSaves = {}; let cloudReady = false; let cloudFetchFailed = false; const cloudInitStartedAt = Date.now();
+    const gameId = resolveGameId(); 
+    let pulledSaves = {}; 
+    let cloudReady = false; 
+    let cloudFetchFailed = false; 
+    const cloudInitStartedAt = Date.now();
+
+    // ⚡ OFFLINE QUEUE: Буфер для сохранений без интернета
+    const QUEUE_KEY = `_rpg_offline_queue_${gameId}`;
+    function getQueue() { try { return JSON.parse(localStorage.getItem(QUEUE_KEY) || '{}'); } catch(e) { return {}; } }
+    function saveQueue(q) { localStorage.setItem(QUEUE_KEY, JSON.stringify(q)); }
 
     const syncDiv = document.createElement('div');
     syncDiv.id = '_cloud_sync_ui';
@@ -139,10 +148,20 @@
     document.body.appendChild(syncDiv);
 
     let syncCount = 0;
-    function showSync(active, ok = true) {
+    function showSync(active, status = 'ok') {
       if (!syncDiv) return;
-      if (active) { syncCount++; syncDiv.textContent = '☁️ Синхронизация...'; syncDiv.style.background = 'rgba(0,0,0,0.85)'; syncDiv.style.display = 'block'; } 
-      else { syncCount--; if (syncCount <= 0) { syncCount = 0; syncDiv.textContent = ok ? '✅ Сохранено' : '⚠️ Ошибка сервера'; syncDiv.style.background = ok ? 'rgba(40,140,40,0.9)' : 'rgba(170,60,60,0.9)'; setTimeout(() => { if (syncCount === 0) syncDiv.style.display = 'none'; }, 1500); } }
+      if (active) { 
+          syncCount++; syncDiv.textContent = '☁️ Синхронизация...'; syncDiv.style.background = 'rgba(0,0,0,0.85)'; syncDiv.style.display = 'block'; 
+      } else { 
+          syncCount--; 
+          if (syncCount <= 0) { 
+              syncCount = 0; 
+              if (status === 'ok') { syncDiv.textContent = '✅ Сохранено'; syncDiv.style.background = 'rgba(40,140,40,0.9)'; }
+              else if (status === 'offline') { syncDiv.textContent = '📡 Ждем сеть (сохранено локально)'; syncDiv.style.background = 'rgba(200,140,20,0.9)'; }
+              else { syncDiv.textContent = '⚠️ Ошибка сервера'; syncDiv.style.background = 'rgba(170,60,60,0.9)'; }
+              setTimeout(() => { if (syncCount === 0) syncDiv.style.display = 'none'; }, 2000); 
+          } 
+      }
     }
 
     async function retryFetch(url, init, retries = CLOUD_RETRY_MAX) {
@@ -163,27 +182,94 @@
     function chooseNewer(a, b) { if (!a) return b; if (!b) return a; return (b.updatedAt || 0) >= (a.updatedAt || 0) ? b : a; }
     function getEntry(key) { return pulledSaves[key]; } function hasEntry(key) { return pulledSaves[key] !== undefined; }
 
+    // ⚡ ФОНОВАЯ СИНХРОНИЗАЦИЯ ОЧЕРЕДИ
+    async function processOfflineQueue() {
+      if (!navigator.onLine) return;
+      const q = getQueue();
+      const keys = Object.keys(q);
+      if (keys.length === 0) return;
+
+      console.log(`[CloudSave] 🚀 Сеть найдена! Выгружаем ${keys.length} сохранений из очереди...`);
+      showSync(true);
+      let allOk = true;
+
+      for (const key of keys) {
+        try {
+          const payload = q[key];
+          const res = await retryFetch(`${CLOUD_BASE}/${encodeURIComponent(gameId)}/${encodeURIComponent(key)}`, { 
+              method: 'POST', credentials: 'same-origin', cache: 'no-store', headers: { 'Content-Type': 'application/json', 'x-api-token': API_TOKEN }, body: JSON.stringify(payload) 
+          });
+          if (res.ok) delete q[key]; 
+          else allOk = false;
+        } catch(e) { allOk = false; }
+      }
+      saveQueue(q);
+      showSync(false, allOk ? 'ok' : 'error');
+    }
+
+    window.addEventListener('online', processOfflineQueue);
+
     async function fetchCloudSaves() {
       try {
-        const res = await retryFetch(`${CLOUD_BASE}/${encodeURIComponent(gameId)}?_t=${Date.now()}`, { method: 'GET', credentials: 'same-origin', cache: 'no-store', headers: { 'x-api-token': API_TOKEN } });
+        const res = await retryFetch(`${CLOUD_BASE}/${encodeURIComponent(gameId)}?_t=${Date.now()}`, { 
+            method: 'GET', credentials: 'same-origin', cache: 'no-store', headers: { 'x-api-token': API_TOKEN } 
+        });
         if (!res.ok) throw new Error('HTTP ' + res.status);
-        const normalized = normalizeCloudPayload(await res.json());
-        for (const k of Object.keys(normalized)) pulledSaves[k] = chooseNewer(pulledSaves[k], normalized[k]);
+        
+        const cloudData = normalizeCloudPayload(await res.json());
+        const localQueue = getQueue();
+        
+        for (const k of Object.keys(cloudData)) pulledSaves[k] = chooseNewer(pulledSaves[k], cloudData[k]);
+        for (const k of Object.keys(localQueue)) pulledSaves[k] = chooseNewer(pulledSaves[k], localQueue[k]);
+
         cloudReady = true; cloudFetchFailed = false;
         try { const sc = (typeof SceneManager !== 'undefined' && SceneManager._scene) ? SceneManager._scene : null; if (sc?.refresh) sc.refresh(); if (sc?._listWindow?.refresh) sc._listWindow.refresh(); } catch (_) {}
-      } catch (e) { cloudFetchFailed = true; cloudReady = true; console.warn('[CloudSave] Fallback to local:', e); }
+        
+        processOfflineQueue();
+      } catch (e) { 
+          cloudFetchFailed = true; cloudReady = true; 
+          console.warn('[CloudSave] Fallback to local:', e); 
+          const localQueue = getQueue();
+          for (const k of Object.keys(localQueue)) pulledSaves[k] = chooseNewer(pulledSaves[k], localQueue[k]);
+      }
     }
 
     function uploadToCloud(key, value) {
       const payload = { value: String(value), updatedAt: Date.now() };
-      pulledSaves[key] = chooseNewer(pulledSaves[key], payload);
+      pulledSaves[key] = chooseNewer(pulledSaves[key], payload); 
+
+      const q = getQueue();
+      q[key] = payload;
+      saveQueue(q);
+
       showSync(true);
-      retryFetch(`${CLOUD_BASE}/${encodeURIComponent(gameId)}/${encodeURIComponent(key)}`, { method: 'POST', credentials: 'same-origin', cache: 'no-store', headers: { 'Content-Type': 'application/json', 'x-api-token': API_TOKEN }, body: JSON.stringify(payload) }).then(r => showSync(false, r.ok)).catch(err => { showSync(false, false); });
+      if (!navigator.onLine) {
+          showSync(false, 'offline');
+          return;
+      }
+
+      retryFetch(`${CLOUD_BASE}/${encodeURIComponent(gameId)}/${encodeURIComponent(key)}`, { 
+          method: 'POST', credentials: 'same-origin', cache: 'no-store', headers: { 'Content-Type': 'application/json', 'x-api-token': API_TOKEN }, body: JSON.stringify(payload) 
+      }).then(r => {
+          if (r.ok) {
+              const qNew = getQueue(); delete qNew[key]; saveQueue(qNew);
+              showSync(false, 'ok');
+          } else showSync(false, 'error');
+      }).catch(err => { 
+          showSync(false, 'offline'); 
+      });
     }
 
     function deleteFromCloud(key) {
-      delete pulledSaves[key]; showSync(true);
-      retryFetch(`${CLOUD_BASE}/${encodeURIComponent(gameId)}/${encodeURIComponent(key)}`, { method: 'DELETE', credentials: 'same-origin', cache: 'no-store', headers: { 'x-api-token': API_TOKEN } }).then(r => showSync(false, r.ok)).catch(err => { showSync(false, false); });
+      delete pulledSaves[key]; 
+      const q = getQueue(); delete q[key]; saveQueue(q);
+      
+      showSync(true);
+      if (!navigator.onLine) { showSync(false, 'offline'); return; }
+
+      retryFetch(`${CLOUD_BASE}/${encodeURIComponent(gameId)}/${encodeURIComponent(key)}`, { 
+          method: 'DELETE', credentials: 'same-origin', cache: 'no-store', headers: { 'x-api-token': API_TOKEN } 
+      }).then(r => showSync(false, r.ok ? 'ok' : 'error')).catch(err => showSync(false, 'offline'));
     }
 
     function canOptimisticallyShowExists(localExists) {
