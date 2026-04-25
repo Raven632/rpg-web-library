@@ -163,6 +163,7 @@
             object-fit: contain; /* ⚡ Картинка ВСЕГДА помещается целиком, без обрезки! */
             display: block; 
         }
+
         
         /* ⚡ ФИКС 4: Текст забирает все оставшиеся 60% ширины и имеет жесткую относительную позицию для кнопки */
         .modal-info { flex: 1; min-width: 300px; display: flex; flex-direction: column; position: relative; }
@@ -197,6 +198,8 @@
         }
         #modal-play-btn:hover { background: var(--gold); color: var(--bg-deep); box-shadow: 0 0 25px rgba(201,168,76,0.6); transform: translateY(-2px); }
        
+        #modal-export-btn:hover, #modal-import-btn:hover { background: rgba(201,168,76,0.15); border-color: var(--gold); }
+
         /* ========================================================= */
         /* --- МОБИЛЬНАЯ АДАПТАЦИЯ --- */
         /* ========================================================= */
@@ -320,6 +323,18 @@
                     <span id="modal-added"></span>
                     <span id="modal-played"></span>
                 </div>
+
+                
+                <div style="display: flex; gap: 10px; margin-bottom: 25px;">
+                    <button id="modal-export-btn" style="flex: 1; padding: 10px; background: rgba(20,18,26,0.8); color: var(--text); border: 1px solid var(--gold-dim); border-radius: 4px; cursor: pointer; font-family: 'Cinzel', serif; transition: all 0.3s; display: flex; align-items: center; justify-content: center; gap: 8px;">
+                        📦 Бэкап
+                    </button>
+                    <button id="modal-import-btn" style="flex: 1; padding: 10px; background: rgba(20,18,26,0.8); color: var(--text); border: 1px solid var(--gold-dim); border-radius: 4px; cursor: pointer; font-family: 'Cinzel', serif; transition: all 0.3s; display: flex; align-items: center; justify-content: center; gap: 8px;">
+                        📥 Импорт
+                    </button>
+                    <input type="file" id="import-saves-input" accept=".zip" style="display: none;">
+                </div>
+
                 <div class="modal-tags" id="modal-tags"></div>
                 <div class="modal-description" id="modal-description"></div>
                 <button class="modal-play-btn" id="modal-play-btn">Играть <span class="launch-arrow">→</span></button>
@@ -604,6 +619,59 @@ function renderGames(games) {
             } else {
                 descDiv.style.display = 'none';
             }
+
+            // ⚡ ЛОГИКА МЕНЕДЖЕРА СОХРАНЕНИЙ
+
+            // Экспорт (Скачивание)
+            document.getElementById('modal-export-btn').onclick = function(e) {
+                e.preventDefault();
+                // Так как у нас настроены куки, мы можем просто отправить браузер по ссылке,
+                // и он сам скачает ZIP-файл без потери сессии.
+                window.location.href = API + '/api/games/' + encodeURIComponent(game.id) + '/saves/export';
+            };
+
+            // Импорт (Загрузка)
+            const importInput = document.getElementById('import-saves-input');
+            // Очищаем старые обработчики, чтобы они не дублировались при переключении игр
+            const newImportInput = importInput.cloneNode(true);
+            importInput.parentNode.replaceChild(newImportInput, importInput);
+
+            newImportInput.addEventListener('change', async function(e) {
+                if (!e.target.files[0]) return;
+                const file = e.target.files[0];
+                const formData = new FormData();
+                formData.append('saves', file);
+
+                const btn = document.getElementById('modal-import-btn');
+                const oldText = btn.innerHTML;
+                btn.innerHTML = '⏳ Ожидайте...';
+                btn.style.pointerEvents = 'none';
+
+                try {
+                    const res = await fetch(API + '/api/games/' + encodeURIComponent(game.id) + '/saves/import', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    const data = await res.json();
+                    
+                    if (data.success) {
+                        showToast(data.message, 'success');
+                    } else {
+                        showToast(data.error, 'error');
+                    }
+                } catch(err) {
+                    showToast('Ошибка при отправке архива', 'error');
+                } finally {
+                    btn.innerHTML = oldText;
+                    btn.style.pointerEvents = 'auto';
+                    e.target.value = ''; // Сбрасываем инпут
+                }
+            });
+
+            document.getElementById('modal-import-btn').onclick = function(e) {
+                e.preventDefault();
+                newImportInput.click();
+            };
 
             // ⚡ ИСПРАВЛЕННЫЙ ЗАПУСК ИГРЫ (Safe Navigation + Keepalive)
             document.getElementById('modal-play-btn').onclick = async function(e) {

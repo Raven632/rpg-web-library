@@ -825,6 +825,58 @@ app.delete('/api/saves/:gameId/:key', async (req, res) => {
     } catch(e) { res.json({ success: true }); }
 });
 
+// 🔥 ЭКСПОРТ СОХРАНЕНИЙ (Скачать в ZIP)
+app.get('/api/games/:id/saves/export', async (req, res) => {
+    const gameId = path.basename(req.params.id);
+    const gameSavesDir = path.join(SAVES_DIR, gameId);
+
+    try {
+        // Проверяем, существует ли папка и есть ли в ней файлы
+        await fsp.access(gameSavesDir);
+        const files = await fsp.readdir(gameSavesDir);
+        if (files.length === 0) throw new Error('Пусто');
+    } catch (e) {
+        return res.status(404).json({ error: 'У этой игры еще нет сохранений' });
+    }
+
+    const tmpZip = path.join(EXTRACT_TMP, `saves_${gameId}_${Date.now()}.zip`);
+
+    try {
+        // Вызываем 7zz для мгновенной запаковки папки в ZIP
+        await execFilePromise('7zz', ['a', '-tzip', tmpZip, path.join(gameSavesDir, '*')]);
+        
+        // Отдаем файл браузеру (благодаря HttpOnly Cookies авторизация пройдет сама)
+        res.download(tmpZip, `${gameId}_saves.zip`, () => {
+            // Удаляем временный архив сразу после того, как пользователь его скачал
+            fsp.unlink(tmpZip).catch(() => {});
+        });
+    } catch (e) {
+        console.error('[Export Saves Error]', e);
+        res.status(500).json({ error: 'Ошибка создания архива' });
+    }
+});
+
+// 🔥 ИМПОРТ СОХРАНЕНИЙ (Загрузить из ZIP)
+app.post('/api/games/:id/saves/import', uploadLimiter, upload.single('saves'), async (req, res) => {
+    if (!req.file) return res.status(400).json({ error: 'Файл не получен' });
+    
+    const gameId = path.basename(req.params.id);
+    const gameSavesDir = path.join(SAVES_DIR, gameId);
+    const archivePath = req.file.path;
+
+    try {
+        await fsp.mkdir(gameSavesDir, { recursive: true });
+        // Распаковываем архив прямо поверх старых сейвов (флаг -y означает перезапись)
+        await spawnExtract('7zz', ['x', archivePath, `-o${gameSavesDir}`, '-y']);
+        await fsp.unlink(archivePath).catch(() => {});
+        
+        res.json({ success: true, message: 'Сохранения успешно загружены!' });
+    } catch (e) {
+        await fsp.unlink(archivePath).catch(() => {});
+        res.status(500).json({ error: 'Ошибка распаковки архива' });
+    }
+});
+
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.get('*', async (req, res, next) => {
