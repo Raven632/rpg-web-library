@@ -275,6 +275,15 @@
 <div class="library-info" id="library-info"></div>
 <div class="toast" id="toast"></div>
 
+<div class="modal-overlay" id="login-modal" style="background: rgba(0,0,0,0.95);">
+    <div class="modal-content" style="max-width: 400px; padding: 40px; text-align: center; margin: auto;">
+        <h2 style="font-family: 'Cinzel', serif; color: var(--gold); margin-bottom: 20px;">Вход в библиотеку</h2>
+        <input type="password" id="login-password" placeholder="Введите пароль..." style="width: 100%; padding: 15px; margin-bottom: 20px; background: rgba(20,18,26,0.9); color: var(--text); border: 1px solid var(--gold-dim); border-radius: 4px; font-family: 'Cinzel', serif; font-size: 1rem; outline: none; text-align: center;">
+        <button id="login-btn" style="width: 100%; padding: 15px; background: var(--gold-dim); color: #000; border: none; border-radius: 4px; cursor: pointer; font-family: 'Cinzel', serif; font-weight: bold; font-size: 1.1rem; transition: background 0.3s;">Войти</button>
+        <div id="login-error" style="color: #f44; margin-top: 15px; font-size: 0.9rem; display: none;">Неверный пароль</div>
+    </div>
+</div>
+
 <div class="modal-overlay" id="game-modal">
     <div class="modal-content">
         <div class="modal-close" id="modal-close">×</div>
@@ -371,6 +380,14 @@ function populateTagFilter(games) {
 async function loadGames() {
     try {
         var res = await fetch(API + '/api/games?_t=' + Date.now(), { cache: 'no-store' });
+        
+        // ⚡ ЕСЛИ СЕРВЕР ТРЕБУЕТ ПАРОЛЬ:
+        if (res.status === 401) {
+            document.getElementById('login-modal').classList.add('active');
+            document.getElementById('status').style.display = 'none';
+            return;
+        }
+
         if (!res.ok) throw new Error();
         let rawGames = await res.json();
         
@@ -388,6 +405,30 @@ async function loadGames() {
         document.getElementById('status').innerHTML = '<div style="color:#e08080;font-family:Cinzel,serif;font-size:0.9rem;letter-spacing:0.1em;">⚠ Связь с сервером потеряна</div>';
     }
 }
+
+// ⚡ ЛОГИКА АВТОРИЗАЦИИ
+document.getElementById('login-btn').addEventListener('click', async () => {
+    const pwd = document.getElementById('login-password').value;
+    try {
+        const res = await fetch(API + '/api/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password: pwd })
+        });
+        const data = await res.json();
+        if (data.success) {
+            document.getElementById('login-modal').classList.remove('active');
+            document.getElementById('login-error').style.display = 'none';
+            document.getElementById('status').style.display = 'block'; // Показываем загрузку
+            loadGames(); // Загружаем игры
+        } else {
+            document.getElementById('login-error').style.display = 'block';
+        }
+    } catch(e) {
+        document.getElementById('login-error').textContent = 'Ошибка связи с сервером';
+        document.getElementById('login-error').style.display = 'block';
+    }
+});
 
 document.getElementById('search-input').addEventListener('input', function() { renderGames(allGames); });
 document.getElementById('sort-select').addEventListener('change', function(e) { currentSort = e.target.value; renderGames(allGames); });
@@ -465,7 +506,7 @@ function renderGames(games) {
                     else s.classList.remove('active');
                 });
                 fetch(API + '/api/games/' + encodeURIComponent(game.id) + '/meta', {
-                    method: 'POST', headers: {'Content-Type': 'application/json', 'x-api-token': 'SuperSecretKey123'}, body: JSON.stringify({ rating: val })
+                    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ rating: val })
                 });
             });
         });
@@ -474,7 +515,7 @@ function renderGames(games) {
             e.preventDefault(); e.stopPropagation();
             if (!confirm('Сжечь том "' + game.title + '"?\nЭто заклинание необратимо!')) return;
             try {
-                var r = await fetch(API + '/api/games/' + encodeURIComponent(game.id), { method: 'DELETE', headers: { 'x-api-token': 'SuperSecretKey123' }});
+                var r = await fetch(API + '/api/games/' + encodeURIComponent(game.id), { method: 'DELETE'});
                 var d = await r.json();
                 if (d.success) { showToast('Том обратился в пепел', 'success'); loadGames(); }
                 else showToast('Ошибка: ' + d.error, 'error');
@@ -533,7 +574,7 @@ function renderGames(games) {
                     // Используем await, чтобы дать запросу стартовать
                     await fetch(API + '/api/games/' + encodeURIComponent(game.id) + '/meta', {
                         method: 'POST', 
-                        headers: {'Content-Type': 'application/json', 'x-api-token': 'SuperSecretKey123'}, 
+                        headers: {'Content-Type': 'application/json'}, 
                         body: JSON.stringify({ lastPlayed: game.lastPlayed }),
                         // ⚡ МАГИЯ: Заставляет браузер завершить запрос даже при смене URL
                         keepalive: true 
@@ -574,7 +615,7 @@ function renderGames(games) {
 
                 try {
                     const res = await fetch(`${API}/api/games/${encodeURIComponent(game.id)}/edit`, {
-                        method: 'POST', headers: { 'Content-Type': 'application/json', 'x-api-token': 'SuperSecretKey123' }, body: JSON.stringify({ title: newTitle, rjCode: newRj })
+                        method: 'POST', headers: { 'Content-Type': 'application/json'}, body: JSON.stringify({ title: newTitle, rjCode: newRj })
                     });
                     const data = await res.json();
                     if (data.success) {
@@ -642,7 +683,6 @@ function uploadFile(file) {
 
     xhr.addEventListener('error', function() { progressText.textContent = '✗ Ритуал прерван'; showToast('Связь разорвана', 'error'); uploadBtn.style.pointerEvents = ''; uploadBtn.style.opacity = ''; });
     xhr.open('POST', API + '/api/upload');
-    xhr.setRequestHeader('x-api-token', 'SuperSecretKey123'); 
     xhr.send(formData);
 }
 

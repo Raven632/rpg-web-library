@@ -17,6 +17,7 @@ const { open } = require('sqlite');
 const http = require('http');
 const { Server } = require('socket.io');
 
+const cookieParser = require('cookie-parser');
 
 const app = express();
 
@@ -42,18 +43,42 @@ fsp.mkdir(SAVES_DIR, { recursive: true }).catch(() => {});
 
 app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
 app.use(express.json({ limit: '50mb' }));
+app.use(cookieParser());
 
 const apiLimiter = rateLimit({ windowMs: 60 * 1000, max: 200, message: { error: 'Слишком много запросов' } });
 const uploadLimiter = rateLimit({ windowMs: 60 * 1000, max: 5, message: { error: 'Слишком много загрузок' } });
 app.use('/api/', apiLimiter);
 
 function requireAuth(req, res, next) {
-    if (req.method === 'GET') return next();
-    if (req.headers['x-api-token'] !== API_TOKEN) {
-        return res.status(401).json({ error: 'Отказано в доступе. Неверный токен.' });
+    // Теперь проверяем куку, а не заголовок
+    const token = req.cookies.auth_token;
+    
+    if (token !== API_TOKEN) {
+        return res.status(401).json({ error: 'Требуется авторизация' });
     }
     next();
 }
+
+// ⚡ МАРШРУТ АВТОРИЗАЦИИ (Открыт для всех)
+app.post('/api/login', apiLimiter, (req, res) => {
+    const { password } = req.body;
+    if (password === API_TOKEN) {
+        // Ставим безопасную куку на 30 дней
+        res.cookie('auth_token', API_TOKEN, {
+            httpOnly: true,  // Защита от кражи через JS (XSS)
+            secure: false,   // Ставь true, если используешь HTTPS
+            sameSite: 'lax',
+            maxAge: 30 * 24 * 60 * 60 * 1000 
+        });
+        return res.json({ success: true });
+    }
+    res.status(401).json({ error: 'Неверный пароль' });
+});
+
+app.post('/api/logout', (req, res) => {
+    res.clearCookie('auth_token');
+    res.json({ success: true });
+});
 app.use('/api/', requireAuth);
 
 const storage = multer.diskStorage({

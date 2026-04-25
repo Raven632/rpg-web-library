@@ -56,7 +56,6 @@
     setTimeout(() => clearInterval(pixi_t), 15000);
   })();
 
-  const API_TOKEN = document.querySelector('meta[name="api-token"]')?.content || 'SuperSecretKey123';
   const CLOUD_BASE = '/api/saves';
   const CLOUD_INIT_GRACE_MS = 1800;
   const CLOUD_RETRY_MAX = 3;
@@ -222,7 +221,7 @@
         try {
           const payload = q[key];
           const res = await retryFetch(`${CLOUD_BASE}/${encodeURIComponent(gameId)}/${encodeURIComponent(key)}`, { 
-              method: 'POST', credentials: 'same-origin', cache: 'no-store', headers: { 'Content-Type': 'application/json', 'x-api-token': API_TOKEN }, body: JSON.stringify(payload) 
+              method: 'POST', credentials: 'same-origin', cache: 'no-store', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) 
           });
           if (res.ok) delete q[key]; 
           else allOk = false;
@@ -237,7 +236,7 @@
     async function fetchCloudSaves() {
       try {
         const res = await retryFetch(`${CLOUD_BASE}/${encodeURIComponent(gameId)}?_t=${Date.now()}`, { 
-            method: 'GET', credentials: 'same-origin', cache: 'no-store', headers: { 'x-api-token': API_TOKEN } 
+            method: 'GET', credentials: 'same-origin', cache: 'no-store'
         });
         if (!res.ok) throw new Error('HTTP ' + res.status);
         
@@ -274,7 +273,7 @@
       }
 
       retryFetch(`${CLOUD_BASE}/${encodeURIComponent(gameId)}/${encodeURIComponent(key)}`, { 
-          method: 'POST', credentials: 'same-origin', cache: 'no-store', headers: { 'Content-Type': 'application/json', 'x-api-token': API_TOKEN }, body: JSON.stringify(payload) 
+          method: 'POST', credentials: 'same-origin', cache: 'no-store', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) 
       }).then(r => {
           if (r.ok) {
               const qNew = getQueue(); delete qNew[key]; saveQueue(qNew);
@@ -293,7 +292,7 @@
       if (!navigator.onLine) { showSync(false, 'offline'); return; }
 
       retryFetch(`${CLOUD_BASE}/${encodeURIComponent(gameId)}/${encodeURIComponent(key)}`, { 
-          method: 'DELETE', credentials: 'same-origin', cache: 'no-store', headers: { 'x-api-token': API_TOKEN } 
+          method: 'DELETE', credentials: 'same-origin', cache: 'no-store'
       }).then(r => showSync(false, r.ok ? 'ok' : 'error')).catch(err => showSync(false, 'offline'));
     }
 
