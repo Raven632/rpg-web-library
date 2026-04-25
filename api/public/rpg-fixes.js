@@ -395,69 +395,47 @@
     });
     document.getElementById('_mob_ctrl').addEventListener('pointerdown', e => e.stopPropagation(), { passive: false });
 
-    // Логика виртуального геймпада
-    const keyMap = {
-      _d_up: { key: 'ArrowUp', code: 'ArrowUp', keyCode: 38 }, _d_down: { key: 'ArrowDown', code: 'ArrowDown', keyCode: 40 },
-      _d_left: { key: 'ArrowLeft', code: 'ArrowLeft', keyCode: 37 }, _d_right: { key: 'ArrowRight', code: 'ArrowRight', keyCode: 39 },
-      _a_ok: { key: 'Enter', code: 'Enter', keyCode: 13 }, _a_esc: { key: 'Escape', code: 'Escape', keyCode: 27 },
-      _a_menu: { key: 'x', code: 'KeyX', keyCode: 88 }, _a_shift: { key: 'Shift', code: 'ShiftLeft', keyCode: 16 }
+    // Прямая связка с внутренним API RPG Maker (без фейковых событий и setInterval!)
+    const rpgKeyMap = {
+      _d_up: 'up', _d_down: 'down', _d_left: 'left', _d_right: 'right',
+      _a_ok: 'ok', _a_esc: 'escape', _a_menu: 'control', _a_shift: 'shift'
     };
 
-    function fireKey(type, m) {
-      const ev = new KeyboardEvent(type, { key: m.key, code: m.code, bubbles: true, cancelable: true });
-      Object.defineProperty(ev, 'keyCode', { get: () => m.keyCode }); Object.defineProperty(ev, 'which', { get: () => m.keyCode });
-      document.dispatchEvent(ev);
-    }
-
-    const keyIntervals = {};
-    function holdKeyStart(id) {
-      if (keyIntervals[id]) return;
-      fireKey('keydown', keyMap[id]);
-      keyIntervals[id] = setInterval(() => fireKey('keydown', keyMap[id]), 40);
-    }
-    function holdKeyStop(id) {
-      if (keyIntervals[id]) { clearInterval(keyIntervals[id]); delete keyIntervals[id]; }
-      fireKey('keyup', keyMap[id]);
-    }
-
-    const allButtons = ['_a_ok', '_a_esc', '_a_menu', '_a_shift', '_d_up', '_d_down', '_d_left', '_d_right'];
+    const allButtons = Object.keys(rpgKeyMap);
     allButtons.forEach(id => {
       const el = document.getElementById(id);
       if (!el) return;
-      el.addEventListener('pointerdown', (e) => {
-        e.preventDefault(); e.stopPropagation(); el.classList.add('_on');
+
+      const press = (e) => {
+        e.preventDefault(); e.stopPropagation();
+        el.classList.add('_on');
         try { el.setPointerCapture(e.pointerId); } catch (_) {}
-        holdKeyStart(id);
-      });
-      const onUp = (e) => {
-        e.preventDefault(); e.stopPropagation(); el.classList.remove('_on');
-        try { if (el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId); } catch (_) {}
-        holdKeyStop(id);
+        
+        // Моментальная запись в память движка! 0 спайков процессора.
+        if (typeof Input !== 'undefined') {
+            Input._currentState[rpgKeyMap[id]] = true;
+        }
       };
-      el.addEventListener('pointerup', onUp); el.addEventListener('pointercancel', onUp);
+
+      const release = (e) => {
+        e.preventDefault(); e.stopPropagation();
+        el.classList.remove('_on');
+        try { if (el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId); } catch (_) {}
+        
+        if (typeof Input !== 'undefined') {
+            Input._currentState[rpgKeyMap[id]] = false;
+        }
+      };
+
+      el.addEventListener('pointerdown', press);
+      el.addEventListener('pointerup', release);
+      el.addEventListener('pointercancel', release);
     });
-  });
+  }); // Конец обработчика DOMContentLoaded 5-го блока
 
 
   // =========================
-  // 6) TICKER OPTIMIZATIONS
-  // =========================
-  (function runtimeOptimizations() {
-    const t = setInterval(() => {
-      if (typeof PIXI === 'undefined') return;
-      if (PIXI.Ticker?.shared) PIXI.Ticker.shared.maxFPS = 60;
-      if (typeof Graphics !== 'undefined' && Graphics.app?.ticker) Graphics.app.ticker.maxFPS = 60;
-      if (typeof Bitmap !== 'undefined' && Bitmap.prototype?.drawText && !Bitmap.prototype.__PatchedAlign) {
-        Bitmap.prototype.__PatchedAlign = true; const orig = Bitmap.prototype.drawText;
-        Bitmap.prototype.drawText = function(text, x, y, maxWidth, lineHeight, align) { return orig.call(this, text, x, y, maxWidth, lineHeight, align || 'left'); };
-      }
-      clearInterval(t);
-    }, 400);
-    setTimeout(() => clearInterval(t), 10000);
-  })();
-
-  // =========================
-  // 9) FPS MONITOR (DEV OVERLAY)
+  // 5) FPS MONITOR (DEV OVERLAY)
   // =========================
   (function setupFpsMonitor() {
     // Показывать только если в URL есть ?fps или ?dev
@@ -589,13 +567,8 @@
     requestAnimationFrame(tick);
   })();
 
-
-
-
-
-
   // =========================
-  // 10) SPIKE DIAGNOSTICS — Детектор причин лагов
+  // 6) SPIKE DIAGNOSTICS — Детектор причин лагов
   // =========================
   (function setupSpikeDiagnostics() {
     const SPIKE_THRESHOLD_MS = 40; // кадр дольше 40ms = спайк
@@ -775,6 +748,158 @@
     requestAnimationFrame(detectLoop);
 
     console.log('[Spike Diag] 🔍 Детектор спайков активен (порог: ' + SPIKE_THRESHOLD_MS + 'ms)');
+  })();
+
+  // =========================
+  // 7) TOUCH MODE TOGGLE (ИСПРАВЛЕНО)
+  // =========================
+  //  OFF (default) — жестко перехватываем все тапы, работает только геймпад
+  //  ON            — пропускаем тапы в ядро RPG Maker
+  (function setupTouchMode() {
+    window.__rpgTouchEnabled = false; // Выключен по умолчанию
+
+    // Перехватчик на уровне ядра браузера (до того, как его увидит RPG Maker)
+    const interceptor = (e) => {
+      if (window.__rpgTouchEnabled) return; // Если включен - пропускаем в игру
+
+      // Разрешаем клики по нашим интерфейсам (меню, геймпад, твои мониторы)
+      if (e.target && e.target.closest && (
+          e.target.closest('#_sys_menu_container') || 
+          e.target.closest('#_mob_ctrl') || 
+          e.target.closest('#_fps_monitor') || 
+          e.target.closest('#_spike_panel')
+      )) {
+          return;
+      }
+
+      // Блокируем тап, чтобы RPG Maker о нем даже не узнал!
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+    };
+
+    // Вешаем слушатели на фазу capture (погружение) — они срабатывают самыми первыми
+    ['touchstart', 'touchmove', 'touchend', 'mousedown', 'mousemove', 'mouseup', 'pointerdown', 'pointermove', 'pointerup'].forEach(ev => {
+        window.addEventListener(ev, interceptor, { capture: true, passive: false });
+    });
+
+    window.__toggleRpgTouchMode = function() {
+      window.__rpgTouchEnabled = !window.__rpgTouchEnabled;
+      
+      const item = document.getElementById('_touch_mode_item');
+      if (item) {
+        item.innerHTML = (window.__rpgTouchEnabled ? '✅' : '👆') + ' Touch Mode';
+        item.classList.toggle('_active', window.__rpgTouchEnabled);
+      }
+
+      const panel = document.getElementById('_sys_panel');
+      if (panel) panel.classList.remove('_open');
+    };
+
+    // Создаем кнопку в системном меню
+    document.addEventListener('DOMContentLoaded', () => {
+      const panelTimer = setInterval(() => {
+        const panel = document.getElementById('_sys_panel');
+        if (!panel) return;
+        clearInterval(panelTimer);
+        
+        if (!document.getElementById('_touch_mode_item')) {
+          const item = document.createElement('div');
+          item.id = '_touch_mode_item';
+          item.className = '_sys_item';
+          item.innerHTML = '👆 Touch Mode';
+          item.style.cursor = 'pointer';
+          panel.appendChild(item);
+          item.addEventListener('pointerdown', (e) => {
+            e.stopPropagation();
+            window.__toggleRpgTouchMode();
+          });
+        }
+      }, 150);
+    });
+  })();
+
+  // =========================
+  // 8) NATIVE MEMORY & GC FIX (SPIKE KILLER)
+  // =========================
+  (function applyNativeOptimizations() {
+    const initTimer = setInterval(() => {
+      if (typeof PIXI === 'undefined' || typeof ImageManager === 'undefined' || typeof SceneManager === 'undefined') return;
+
+      // Оптимальный кэш (~80 МБ ОЗУ). Защита от перегрева
+      ImageManager.cache.limit = 20 * 1000 * 1000;
+
+      // ФИКС СПАЙКОВ: Отключаем авто-очистку VRAM
+      if (PIXI.settings) {
+          PIXI.settings.GC_MODE = PIXI.GC_MODES.MANUAL; 
+      }
+
+      // Ручной вынос мусора ТОЛЬКО во время смены локаций (черный экран)
+      if (!SceneManager.__gcPatched) {
+          SceneManager.__gcPatched = true;
+          const origChangeScene = SceneManager.changeScene;
+          SceneManager.changeScene = function() {
+              origChangeScene.call(this);
+              if (Graphics && Graphics._renderer && Graphics._renderer.textureGC) {
+                  Graphics._renderer.textureGC.run();
+              }
+          };
+      }
+
+      // Охлаждение процессора при свернутом браузере
+      document.addEventListener('visibilitychange', () => {
+          if (document.hidden && typeof AudioManager !== 'undefined') {
+              if (SceneManager._scene) SceneManager._scene.pause = true;
+          } else if (!document.hidden && typeof AudioManager !== 'undefined') {
+              if (SceneManager._scene) SceneManager._scene.pause = false;
+          }
+      });
+
+      // Снижение нагрузки на шину VRAM при выводе текста
+      if (typeof Window_Message !== 'undefined' && !Window_Message.prototype.__textOptimized) {
+          Window_Message.prototype.__textOptimized = true;
+          const origUpdate = Window_Message.prototype.update;
+          let frameCounter = 0;
+          Window_Message.prototype.update = function() {
+              frameCounter++;
+              if (frameCounter % 2 === 0) origUpdate.call(this);
+          };
+      }
+
+      console.log('[RPG Fixes] 🔧 Память оптимизирована (Auto-GC отключен)!');
+      clearInterval(initTimer);
+    }, 200);
+
+    setTimeout(() => clearInterval(initTimer), 10000);
+  })();
+
+  // =========================
+  // 9) ANTI-LAG: SUBPIXEL SCROLL & DASH FIX
+  // =========================
+  (function fixSubpixelScroll() {
+    const patchTimer = setInterval(() => {
+      if (typeof Tilemap !== 'undefined' && typeof Sprite_Character !== 'undefined') {
+        
+        // Лечим камеру: Округляем координаты скроллинга карты
+        const origTilemapUpdate = Tilemap.prototype.updateTransform;
+        Tilemap.prototype.updateTransform = function() {
+            this.x = Math.round(this.x);
+            this.y = Math.round(this.y);
+            origTilemapUpdate.call(this);
+        };
+
+        // Лечим персонажей: Округляем координаты спрайтов
+        const origSpriteUpdate = Sprite_Character.prototype.updatePosition;
+        Sprite_Character.prototype.updatePosition = function() {
+            origSpriteUpdate.call(this);
+            this.x = Math.round(this.x);
+            this.y = Math.round(this.y);
+        };
+
+        console.log('[RPG Fixes] 🏃‍♂️ Субпиксельный рендер и бег оптимизированы!');
+        clearInterval(patchTimer);
+      }
+    }, 200);
+    setTimeout(() => clearInterval(patchTimer), 10000);
   })();
 
 })();
