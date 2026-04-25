@@ -28,19 +28,33 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
-// Перехват запросов (Сетевая стратегия)
+// Перехват запросов (Умная стратегия: Stale-While-Revalidate)
 self.addEventListener('fetch', (event) => {
-  const url = event.request.url;
+  const url = new URL(event.request.url);
 
-  // ⚡ КРИТИЧЕСКИ ВАЖНО: Никогда не кэшируем API сохранений!
-  // Они всегда должны идти напрямую на сервер.
-  if (url.includes('/api/saves/')) return;
+  // 1. СТРОГО СЕТЬ: API, Сохранения и Сокеты мимо кэша
+  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/socket.io/')) {
+    return; // Возврат управления браузеру (идет напрямую в сеть)
+  }
 
-  // Для всего остального используем стратегию "Network First, fallback to Cache"
+  // 2. Стратегия для ядра и тяжелых ассетов
   event.respondWith(
-    fetch(event.request).catch(() => {
-      // Если интернета нет (fetch упал), пытаемся достать файл из кэша
-      return caches.match(event.request);
+    caches.match(event.request).then((cachedResponse) => {
+      // Если файл есть в нашем кэше (CORE_ASSETS), отдаем его МГНОВЕННО (0ms)
+      if (cachedResponse) {
+        // В фоновом режиме стягиваем свежую версию интерфейса с сервера
+        fetch(event.request).then((networkResponse) => {
+          if (networkResponse && networkResponse.status === 200) {
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, networkResponse));
+          }
+        }).catch(() => {}); // Если интернета нет, просто игнорируем ошибку
+        
+        return cachedResponse;
+      }
+
+      // Если файла нет в кэше (это тяжелые файлы игр), качаем из сети.
+      // И мы НЕ сохраняем их в кэш (cache.put), чтобы спасти память телефона!
+      return fetch(event.request);
     })
   );
 });

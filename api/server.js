@@ -660,6 +660,19 @@ app.post('/api/upload', uploadLimiter, upload.single('game'), async (req, res) =
             }
         }
 
+        // Пример логики проверки путей перед распаковкой
+        async function validateArchivePaths(archivePath) {
+            const { stdout } = await execFilePromise('7zz', ['l', '-ba', '-slt', archivePath]);
+            const lines = stdout.split('\n').filter(l => l.startsWith('Path = '));
+            for (const line of lines) {
+                const internalPath = line.replace('Path = ', '').trim();
+                // Если путь содержит переход на уровень вверх или абсолютный путь
+                if (internalPath.includes('..') || internalPath.startsWith('/') || internalPath.startsWith('\\')) {
+                    throw new Error(`Обнаружен опасный путь: ${internalPath}`);
+                }
+            }
+        }
+
         // 7zz справляется со всем: zip, 7z, rar, rar5
         await spawnExtract('7zz', ['x', archivePath, `-o${tmpExtractDir}`, '-y']);
 
