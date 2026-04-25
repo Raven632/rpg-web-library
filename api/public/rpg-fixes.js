@@ -8,6 +8,54 @@
   if (window.__RPG_FIXES_ULTIMATE_V34__) return;
   window.__RPG_FIXES_ULTIMATE_V34__ = true;
 
+  // =========================
+  // 0) DEVICE PIXEL RATIO FIX
+  // =========================
+  (function fixDevicePixelRatio() {
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    if (!isIOS) return;
+
+    const TARGET = 1; // 1 = нативные пиксели, без 3x апскейла
+
+    // Шаг 1: Перехватываем DPR до загрузки PIXI
+    try {
+      Object.defineProperty(window, 'devicePixelRatio', {
+        get: () => TARGET,
+        configurable: true
+      });
+    } catch(e) {}
+
+    // Шаг 2: PIXI.settings — страховка если PIXI уже загрузился раньше нас
+    const pixi_t = setInterval(() => {
+      if (typeof PIXI === 'undefined') return;
+      clearInterval(pixi_t);
+      try { PIXI.settings.RESOLUTION = TARGET; } catch(e) {}
+
+      // Шаг 3: Патчим уже запущенный рендерер (MV: Graphics._renderer, MZ: Graphics._app.renderer)
+      const gfx_t = setInterval(() => {
+        if (typeof Graphics === 'undefined') return;
+        // MZ
+        const rMZ = Graphics._app && Graphics._app.renderer;
+        // MV
+        const rMV = Graphics._renderer;
+        const r = rMZ || rMV;
+        if (!r) return;
+        clearInterval(gfx_t);
+        if (r.resolution === TARGET) return; // уже правильно
+        const logW = r.width  / r.resolution;
+        const logH = r.height / r.resolution;
+        r.resolution = TARGET;
+        try { r.resize(logW, logH); } catch(e) {}
+        // MZ: обновляем interaction plugin
+        try { if (r.plugins && r.plugins.interaction) r.plugins.interaction.resolution = TARGET; } catch(e) {}
+        console.log('[DPR Fix] Renderer resolution -> 1x, canvas:', r.width, 'x', r.height);
+      }, 100);
+      setTimeout(() => clearInterval(gfx_t), 15000);
+    }, 50);
+    setTimeout(() => clearInterval(pixi_t), 15000);
+  })();
+
   const API_TOKEN = document.querySelector('meta[name="api-token"]')?.content || 'SuperSecretKey123';
   const CLOUD_BASE = '/api/saves';
   const CLOUD_INIT_GRACE_MS = 1800;
@@ -390,6 +438,7 @@
     });
   });
 
+
   // =========================
   // 6) TICKER OPTIMIZATIONS
   // =========================
@@ -406,4 +455,326 @@
     }, 400);
     setTimeout(() => clearInterval(t), 10000);
   })();
+
+  // =========================
+  // 9) FPS MONITOR (DEV OVERLAY)
+  // =========================
+  (function setupFpsMonitor() {
+    // Показывать только если в URL есть ?fps или ?dev
+    const showByDefault = location.search.includes('fps') || location.search.includes('dev');
+
+    window.__fpsMonitorVisible = showByDefault;
+    window.__toggleFpsMonitor = function() {
+      window.__fpsMonitorVisible = !window.__fpsMonitorVisible;
+      monitor.style.display = window.__fpsMonitorVisible ? 'block' : 'none';
+    };
+
+    // Создаём оверлей
+    const monitor = document.createElement('div');
+    monitor.id = '_fps_monitor';
+    monitor.style.cssText = `
+      display: ${showByDefault ? 'block' : 'none'};
+      position: fixed;
+      top: max(64px, env(safe-area-inset-top) + 48px);
+      right: max(16px, env(safe-area-inset-right));
+      z-index: 9998;
+      background: rgba(0,0,0,0.75);
+      color: #0f0;
+      font-family: 'Courier New', monospace;
+      font-size: 11px;
+      line-height: 1.5;
+      padding: 8px 10px;
+      border-radius: 8px;
+      min-width: 130px;
+      pointer-events: none;
+      border: 1px solid rgba(255,255,255,0.1);
+      backdrop-filter: blur(4px);
+    `;
+    document.body.appendChild(monitor);
+
+    // Добавляем кнопку в системное меню — ждём пока оно появится
+    const menuTimer = setInterval(() => {
+      const panel = document.getElementById('_sys_panel');
+      if (!panel) return;
+      clearInterval(menuTimer);
+      const btn = document.createElement('div');
+      btn.className = '_sys_item';
+      btn.id = '_sys_fpsmon';
+      btn.textContent = '📊 FPS Монитор';
+      panel.appendChild(btn);
+      btn.addEventListener('pointerdown', (e) => {
+        e.preventDefault(); e.stopPropagation();
+        window.__toggleFpsMonitor();
+        btn.classList.toggle('_active', window.__fpsMonitorVisible);
+        document.getElementById('_sys_panel').classList.remove('_open');
+      }, { passive: false });
+    }, 300);
+
+    // Данные для графика
+    const HISTORY = 60; // 60 точек = ~1 секунда истории
+    const fpsHistory = new Array(HISTORY).fill(60);
+    let frameTimes = [];
+    let lastFrame = performance.now();
+    let frameCount = 0;
+    let lastFpsUpdate = performance.now();
+    let currentFps = 60;
+    let minFps = 60;
+    let maxFps = 60;
+    let avgFps = 60;
+    let lagSpikes = 0; // кадры дольше 50ms
+
+    // Мини-график (ASCII sparkline)
+    function sparkline(data) {
+      const bars = ['▁','▂','▃','▄','▅','▆','▇','█'];
+      const min = Math.min(...data);
+      const max = Math.max(...data) || 1;
+      return data.slice(-20).map(v => {
+        const idx = Math.round(((v - min) / (max - min)) * (bars.length - 1));
+        return bars[Math.max(0, Math.min(idx, bars.length - 1))];
+      }).join('');
+    }
+
+    function getColor(fps) {
+      if (fps >= 55) return '#0f0';       // зелёный — норм
+      if (fps >= 40) return '#ff0';       // жёлтый — подтупливает
+      if (fps >= 25) return '#f80';       // оранжевый — лагает
+      return '#f00';                       // красный — всё плохо
+    }
+
+    function tick() {
+      const now = performance.now();
+      const frameTime = now - lastFrame;
+      lastFrame = now;
+
+      frameCount++;
+      frameTimes.push(frameTime);
+      if (frameTimes.length > HISTORY) frameTimes.shift();
+
+      // Считаем спайки (кадр > 50ms = подвис на 1+ кадр)
+      if (frameTime > 50) lagSpikes++;
+
+      // Обновляем FPS каждые 500ms
+      if (now - lastFpsUpdate >= 500) {
+        const elapsed = (now - lastFpsUpdate) / 1000;
+        currentFps = Math.round(frameCount / elapsed);
+        frameCount = 0;
+        lastFpsUpdate = now;
+
+        fpsHistory.push(currentFps);
+        if (fpsHistory.length > HISTORY) fpsHistory.shift();
+
+        minFps = Math.min(...fpsHistory);
+        maxFps = Math.max(...fpsHistory);
+        const sum = fpsHistory.reduce((a, b) => a + b, 0);
+        avgFps = Math.round(sum / fpsHistory.length);
+
+        // Среднее время кадра
+        const avgFrameTime = frameTimes.reduce((a, b) => a + b, 0) / frameTimes.length;
+
+        if (window.__fpsMonitorVisible) {
+          const color = getColor(currentFps);
+          monitor.innerHTML = `
+            <span style="color:${color};font-size:16px;font-weight:bold">${currentFps} FPS</span><br>
+            <span style="color:#aaa">кадр: ${avgFrameTime.toFixed(1)}ms</span><br>
+            <span style="color:#888">min:${minFps} avg:${avgFps} max:${maxFps}</span><br>
+            <span style="color:#f44;font-size:10px">спайки: ${lagSpikes}</span><br>
+            <span style="color:${color};letter-spacing:0;font-size:10px">${sparkline(fpsHistory)}</span>
+          `;
+        }
+      }
+
+      requestAnimationFrame(tick);
+    }
+
+    requestAnimationFrame(tick);
+  })();
+
+
+
+
+
+
+  // =========================
+  // 10) SPIKE DIAGNOSTICS — Детектор причин лагов
+  // =========================
+  (function setupSpikeDiagnostics() {
+    const SPIKE_THRESHOLD_MS = 40; // кадр дольше 40ms = спайк
+    const MAX_LOG = 30;            // хранить последние 30 спайков
+
+    const log = [];
+    let lastFrameTime = performance.now();
+    let sessionStart = performance.now();
+    window.__spikeLog = log;
+
+    // --- UI ---
+    const panel = document.createElement('div');
+    panel.id = '_spike_panel';
+    panel.style.cssText = `
+      display: none;
+      position: fixed;
+      bottom: 10px; left: 10px; right: 10px;
+      max-height: 45vh;
+      background: rgba(0,0,0,0.92);
+      border: 1px solid rgba(255,100,0,0.4);
+      border-radius: 10px;
+      z-index: 9997;
+      font-family: 'Courier New', monospace;
+      font-size: 10px;
+      color: #ddd;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      pointer-events: auto;
+    `;
+    panel.innerHTML = `
+      <div style="position:sticky;top:0;background:rgba(0,0,0,0.95);padding:6px 10px;border-bottom:1px solid rgba(255,100,0,0.3);display:flex;justify-content:space-between;align-items:center;">
+        <span style="color:#f80;font-weight:bold">⚡ Spike Log</span>
+        <span id="_spike_count" style="color:#f44">0 спайков</span>
+        <button id="_spike_clear" style="background:rgba(255,80,0,0.3);border:1px solid rgba(255,80,0,0.5);border-radius:4px;color:#fff;padding:2px 8px;font-size:10px;">Очистить</button>
+      </div>
+      <div id="_spike_log_body" style="padding:6px 10px;"></div>
+    `;
+    document.body.appendChild(panel);
+    window.__spikePanelEl = panel;
+
+    document.getElementById('_spike_clear')?.addEventListener('pointerdown', (e) => {
+      e.stopPropagation();
+      log.length = 0;
+      document.getElementById('_spike_log_body').innerHTML = '<span style="color:#666">— Лог очищен —</span>';
+      document.getElementById('_spike_count').textContent = '0 спайков';
+    });
+
+    // Кнопка в системном меню
+    const menuTimer = setInterval(() => {
+      const sysPanel = document.getElementById('_sys_panel');
+      if (!sysPanel) return;
+      clearInterval(menuTimer);
+      const btn = document.createElement('div');
+      btn.className = '_sys_item';
+      btn.id = '_sys_spikes';
+      btn.textContent = '🔍 Spike Log';
+      sysPanel.appendChild(btn);
+      btn.addEventListener('pointerdown', (e) => {
+        e.preventDefault(); e.stopPropagation();
+        panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+        sysPanel.classList.remove('_open');
+      }, { passive: false });
+    }, 500);
+
+    // --- Сбор данных о спайке ---
+    function getGameState(frameMs) {
+      const state = { ms: frameMs.toFixed(1), t: ((performance.now() - sessionStart) / 1000).toFixed(1) };
+      try {
+        const sm = window.SceneManager;
+        if (!sm) return state;
+
+        // Сцена
+        state.scene = sm._scene?.constructor?.name || '?';
+
+        // Карта
+        if (window.$gameMap) {
+          state.map = $gameMap._mapId || 0;
+          // Все события на карте
+          const events = $gameMap._events?.filter(Boolean) || [];
+          state.events = events.length;
+          // Активные параллельные события (самая частая причина спайков)
+          state.parallelEvents = events.filter(e => e?._trigger === 4 && e?._interpreter?.isRunning?.()).length;
+          // Запущенные события
+          state.runningEvents = events.filter(e => e?._interpreter?.isRunning?.()).length;
+        }
+
+        // Сообщение
+        if (window.$gameMessage) {
+          state.msg = $gameMessage.isBusy() ? 'ДА' : 'нет';
+        }
+
+        // Картинки
+        if (window.$gameScreen) {
+          const pics = $gameScreen._pictures?.filter(Boolean) || [];
+          state.pics = pics.length;
+        }
+
+        // PIXI: кол-во текстур в VRAM (главная причина утечки памяти и спайков GC)
+        if (window.PIXI?.utils?.TextureCache) {
+          state.textures = Object.keys(PIXI.utils.TextureCache).length;
+        }
+
+        // FilterController — включён ли
+        if (window.FilterController !== undefined) {
+          state.fc = FilterController.enabledAll ? 'ON' : 'off';
+        }
+
+        // Спрайты на карте
+        if (sm._scene?._spriteset?._characterSprites) {
+          state.sprites = sm._scene._spriteset._characterSprites.length;
+        }
+
+      } catch(e) {}
+      return state;
+    }
+
+    function formatEntry(s, idx) {
+      const msColor = s.ms > 80 ? '#f44' : s.ms > 60 ? '#f80' : '#ff0';
+      const parallelWarn = s.parallelEvents > 0
+        ? `<span style="color:#f44"> ⚠️ parallel:${s.parallelEvents}</span>` : '';
+      const fcWarn = s.fc === 'ON'
+        ? `<span style="color:#f80"> FC:ON</span>` : '';
+      const texWarn = s.textures > 200
+        ? `<span style="color:#f44"> tex:${s.textures}⚠️</span>` : (s.textures ? ` tex:${s.textures}` : '');
+
+      return `<div style="border-bottom:1px solid rgba(255,255,255,0.05);padding:3px 0">
+        <span style="color:#666">#${idx+1} +${s.t}s</span>
+        <span style="color:${msColor};font-weight:bold"> ${s.ms}ms</span>
+        <span style="color:#aaa"> ${s.scene || '?'}</span>
+        ${s.map !== undefined ? `<span style="color:#888"> map:${s.map}</span>` : ''}
+        ${s.events !== undefined ? ` ev:${s.events}` : ''}
+        ${s.runningEvents ? `<span style="color:#ffa"> run:${s.runningEvents}</span>` : ''}
+        ${parallelWarn}
+        ${s.pics !== undefined ? ` pic:${s.pics}` : ''}
+        ${texWarn}
+        ${s.msg !== undefined ? ` msg:${s.msg}` : ''}
+        ${fcWarn}
+      </div>`;
+    }
+
+    function addSpike(state) {
+      log.unshift(state); // новые сверху
+      if (log.length > MAX_LOG) log.pop();
+
+      // Обновляем UI если панель видна
+      if (panel.style.display !== 'none') {
+        renderLog();
+      }
+      const countEl = document.getElementById('_spike_count');
+      if (countEl) countEl.textContent = `${log.length} спайков`;
+    }
+
+    function renderLog() {
+      const body = document.getElementById('_spike_log_body');
+      if (!body) return;
+      if (log.length === 0) {
+        body.innerHTML = '<span style="color:#0f0">— Спайков нет, всё гладко —</span>';
+        return;
+      }
+      body.innerHTML = log.map((s, i) => formatEntry(s, i)).join('');
+    }
+
+    // --- Главный цикл детектора (отдельный RAF, не зависит от игрового) ---
+    function detectLoop() {
+      const now = performance.now();
+      const delta = now - lastFrameTime;
+      lastFrameTime = now;
+
+      if (delta > SPIKE_THRESHOLD_MS) {
+        const state = getGameState(delta);
+        addSpike(state);
+      }
+
+      requestAnimationFrame(detectLoop);
+    }
+
+    requestAnimationFrame(detectLoop);
+
+    console.log('[Spike Diag] 🔍 Детектор спайков активен (порог: ' + SPIKE_THRESHOLD_MS + 'ms)');
+  })();
+
 })();
