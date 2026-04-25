@@ -74,7 +74,7 @@
   window.nw = window.require('nw');
 
   // =========================
-  // 2) MODERN VIEWPORT
+  // 2) MODERN VIEWPORT & AUTO-SCALE FIX
   // =========================
   (function setupModernViewport() {
     let meta = document.querySelector('meta[name="viewport"]');
@@ -95,8 +95,10 @@
 
     function applyScale() {
       if (!targetCanvas || !targetCanvas.width) return;
-      targetCanvas.style.setProperty('width', targetCanvas.width + 'px', 'important'); targetCanvas.style.setProperty('height', targetCanvas.height + 'px', 'important');
-      let scaleX = window.innerWidth / targetCanvas.width; let scaleY = window.innerHeight / targetCanvas.height;
+      targetCanvas.style.setProperty('width', targetCanvas.width + 'px', 'important');
+      targetCanvas.style.setProperty('height', targetCanvas.height + 'px', 'important');
+      let scaleX = window.innerWidth / targetCanvas.width;
+      let scaleY = window.innerHeight / targetCanvas.height;
       if (!isStretched) { const scale = Math.min(scaleX, scaleY); scaleX = scaleY = scale; }
       targetCanvas.style.setProperty('transform', `translate(-50%, -50%) scale(${scaleX}, ${scaleY})`, 'important');
     }
@@ -105,11 +107,34 @@
     const domObserver = new MutationObserver((mutations, obs) => {
       const c = document.getElementById('GameCanvas') || document.querySelector('canvas');
       if (c) {
-        targetCanvas = c; resizeObserver.observe(document.body); forceScaleUpdate();
-        if (typeof Graphics !== 'undefined') {
-          Graphics.pageToCanvasX = function (x) { if (!this._canvas) return 0; const rect = this._canvas.getBoundingClientRect(); return Math.round((x - rect.left) * (this._canvas.width / rect.width)); };
-          Graphics.pageToCanvasY = function (y) { if (!this._canvas) return 0; const rect = this._canvas.getBoundingClientRect(); return Math.round((y - rect.top) * (this._canvas.height / rect.height)); };
-        }
+        targetCanvas = c;
+        resizeObserver.observe(document.body);
+        window.addEventListener('resize', forceScaleUpdate);
+
+        // ⚡ НОВОЕ: Следим за попытками игры изменить размер холста
+        const canvasObserver = new MutationObserver(() => forceScaleUpdate());
+        canvasObserver.observe(targetCanvas, { attributes: true, attributeFilter: ['width', 'height'] });
+
+        // Перехватываем внутренние координаты для тапов и отключаем конфликты
+        const hookTimer = setInterval(() => {
+            if (typeof Graphics !== 'undefined') {
+                Graphics.pageToCanvasX = function (x) { if (!this._canvas) return 0; const rect = this._canvas.getBoundingClientRect(); return Math.round((x - rect.left) * (this._canvas.width / rect.width)); };
+                Graphics.pageToCanvasY = function (y) { if (!this._canvas) return 0; const rect = this._canvas.getBoundingClientRect(); return Math.round((y - rect.top) * (this._canvas.height / rect.height)); };
+                
+                // ⚡ Убиваем родную центровку движка, чтобы не сбивала наш CSS
+                if (Graphics._centerElement) Graphics._centerElement = function() {};
+                clearInterval(hookTimer);
+            }
+        }, 100);
+        setTimeout(() => clearInterval(hookTimer), 5000);
+
+        // Принудительно центрируем при старте несколько раз, пока грузятся тяжелые плагины
+        let bootTicks = 0;
+        const bootTimer = setInterval(() => {
+            forceScaleUpdate();
+            if (++bootTicks > 20) clearInterval(bootTimer); // Работает первые 2 секунды
+        }, 100);
+
         obs.disconnect();
       }
     });
