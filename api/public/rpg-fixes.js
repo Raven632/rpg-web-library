@@ -309,7 +309,26 @@
     }
 
     function injectMVEngine() {
-      const _loadFromWebStorage = StorageManager.loadFromWebStorage; StorageManager.loadFromWebStorage = function(saveFileId) { const key = this.webStorageKey(saveFileId); if (cloudReady && hasEntry(key)) return getEntry(key).value; return _loadFromWebStorage.apply(this, arguments); };
+      const _loadFromWebStorage = StorageManager.loadFromWebStorage; 
+      StorageManager.loadFromWebStorage = function(saveFileId) { 
+          const key = this.webStorageKey(saveFileId); 
+          if (cloudReady && hasEntry(key)) {
+              let val = getEntry(key).value;
+              
+              // ⚡ МАГИЯ: Если сейв пришел с ПК (сжатая строка Base64), распаковываем его!
+              // Мы проверяем: если строка не начинается со скобок JSON ({ или [), значит это архив.
+              if (val && typeof val === 'string' && !val.trim().startsWith('{') && !val.trim().startsWith('[')) {
+                  try {
+                      if (typeof LZString !== 'undefined') {
+                          const decompressed = LZString.decompressFromBase64(val);
+                          if (decompressed) val = decompressed;
+                      }
+                  } catch(e) { console.warn('[CloudSave] Ошибка распаковки LZString', e); }
+              }
+              return val;
+          }
+          return _loadFromWebStorage.apply(this, arguments); 
+      };
       if (StorageManager.webStorageExists) { const _webStorageExists = StorageManager.webStorageExists; StorageManager.webStorageExists = function(saveFileId) { const local = _webStorageExists.apply(this, arguments); if (!cloudReady) return canOptimisticallyShowExists(local); return hasEntry(this.webStorageKey(saveFileId)) || local; }; }
       const _saveToWebStorage = StorageManager.saveToWebStorage; StorageManager.saveToWebStorage = function(saveFileId, json) { uploadToCloud(this.webStorageKey(saveFileId), json); return _saveToWebStorage.apply(this, arguments); };
       const _removeWebStorage = StorageManager.removeWebStorage; StorageManager.removeWebStorage = function(saveFileId) { deleteFromCloud(this.webStorageKey(saveFileId)); return _removeWebStorage.apply(this, arguments); };

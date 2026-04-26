@@ -912,7 +912,16 @@ app.get('/api/saves/:gameId', async (req, res) => {
         const saves = {};
         for (const file of files) {
             if (file.endsWith('.json')) {
-                saves[decodeURIComponent(file.replace('.json', ''))] = await fsp.readFile(path.join(gameSavesDir, file), 'utf8');
+                const filePath = path.join(gameSavesDir, file);
+                const stats = await fsp.stat(filePath); // Берем дату файла с жесткого диска
+                const content = await fsp.readFile(filePath, 'utf8');
+                const key = decodeURIComponent(file.replace('.json', ''));
+                
+                // ⚡ БЕЗ ПАРСИНГА. Просто отдаем сырой контент + дату изменения с диска
+                saves[key] = {
+                    value: content,
+                    updatedAt: stats.mtimeMs 
+                };
             }
         }
         res.json(saves);
@@ -941,29 +950,28 @@ app.delete('/api/saves/:gameId/:key', async (req, res) => {
     } catch(e) { res.json({ success: true }); }
 });
 
-// 🔥 ЭКСПОРТ СОХРАНЕНИЙ (Скачать в ZIP)
+// 🔥 ЭКСПОРТ СОХРАНЕНИЙ (Скачать в ZIP) - ENTERPRISE УРОВЕНЬ
 app.get('/api/games/:id/saves/export', async (req, res) => {
     const gameId = path.basename(req.params.id);
     const gameSavesDir = path.join(SAVES_DIR, gameId);
 
     try {
-        // Проверяем, существует ли папка и есть ли в ней файлы
         await fsp.access(gameSavesDir);
         const files = await fsp.readdir(gameSavesDir);
-        if (files.length === 0) throw new Error('Пусто');
+        // Экспортируем только .json файлы (без мусора)
+        const saveFiles = files.filter(f => f.endsWith('.json'));
+        if (saveFiles.length === 0) throw new Error('Пусто');
     } catch (e) {
         return res.status(404).json({ error: 'У этой игры еще нет сохранений' });
     }
 
-    const tmpZip = path.join(EXTRACT_TMP, `saves_${gameId}_${Date.now()}.zip`);
+    const tmpZip = path.join(EXTRACT_TMP, `saves_${gameId}_${crypto.randomBytes(4).toString('hex')}.zip`);
 
     try {
-        // Вызываем 7zz для мгновенной запаковки папки в ZIP
-        await execFilePromise('7zz', ['a', '-tzip', tmpZip, path.join(gameSavesDir, '*')]);
+        // Упаковываем строго файлы .json, игнорируя всё остальное
+        await execFilePromise('7zz', ['a', '-tzip', tmpZip, path.join(gameSavesDir, '*.json')]);
         
-        // Отдаем файл браузеру (благодаря HttpOnly Cookies авторизация пройдет сама)
         res.download(tmpZip, `${gameId}_saves.zip`, () => {
-            // Удаляем временный архив сразу после того, как пользователь его скачал
             fsp.unlink(tmpZip).catch(() => {});
         });
     } catch (e) {
@@ -972,24 +980,78 @@ app.get('/api/games/:id/saves/export', async (req, res) => {
     }
 });
 
-// 🔥 ИМПОРТ СОХРАНЕНИЙ (Загрузить из ZIP)
+// 🔥 ИМПОРТ СОХРАНЕНИЙ (Загрузить из ZIP) - ENTERPRISE УРОВЕНЬ
 app.post('/api/games/:id/saves/import', uploadLimiter, upload.single('saves'), async (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'Файл не получен' });
     
+    // ⚡ БЕЗОПАСНОСТЬ 1: Жесткий лимит размера только для сейвов (макс 50 МБ).
+    if (req.file.size > 50 * 1024 * 1024) {
+        await fsp.unlink(req.file.path).catch(() => {});
+        return res.status(400).json({ error: 'Архив сохранений слишком большой (макс 50 МБ)' });
+    }
+
     const gameId = path.basename(req.params.id);
     const gameSavesDir = path.join(SAVES_DIR, gameId);
     const archivePath = req.file.path;
 
     try {
         await fsp.mkdir(gameSavesDir, { recursive: true });
-        // Распаковываем архив прямо поверх старых сейвов (флаг -y означает перезапись)
-        await spawnExtract('7zz', ['x', archivePath, `-o${gameSavesDir}`, '-y']);
+
+        // ⚡ БЕЗОПАСНОСТЬ 2: ИДЕАЛЬНАЯ ЗАЩИТА ZIP SLIP (Через path.resolve)
+        const { stdout } = await execFilePromise('7zz', ['l', '-ba', '-slt', archivePath], { maxBuffer: 50 * 1024 * 1024 });
+        const lines = stdout.split('\n').filter(l => l.startsWith('Path = '));
+        const baseTarget = path.resolve(gameSavesDir) + path.sep;
+
+        for (const line of lines) {
+            const internalPath = line.replace('Path = ', '').trim();
+            const entryPath = path.resolve(gameSavesDir, internalPath);
+            if (!entryPath.startsWith(baseTarget)) {
+                throw new Error(`Обнаружен опасный путь в архиве (Zip Slip): ${internalPath}`);
+            }
+        }
+        
+        // ⚡ UX МАГИЯ 1: Распаковка в плоский вид (Flat Extract - флаг 'e'). 
+        // Если юзер запакует папку, сервер всё равно вытащит файлы прямо в корень!
+        await spawnExtract('7zz', ['e', archivePath, `-o${gameSavesDir}`, '-y']);
         await fsp.unlink(archivePath).catch(() => {});
+        
+        // ⚡ UX МАГИЯ 2: Умный клинер и "Омоложение" (Твоя старая логика, доведенная до ума)
+        const now = new Date();
+        const extractedFiles = await fsp.readdir(gameSavesDir);
+        
+        for (const file of extractedFiles) {
+            const filePath = path.join(gameSavesDir, file);
+            const stat = await fsp.stat(filePath);
+            
+            if (stat.isDirectory()) {
+                // Удаляем случайно просочившиеся папки
+                await fsp.rm(filePath, { recursive: true, force: true }).catch(() => {});
+                continue;
+            }
+
+            const ext = path.extname(file).toLowerCase();
+            
+            if (ext === '.rpgsave') {
+                // Юзер закинул сырые сейвы с ПК! Авто-переименовываем их в .json
+                const newPath = path.join(gameSavesDir, file.replace(/\.rpgsave$/i, '.json'));
+                await fsp.rename(filePath, newPath);
+                await fsp.utimes(newPath, now, now).catch(() => {});
+            } 
+            else if (ext === '.json') {
+                // Омолаживаем обычные json (твоя логика синхронизации)
+                await fsp.utimes(filePath, now, now).catch(() => {});
+            } 
+            else {
+                // Жесткая зачистка мусора (картинки, .DS_Store, вирусы)
+                await fsp.unlink(filePath).catch(() => {});
+            }
+        }
         
         res.json({ success: true, message: 'Сохранения успешно загружены!' });
     } catch (e) {
+        console.error('[Import Saves Error]', e);
         await fsp.unlink(archivePath).catch(() => {});
-        res.status(500).json({ error: 'Ошибка распаковки архива' });
+        res.status(500).json({ error: 'Ошибка: ' + (e.message || 'Сбой распаковки') });
     }
 });
 
