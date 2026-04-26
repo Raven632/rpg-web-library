@@ -278,6 +278,7 @@
 </div>
 
 <div class="library" id="library"></div>
+<div id="scroll-sentinel" style="height: 20px;"></div>
 <div class="library-info" id="library-info"></div>
 <div class="toast" id="toast"></div>
 
@@ -440,7 +441,7 @@ async function loadGames() {
         
         allGames = rawGames;
         populateTagFilter(allGames);
-        renderGames(allGames);
+        applyFilters();
     } catch(e) {
         document.getElementById('status').innerHTML = '<div style="color:#e08080;font-family:Cinzel,serif;font-size:0.9rem;letter-spacing:0.1em;">⚠ Связь с сервером потеряна</div>';
     }
@@ -494,19 +495,21 @@ document.getElementById('login-btn').addEventListener('click', async () => {
     }
 });
 
-document.getElementById('search-input').addEventListener('input', function() { renderGames(allGames); });
-document.getElementById('sort-select').addEventListener('change', function(e) { currentSort = e.target.value; renderGames(allGames); });
-document.getElementById('tag-filter').addEventListener('change', function() { renderGames(allGames); });
+// ⚡ ПЕРЕМЕННЫЕ ДЛЯ ПАГИНАЦИИ (БЕСКОНЕЧНАЯ ЛЕНТА)
+let filteredGames = [];
+let currentPage = 1;
+const ITEMS_PER_PAGE = 24; // Сколько игр грузить за один раз
 
-function renderGames(games) {
-    document.getElementById('status').style.display = 'none';
-    var lib = document.getElementById('library');
-    lib.innerHTML = '';
+document.getElementById('search-input').addEventListener('input', applyFilters);
+document.getElementById('sort-select').addEventListener('change', function(e) { currentSort = e.target.value; applyFilters(); });
+document.getElementById('tag-filter').addEventListener('change', applyFilters);
 
+// ⚡ 1. ФИЛЬТРАЦИЯ И СОРТИРОВКА (Вызывается только при поиске)
+function applyFilters() {
     var query = document.getElementById('search-input').value.toLowerCase();
     var selectedTag = document.getElementById('tag-filter').value;
 
-    var filtered = games.filter(function(g) {
+    filteredGames = allGames.filter(function(g) {
         var matchTitle = g.title.toLowerCase().includes(query) || g.id.toLowerCase().includes(query);
         var matchTags = g.tags && g.tags.some(t => t.toLowerCase().includes(query));
         var passesSearch = matchTitle || matchTags;
@@ -515,28 +518,49 @@ function renderGames(games) {
         return passesSearch && passesTag;
     });
 
-    if (currentSort === 'newest') filtered.sort((a,b) => b.addedAt - a.addedAt);
-    if (currentSort === 'recent') filtered.sort((a,b) => b.lastPlayed - a.lastPlayed);
-    if (currentSort === 'rating') filtered.sort((a,b) => b.rating - a.rating);
-    if (currentSort === 'name')   filtered.sort((a,b) => a.title.localeCompare(b.title));
-    
-    if (!filtered.length) {
+    if (currentSort === 'newest') filteredGames.sort((a,b) => b.addedAt - a.addedAt);
+    if (currentSort === 'recent') filteredGames.sort((a,b) => b.lastPlayed - a.lastPlayed);
+    if (currentSort === 'rating') filteredGames.sort((a,b) => b.rating - a.rating);
+    if (currentSort === 'name')   filteredGames.sort((a,b) => a.title.localeCompare(b.title));
+
+    currentPage = 1;
+    document.getElementById('library').innerHTML = ''; // Очищаем библиотеку
+    renderPage();
+}
+
+// ⚡ 2. ПОРЦИОННЫЙ РЕНДЕР (Рисует только 24 игры за раз)
+function renderPage() {
+    document.getElementById('status').style.display = 'none';
+    var lib = document.getElementById('library');
+
+    if (!filteredGames.length) {
         lib.innerHTML = '<div class="empty-state">По вашему запросу ничего не найдено...</div>';
         if(allGames.length === 0) lib.innerHTML = '<div class="empty-state">Библиотека пуста. Время добавить первую игру!</div>';
         document.getElementById('library-info').textContent = '';
         return;
     }
 
-    filtered.forEach(function(game, i) {
+    const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
+    const endIndex = startIndex + ITEMS_PER_PAGE;
+    const gamesToRender = filteredGames.slice(startIndex, endIndex);
+
+    if (gamesToRender.length === 0) return;
+
+    // ⚡ ОПТИМИЗАЦИЯ ПРОЦЕССОРА: Собираем карточки в виртуальной памяти
+    const fragment = document.createDocumentFragment();
+
+    gamesToRender.forEach(function(game, i) {
+        const absoluteIndex = startIndex + i;
         var card = document.createElement('div');
         card.className = 'game-card';
-        card.style.animationDelay = (i * 0.05) + 's';
-        var roman = ROMAN[i % ROMAN.length] || (i + 1).toString();
+        card.style.animationDelay = ((i % ITEMS_PER_PAGE) * 0.05) + 's';
+        var roman = ROMAN[absoluteIndex % ROMAN.length] || (absoluteIndex + 1).toString();
         
         let starsHtml = `<div class="card-rating ${game.rating > 0 ? 'has-rating' : ''}">`;
         for (let s = 1; s <= 5; s++) starsHtml += `<span class="star ${s <= game.rating ? 'active' : ''}" data-val="${s}">★</span>`;
         starsHtml += `</div>`;
         
+        // ⚡ ОПТИМИЗАЦИЯ ОЗУ: loading="lazy" decoding="async"
         card.innerHTML =
             '<div class="card-corner-tl"></div>' +
             '<div class="card-delete" data-id="' + game.id + '" title="Сжечь игру">' +
@@ -545,7 +569,7 @@ function renderGames(games) {
             '<div class="card-cover">' +
                 starsHtml + 
                 (game.cover
-                    ? '<img src="' + game.cover + '" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\';" alt="">' +
+                    ? '<img src="' + game.cover + '" loading="lazy" decoding="async" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\';" alt="">' +
                       '<div class="cover-placeholder" style="display:none"><span class="rune">' + roman + '</span><span class="folder-name">' + game.id + '</span></div>'
                     : '<div class="cover-placeholder"><span class="rune">' + roman + '</span><span class="folder-name">' + game.id + '</span></div>'
                 ) +
@@ -581,8 +605,11 @@ function renderGames(games) {
             try {
                 var r = await fetch(API + '/api/games/' + encodeURIComponent(game.id), { method: 'DELETE'});
                 var d = await r.json();
-                if (d.success) { showToast('Том обратился в пепел', 'success'); loadGames(); }
-                else showToast('Ошибка: ' + d.error, 'error');
+                if (d.success) { 
+                    showToast('Том обратился в пепел', 'success'); 
+                    allGames = allGames.filter(g => g.id !== game.id);
+                    applyFilters(); // Обновляем мгновенно без скачивания с сервера!
+                } else showToast('Ошибка: ' + d.error, 'error');
             } catch(err) { showToast('Магия дала сбой', 'error'); }
         });
 
@@ -598,7 +625,7 @@ function renderGames(games) {
                 coverEl.src = game.cover; coverEl.style.display = 'block'; placeholder.style.display = 'none';
             } else {
                 coverEl.style.display = 'none'; placeholder.style.display = 'flex';
-                document.getElementById('modal-placeholder-rune').textContent = ROMAN[i % ROMAN.length] || (i + 1);
+                document.getElementById('modal-placeholder-rune').textContent = ROMAN[absoluteIndex % ROMAN.length] || (absoluteIndex + 1);
                 document.getElementById('modal-placeholder-name').textContent = game.id;
             }
 
@@ -623,19 +650,14 @@ function renderGames(games) {
                 descDiv.style.display = 'none';
             }
 
-            // ⚡ ЛОГИКА МЕНЕДЖЕРА СОХРАНЕНИЙ
-
             // Экспорт (Скачивание)
             document.getElementById('modal-export-btn').onclick = function(e) {
                 e.preventDefault();
-                // Так как у нас настроены куки, мы можем просто отправить браузер по ссылке,
-                // и он сам скачает ZIP-файл без потери сессии.
                 window.location.href = API + '/api/games/' + encodeURIComponent(game.id) + '/saves/export';
             };
 
             // Импорт (Загрузка)
             const importInput = document.getElementById('import-saves-input');
-            // Очищаем старые обработчики, чтобы они не дублировались при переключении игр
             const newImportInput = importInput.cloneNode(true);
             importInput.parentNode.replaceChild(newImportInput, importInput);
 
@@ -652,23 +674,13 @@ function renderGames(games) {
 
                 try {
                     const res = await fetch(API + '/api/games/' + encodeURIComponent(game.id) + '/saves/import', {
-                        method: 'POST',
-                        body: formData
+                        method: 'POST', body: formData
                     });
                     const data = await res.json();
-                    
-                    if (data.success) {
-                        showToast(data.message, 'success');
-                    } else {
-                        showToast(data.error, 'error');
-                    }
-                } catch(err) {
-                    showToast('Ошибка при отправке архива', 'error');
-                } finally {
-                    btn.innerHTML = oldText;
-                    btn.style.pointerEvents = 'auto';
-                    e.target.value = ''; // Сбрасываем инпут
-                }
+                    if (data.success) showToast(data.message, 'success');
+                    else showToast(data.error, 'error');
+                } catch(err) { showToast('Ошибка при отправке архива', 'error'); } 
+                finally { btn.innerHTML = oldText; btn.style.pointerEvents = 'auto'; e.target.value = ''; }
             });
 
             document.getElementById('modal-import-btn').onclick = function(e) {
@@ -676,41 +688,32 @@ function renderGames(games) {
                 newImportInput.click();
             };
 
-            // ⚡ ИСПРАВЛЕННЫЙ ЗАПУСК ИГРЫ (Safe Navigation + Keepalive)
+            // ЗАПУСК ИГРЫ
             document.getElementById('modal-play-btn').onclick = async function(e) {
                 e.preventDefault();
                 game.lastPlayed = Date.now();
                 
                 const btn = e.currentTarget;
                 const originalText = btn.innerHTML;
-                btn.style.opacity = '0.7';
-                btn.style.pointerEvents = 'none';
+                btn.style.opacity = '0.7'; btn.style.pointerEvents = 'none';
                 btn.innerHTML = 'Запуск... <span class="launch-arrow">→</span>';
 
                 try {
-                    // Используем await, чтобы дать запросу стартовать
                     await fetch(API + '/api/games/' + encodeURIComponent(game.id) + '/meta', {
-                        method: 'POST', 
-                        headers: {'Content-Type': 'application/json'}, 
+                        method: 'POST', headers: {'Content-Type': 'application/json'}, 
                         body: JSON.stringify({ lastPlayed: game.lastPlayed }),
-                        // ⚡ МАГИЯ: Заставляет браузер завершить запрос даже при смене URL
                         keepalive: true 
                     });
-                } catch(err) {
-                    console.warn('[Meta] Не удалось обновить статус', err);
-                } finally {
-                    // Перенаправляем на игру
+                } catch(err) {} 
+                finally {
                     window.location.href = game.url;
-                    
-                    // Восстанавливаем кнопку на случай возврата "Назад" в браузере
                     setTimeout(() => { 
-                        btn.innerHTML = originalText; 
-                        btn.style.opacity = '1'; 
-                        btn.style.pointerEvents = 'auto';
+                        btn.innerHTML = originalText; btn.style.opacity = '1'; btn.style.pointerEvents = 'auto';
                     }, 1000);
                 }
             };
 
+            // РЕДАКТИРОВАНИЕ
             const editForm = document.getElementById('modal-edit-form');
             const titleDisplay = document.getElementById('modal-title');
             const saveBtn = document.getElementById('edit-save-btn');
@@ -727,7 +730,7 @@ function renderGames(games) {
                 const newTitle = document.getElementById('edit-title-input').value.trim();
                 const newRj = document.getElementById('edit-rj-input').value.trim();
                 
-                statusEl.style.display = 'block'; statusEl.textContent = newRj ? 'Связь с серверами DLsite... (ожидание ~15 сек)' : 'Сохранение...';
+                statusEl.style.display = 'block'; statusEl.textContent = newRj ? 'Связь с серверами... (ожидание ~15 сек)' : 'Сохранение...';
                 saveBtn.disabled = true; saveBtn.style.opacity = '0.5';
 
                 try {
@@ -747,20 +750,37 @@ function renderGames(games) {
                         if (game.description) { descDiv.textContent = game.description; descDiv.style.display = 'block'; }
 
                         titleDisplay.style.display = 'block'; editForm.style.display = 'none';
-                        loadGames();
+                        applyFilters(); // Обновляем ленту моментально
                     } else showToast(data.error, 'error');
-                } catch(e) { showToast('Магическая сеть недоступна', 'error'); } 
+                } catch(e) { showToast('Сеть недоступна', 'error'); } 
                 finally { saveBtn.disabled = false; saveBtn.style.opacity = '1'; statusEl.style.display = 'none'; }
             };
 
             document.getElementById('game-modal').classList.add('active');
         });
 
-        lib.appendChild(card);
+        fragment.appendChild(card);
     });
     
-    document.getElementById('library-info').textContent = filtered.length + ' свитков найдено';
+    // ⚡ ОПТИМИЗАЦИЯ ПРОЦЕССОРА: Вставляем все 24 карточки разом
+    lib.appendChild(fragment);
+    
+    const countText = Math.min(endIndex, filteredGames.length);
+    document.getElementById('library-info').textContent = `Показано ${countText} из ${filteredGames.length} свитков`;
 }
+
+// ⚡ 3. НАБЛЮДАТЕЛЬ СКРОЛЛА (Автоматически грузит следующую страницу)
+const scrollObserver = new IntersectionObserver((entries) => {
+    // Если юзер проскроллил до сенсора, и еще остались игры - грузим дальше
+    if (entries[0].isIntersecting && filteredGames.length > currentPage * ITEMS_PER_PAGE) {
+        currentPage++;
+        renderPage();
+    }
+}, { rootMargin: '400px' }); // Начинает грузить за 400 пикселей до конца (без рывков)
+
+// Запускаем наблюдение за невидимым блоком в HTML
+const sentinel = document.getElementById('scroll-sentinel');
+if (sentinel) scrollObserver.observe(sentinel);
 
 var uploadBtn = document.getElementById('upload-btn');
 var fileInput = document.getElementById('file-input');
