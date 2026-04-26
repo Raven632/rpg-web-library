@@ -442,6 +442,108 @@ async function executeFetchDLsiteTags(rjCode) {
     return null;
 }
 
+// =====================================================================
+// УНИВЕРСАЛЬНЫЙ СКРАПИНГ: DLsite -> VNDB -> Steam
+// =====================================================================
+
+// Вспомогательная функция для скачивания обложек из Steam/VNDB
+async function downloadRemoteCover(url, destPath) {
+    try {
+        const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+        if (res.ok) {
+            const buffer = await res.arrayBuffer();
+            await fsp.writeFile(destPath, Buffer.from(buffer));
+            return true;
+        }
+    } catch (e) {
+        console.warn(`[Scraper] ⚠️ Не удалось скачать обложку: ${url}`);
+    }
+    return false;
+}
+
+// 🌐 1. Поиск по базе VNDB (Идеально для новелл и инди)
+async function fetchVNDBMetadata(title) {
+    try {
+        console.log(`[Scraper] 🌸 Ищем на VNDB: "${title}"...`);
+        const res = await fetch('https://api.vndb.org/kana/vn', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                filters: ["search", "=", title],
+                fields: "title, description, image.url, tags.name"
+            })
+        });
+        const data = await res.json();
+        if (data.results && data.results.length > 0) {
+            const vn = data.results[0];
+            console.log(`[Scraper] ✅ Найдено на VNDB: ${vn.title}`);
+            // VNDB использует BBCode, чистим его
+            let desc = vn.description || '';
+            desc = desc.replace(/\[\/?(b|i|u|url|spoiler|quote)[^\]]*\]/gi, '').trim();
+            
+            return {
+                coverUrl: vn.image ? vn.image.url : null,
+                description: desc,
+                tags: vn.tags ? vn.tags.map(t => t.name) : []
+            };
+        }
+    } catch (e) { console.warn(`[Scraper] ⚠️ Ошибка VNDB:`, e.message); }
+    return null;
+}
+
+// 🚂 2. Поиск по базе Steam (Официальные инди-игры)
+async function fetchSteamMetadata(title) {
+    try {
+        console.log(`[Scraper] 🚂 Ищем в Steam: "${title}"...`);
+        const searchRes = await fetch(`https://store.steampowered.com/api/storesearch/?term=${encodeURIComponent(title)}&l=english&cc=US`);
+        const searchData = await searchRes.json();
+
+        if (searchData.total > 0 && searchData.items && searchData.items.length > 0) {
+            const appId = searchData.items[0].id;
+            const detailRes = await fetch(`https://store.steampowered.com/api/appdetails?appids=${appId}`);
+            const detailData = await detailRes.json();
+
+            if (detailData[appId] && detailData[appId].success) {
+                const game = detailData[appId].data;
+                console.log(`[Scraper] ✅ Найдено в Steam: ${game.name}`);
+
+                let desc = game.short_description || game.about_the_game || '';
+                desc = desc.replace(/<[^>]*>?/gm, '').trim();
+
+                return {
+                    coverUrl: game.header_image,
+                    description: desc,
+                    tags: game.genres ? game.genres.map(g => g.description) : []
+                };
+            }
+        }
+    } catch (e) { console.warn(`[Scraper] ⚠️ Ошибка Steam:`, e.message); }
+    return null;
+}
+
+// 🧠 3. ГЛАВНЫЙ МЕНЕДЖЕР (Каскадный поиск)
+async function fetchUniversalMetadata(title, rjCode) {
+    // 1. Пытаемся DLsite (Только если есть RJ-код)
+    if (rjCode) {
+        const dlsiteData = await executeFetchDLsiteTags(rjCode);
+        if (dlsiteData && dlsiteData.tags && dlsiteData.tags.length > 0) return dlsiteData;
+    }
+
+    // Чистим название от мусора вроде [v1.2] или (Steam) перед поиском по названию
+    const cleanTitle = title.replace(/v\d+\.\d+/gi, '').replace(/\[.*?\]/g, '').replace(/\(.*?\)/g, '').trim();
+    if (!cleanTitle || cleanTitle.length < 3) return null;
+
+    // 2. VNDB
+    const vndbData = await fetchVNDBMetadata(cleanTitle);
+    if (vndbData) return vndbData;
+
+    // 3. Steam
+    const steamData = await fetchSteamMetadata(cleanTitle);
+    if (steamData) return steamData;
+
+    return null;
+}
+
 async function initDB() {
     db = await open({ filename: path.join(GAMES_DIR, 'library.db'), driver: sqlite3.Database });
     await db.exec(`
@@ -606,37 +708,56 @@ app.post('/api/games/:id/edit', async (req, res) => {
     try {
         let scrapeWarning = null;
 
-        // 1. Обновляем название игры
+        // 1. Обновляем название в базе (всегда)
         if (title) {
             await db.run('UPDATE games SET title = ? WHERE id = ?', [title, folder]);
         }
 
-        // 2. Если передан RJ-код, насильно скрейпим DLsite
-        if (rjCode && rjCode.match(/RJ\d+/i)) {
-            const cleanRj = rjCode.match(/RJ\d+/i)[0].toUpperCase();
-            console.log(`[Manual Edit] 🕵️‍♂️ Поиск для: ${cleanRj}`);
+        const gameObj = await db.get('SELECT title FROM games WHERE id = ?', [folder]);
+        const searchTitle = title || gameObj.title; 
+        const searchRj = (rjCode && rjCode.match(/RJ\d+/i)) ? rjCode.match(/RJ\d+/i)[0].toUpperCase() : null;
 
-            // Скачиваем обложку
+        let coverUpdated = false;
+
+        // ⚡ ШАГ 1: Независимая попытка взять обложку с DLsite (если есть RJ-код)
+        if (searchRj) {
             const coverDest = path.join(gamePath, 'cover.jpg');
-            const coverSuccess = await fetchDLsiteCover(cleanRj, coverDest);
+            const coverSuccess = await fetchDLsiteCover(searchRj, coverDest);
             if (coverSuccess) {
                 await db.run('UPDATE games SET cover = ? WHERE id = ?', [`${folder}/cover.jpg`, folder]);
+                coverUpdated = true;
+            }
+        }
+
+        // ⚡ ШАГ 2: Вызов Универсального менеджера (Snippet 2)
+        const scrapedData = await fetchUniversalMetadata(searchTitle, searchRj);
+
+        if (scrapedData) {
+            // Если DLsite не дал обложку, но её нашел VNDB или Steam — качаем
+            if (scrapedData.coverUrl && !coverUpdated) {
+                const coverDest = path.join(gamePath, 'cover.jpg');
+                const success = await downloadRemoteCover(scrapedData.coverUrl, coverDest);
+                if (success) {
+                    await db.run('UPDATE games SET cover = ? WHERE id = ?', [`${folder}/cover.jpg`, folder]);
+                    coverUpdated = true;
+                }
             }
 
-            // Парсим теги и описание
-            const scrapedData = await executeFetchDLsiteTags(cleanRj);
-            if (scrapedData && scrapedData.tags && scrapedData.tags.length > 0) {
+            // Обновляем теги и описание из любого найденного источника
+            if (scrapedData.tags && scrapedData.tags.length > 0) {
                 await db.run(
                     'UPDATE games SET tags = ?, description = ?, scraped = 1 WHERE id = ?',
                     [JSON.stringify(scrapedData.tags), scrapedData.description, folder]
                 );
-            } else {
-                // ⚡ ЕСЛИ ТЕГИ НЕ НАЙДЕНЫ — НЕ ВЫДАЕМ ОШИБКУ 404, А ПРОСТО ПРЕДУПРЕЖДАЕМ
+            } else if (coverUpdated) {
+                // Если обложка есть, а тегов нет (специфика DLsite)
                 scrapeWarning = 'Обложка обновлена, но теги не найдены (Возможно защита Cloudflare или игра из раздела Pro).';
             }
+        } else if (searchRj || title) {
+            scrapeWarning = 'Данные не найдены ни в одном из источников (DLsite/VNDB/Steam).';
         }
 
-        // 3. Возвращаем обновленные данные (даже если теги не нашлись, мы вернем новое имя и обложку!)
+        // 3. Возврат актуальных данных на фронтенд
         const updatedGame = await db.get('SELECT * FROM games WHERE id = ?', [folder]);
         res.json({
             success: true,
@@ -708,46 +829,41 @@ app.post('/api/upload', uploadLimiter, upload.single('game'), async (req, res) =
 
     const tmpExtractDir = path.join(EXTRACT_TMP, 'ext_' + Date.now());
 
-    try {
+   try {
         await fsp.mkdir(tmpExtractDir, { recursive: true });
-        io.emit('upload-status', { message: '🗜️ Распаковка архива...' });
+        io.emit('upload-status', { message: '🛡️ Проверка безопасности архива...' });
 
-        // Zip Slip защита только для zip/7z (RAR проверяем иначе)
-        const isZipOrSevenz = req.file.originalname.match(/\.(zip|7z)$/i);
-        if (isZipOrSevenz) {
-            const { stdout } = await execFilePromise('7zz', ['l', '-ba', '-slt', archivePath], { maxBuffer: 200 * 1024 * 1024 });
+        // ⚡ ЕДИНАЯ И БЕЗОПАСНАЯ ЗАЩИТА ZIP SLIP (Берем твой метод path.resolve + maxBuffer)
+        async function validateArchivePaths(archive) {
+            // maxBuffer 200MB критически важен для крупных игр (спасет Node.js от краша)
+            const { stdout } = await execFilePromise('7zz', ['l', '-ba', '-slt', archive], { maxBuffer: 200 * 1024 * 1024 });
             const lines = stdout.split('\n').filter(l => l.startsWith('Path = '));
-            for (const line of lines) {
-                const entryPath = path.resolve(tmpExtractDir, line.replace('Path = ', '').trim());
-                if (!entryPath.startsWith(path.resolve(tmpExtractDir) + path.sep)) {
-                    throw new Error('Обнаружен опасный путь в архиве (Zip Slip)');
-                }
-            }
-        }
+                
+            const baseTarget = path.resolve(tmpExtractDir) + path.sep;
 
-        // Пример логики проверки путей перед распаковкой
-        async function validateArchivePaths(archivePath) {
-            const { stdout } = await execFilePromise('7zz', ['l', '-ba', '-slt', archivePath]);
-            const lines = stdout.split('\n').filter(l => l.startsWith('Path = '));
             for (const line of lines) {
                 const internalPath = line.replace('Path = ', '').trim();
-                // Если путь содержит переход на уровень вверх или абсолютный путь
-                if (internalPath.includes('..') || internalPath.startsWith('/') || internalPath.startsWith('\\')) {
-                    throw new Error(`Обнаружен опасный путь: ${internalPath}`);
+                const entryPath = path.resolve(tmpExtractDir, internalPath);
+                    
+                // Надежная проверка через path.resolve (как было в твоем старом коде!)
+                if (!entryPath.startsWith(baseTarget)) {
+                    throw new Error(`Обнаружен опасный путь в архиве (Zip Slip): ${internalPath}`);
                 }
             }
         }
 
-        //  логика проверки путей перед распаковкой
+        // Запускаем проверку перед распаковкой (для любых архивов)
         await validateArchivePaths(archivePath);
 
+        io.emit('upload-status', { message: '🗜️ Распаковка архива...' });
+            
         // 7zz справляется со всем: zip, 7z, rar, rar5
         await spawnExtract('7zz', ['x', archivePath, `-o${tmpExtractDir}`, '-y']);
 
         io.emit('upload-status', { message: '🔍 Поиск файлов игры...' });
-        const sourceDir = await findGameFolder(tmpExtractDir);
+        const sourceDir = await findGameFolder(tmpExtractDir);            
         if (!sourceDir) throw new Error("Не найдена папка 'www' или 'index.html'");
-
+        
         let finalDestFolder = originalName;
         let counter = 1;
         while (fs.existsSync(path.join(GAMES_DIR, finalDestFolder))) {
