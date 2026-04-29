@@ -1,4 +1,4 @@
-# 🎮 RPG Library v2.0
+# 🎮 RPG Library v4.0
 
 🇷🇺 [Русский](README.ru.md) | 🇩🇪 [Deutsch](README.de.md)
 
@@ -41,14 +41,29 @@ This project is built for **native Docker Engine** (Linux). Using Docker Desktop
    ```bash
    git clone [https://github.com/Raven632/rpg-web-library.git](https://github.com/Raven632/rpg-web-library.git)
    cd rpg-web-library
-   ```bash
-
+   ```
+      
 2. (Optional but Recommended) Set up reliable scraping:
-      Rename .env.example to .env. Get a free API key from ScraperAPI (1000 free requests/month) and add it to SCRAPER_API_KEY. If left empty, the server will fall back to using unstable public proxies.
+   Rename .env.example to .env. Get a free API key from ScraperAPI (1000 free requests/month) and add it to SCRAPER_API_KEY. If left empty, the server will fall back to using unstable public proxies.
 
 3. Start the container:
    ```bash
    docker compose up -d --build
-   ```bash
-
+   ```
+      
 4. Open http://localhost:3000 or http://localhost (or your server's IP) in your browser. Upon first launch, you will be prompted to create   a Master Account.
+
+## 📂 Directory Structure
+Upon first launch, Docker will bind-mount the ./games directory to your host:
+
+- /games — Extracted games.
+
+- /games/library.db — The SQLite database file (contains your admin credentials).
+
+- /games/_saves — JSON files containing players' cloud saves.
+
+- /games/_tmp_uploads — Buffer directory for heavy uploads to prevent RAM exhaustion.
+
+## 📝 Manual Editing
+
+If the automatic parser couldn't find the game, you can open the game's modal window on the website, click ⚙️ (Settings), and manually enter the RJ code or title. The server will update the metadata immediately.
