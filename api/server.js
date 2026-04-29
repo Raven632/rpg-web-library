@@ -1055,6 +1055,8 @@ app.post('/api/games/:id/saves/import', uploadLimiter, upload.single('saves'), a
     }
 });
 
+
+
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.get('*', async (req, res, next) => {
@@ -1070,6 +1072,24 @@ app.get('*', async (req, res, next) => {
     }
 
     try {
+        // ==============================
+        // CASE-INSENSITIVE FILE RESOLVER
+        // ==============================
+        if (!fs.existsSync(filePath)) {
+        const _dir  = path.dirname(filePath);
+        const _base = path.basename(filePath);
+        const _low  = _base.toLowerCase();
+        try {
+            const _entries = fs.readdirSync(_dir);
+            const _match   = _entries.find(f => f.toLowerCase() === _low);
+            if (_match) {
+            filePath = path.join(_dir, _match);
+            reqPath  = path.relative(GAMES_DIR, filePath);
+            console.log(`[CaseFix] ${_base} → ${_match}`);
+            }
+        } catch(_e) {}
+        }
+        
         let stat;
         try { stat = await fsp.stat(filePath); } catch(e) {}
 
