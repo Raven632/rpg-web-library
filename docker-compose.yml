@@ -8,5 +8,5 @@ services:
       - ./games:/games
       - ./api:/app
       - /app/node_modules
-    command: npx nodemon server.js
+    command: npx nodemon --ignore 'games/' --ignore 'library.db' server.js
     restart: unless-stopped #

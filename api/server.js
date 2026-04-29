@@ -30,7 +30,7 @@ app.use(compression());
 // [1] КОНФИГУРАЦИЯ СЕРВЕРА
 // ============================================================================
 
-const GAMES_DIR = process.env.GAMES_DIR || path.join(__dirname, 'games');
+const GAMES_DIR = process.env.GAMES_DIR || path.join(__dirname, '..', 'games');
 const EXTRACT_TMP = path.join(GAMES_DIR, '_tmp_uploads'); 
 const UPLOAD_TMP = EXTRACT_TMP; 
 const SAVES_DIR = path.join(GAMES_DIR, '_saves');
@@ -87,7 +87,7 @@ const upload = multer({
 // [3] СИСТЕМНЫЕ УТИЛИТЫ И ФОНОВАЯ ОЧЕРЕДЬ
 // ============================================================================
 
-// Процессор фоновой очереди
+// Процессор фоновой очереди (Умный универсальный парсер)
 async function processBackgroundScrape() {
     if (isBackgroundScraping || backgroundScrapeQueue.length === 0) return;
     isBackgroundScraping = true;
@@ -98,26 +98,52 @@ async function processBackgroundScrape() {
         try {
             console.log(`[Queue] ⏳ Фоновый парсинг для: ${folder}`);
             const gamePath = path.join(GAMES_DIR, folder);
+            
+            // 1. Сначала глубоко ищем RJ-код внутри текстовых файлов игры
             const rjCode = await findRJCode(folder, gamePath);
             
-            if (rjCode) {
-                const scrapedData = await executeFetchDLsiteTags(rjCode);
-                if (scrapedData?.tags?.length > 0) {
-                    await db.run('UPDATE games SET tags = ?, description = ?, scraped = 1 WHERE id = ?',
-                        [JSON.stringify(scrapedData.tags), scrapedData.description, folder]);
-                    io.emit('scrape-success', { message: `✅ Данные для "${folder}" успешно загружены!` });
-                    console.log(`[Queue] ✅ Успешно обновлено: ${folder}`);
+            // 2. Получаем чистое название для резервного поиска (VNDB/Steam)
+            let title = folder.replace(/\[?RJ\d{6,8}\]?/gi, '').replace(/[-_]/g, ' ').replace(/\s+/g, ' ').trim() || folder;
+            try {
+                const sys = JSON.parse(await fsp.readFile(path.join(gamePath, 'data', 'System.json'), 'utf8'));
+                if (sys.gameTitle && !sys.gameTitle.toLowerCase().includes('rmmz')) title = sys.gameTitle;
+            } catch(e) {}
+
+            // 3. Каскадный поиск: Если есть RJ -> DLsite. Иначе -> VNDB -> Steam
+            const scrapedData = await fetchUniversalMetadata(title, rjCode);
+            
+            if (scrapedData && (scrapedData.tags?.length > 0 || scrapedData.description)) {
+                const tagsJson = JSON.stringify(scrapedData.tags || []);
+                const desc = scrapedData.description || '';
+
+                await db.run('UPDATE games SET tags = ?, description = ?, scraped = 1 WHERE id = ?',
+                    [tagsJson, desc, folder]);
+                
+                // Если парсер нашел обложку (например в Steam/VNDB), а у нас её нет - скачиваем
+                if (scrapedData.coverUrl) {
+                    const current = await db.get('SELECT cover FROM games WHERE id = ?', [folder]);
+                    if (!current?.cover) {
+                        if (await downloadRemoteCover(scrapedData.coverUrl, path.join(gamePath, 'cover.jpg'))) {
+                            await db.run('UPDATE games SET cover = ? WHERE id = ?', [`${folder}/cover.jpg`, folder]);
+                        }
+                    }
                 }
+
+                if (io) io.emit('scrape-success', { message: `✅ Данные для "${title}" успешно загружены!` });
+                console.log(`[Queue] ✅ Успешно обновлено: ${folder}`);
+            } else {
+                // Помечаем как scraped=1, чтобы больше не пытаться парсить пустые игры при каждом перезапуске
+                await db.run('UPDATE games SET scraped = 1 WHERE id = ?', [folder]);
+                console.log(`[Queue] ⚠️ Данные не найдены для: ${folder}`);
             }
         } catch (e) {
             console.error(`[Queue] ❌ Ошибка для ${folder}:`, e.message);
         } finally {
-            // ⚡ ИСПРАВЛЕНИЕ: Удаляем блокировку ТОЛЬКО после полного завершения работы
             queuedScrapes.delete(folder); 
         }
         
-        // Защита от бана DLsite (пауза 3 сек)
-        await new Promise(r => setTimeout(r, 3000));
+        // Защита от бана DLsite/VNDB (пауза 4 сек между играми)
+        await new Promise(r => setTimeout(r, 4000));
     }
     isBackgroundScraping = false;
 }
@@ -215,50 +241,102 @@ async function translateText(text, targetLang = 'en') {
 }
 
 async function fetchViaJapanProxy(url) {
+    // ========================================================================
+    // ПЛАН А: BYOK через ScraperAPI (Если есть ключ - работает надежно и быстро, без заморочек)
+    // ========================================================================
+    if (process.env.SCRAPER_API_KEY) {
+        try {
+            console.log('[Scraper] 🔑 Используем премиум ScraperAPI (BYOK)...');
+            const scraperUrl = `http://api.scraperapi.com?api_key=${process.env.SCRAPER_API_KEY}&url=${encodeURIComponent(url)}&country_code=jp`;
+            
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 15000); 
+            
+            const res = await fetch(scraperUrl, { signal: controller.signal });
+            clearTimeout(timeoutId);
+            
+            const data = await res.json();
+            if (data?.[0]?.work_name) {
+                console.log('[Scraper] ✅ Данные успешно получены через ScraperAPI!');
+                return data;
+            }
+        } catch (e) {
+            console.error('[Scraper] ❌ Ошибка ScraperAPI. Переход к Плану Б...', e.message);
+        }
+    } else {
+        console.log('[Scraper] ⚠️ SCRAPER_API_KEY не найден в .env. Запускаем План Б (публичные прокси)...');
+    }
+
+    // ========================================================================
+    // ПЛАН Б: Монстр-агрегатор бесплатных прокси (Работает "из коробки")
+    // ========================================================================
     try {
-        console.log('[Scraper] 📡 Собираем Японские прокси...');
+        console.log('[Scraper] 📡 Собираем бесплатные JP-прокси со всего интернета...');
         let proxies = [];
 
-        try {
-            const res1 = await fetch('https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=10000&country=JP');
-            if (res1.ok) proxies.push(...(await res1.text()).split('\n').map(p => p.trim()).filter(p => p.includes(':')));
-        } catch(e) {}
+        // Собираем списки параллельно
+        const sources = [
+            fetch('https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=10000&country=JP'),
+            fetch('https://www.proxy-list.download/api/v1/get?type=http&country=JP'),
+            fetch('https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/protocols/http/data.txt'),
+            fetch('https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt')
+        ];
+
+        const results = await Promise.allSettled(sources);
+
+        for (const res of results) {
+            if (res.status === 'fulfilled' && res.value.ok) {
+                const text = await res.value.text();
+                const matches = text.match(/\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}:[0-9]+\b/g);
+                if (matches) proxies.push(...matches);
+            }
+        }
 
         try {
-            const res2 = await fetch('https://proxylist.geonode.com/api/proxy-list?country=JP&protocols=http&limit=50&sort_by=lastChecked&sort_type=desc');
-            if (res2.ok) {
-                const json2 = await res2.json();
-                if (json2.data) proxies.push(...json2.data.map(p => `${p.ip}:${p.port}`));
+            const geoRes = await fetch('https://proxylist.geonode.com/api/proxy-list?country=JP&protocols=http&limit=100');
+            if (geoRes.ok) {
+                const geoJson = await geoRes.json();
+                if (geoJson.data) proxies.push(...geoJson.data.map(p => `${p.ip}:${p.port}`));
             }
-        } catch(e) {}
+        } catch (e) {}
 
         proxies = [...new Set(proxies)].sort(() => Math.random() - 0.5);
 
         if (proxies.length === 0) {
-            console.log('[Scraper] ⚠️ Японские прокси недоступны.');
+            console.log('[Scraper] ❌ Японские прокси не найдены в открытых источниках.');
             return null;
         }
 
-        const maxConcurrent = Math.min(20, proxies.length);
-        console.log(`[Scraper] 🚀 ЗАПУСК АТАКИ через ${maxConcurrent} прокси...`);
+        const maxConcurrent = Math.min(30, proxies.length);
+        console.log(`[Scraper] 🚀 ЗАПУСК АТАКИ через ${maxConcurrent} бесплатных прокси...`);
 
         const promises = proxies.slice(0, maxConcurrent).map((proxy) => {
             return new Promise(async (resolve, reject) => {
                 try {
                     const { stdout } = await execFilePromise('curl', [
-                        '-sS', '-L', '-m', '7', '-x', proxy, 
-                        '-H', 'User-Agent: Mozilla/5.0', url
+                        '-sS', '-L', '-m', '10', 
+                        '-x', `http://${proxy}`, 
+                        '-H', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+                        url
                     ]);
+                    
                     const data = JSON.parse(stdout); 
-                    if (data?.[0]?.work_name) resolve(data);
-                    else reject(new Error('Пустой JSON'));
-                } catch (e) { reject(e); }
+                    if (data?.[0]?.work_name) {
+                        console.log(`[Scraper] 🎯 Пробито через бесплатный прокси: ${proxy}`);
+                        resolve(data);
+                    } else {
+                        reject(new Error('Пустой ответ'));
+                    }
+                } catch (e) { 
+                    reject(e); 
+                }
             });
         });
 
         return await Promise.any(promises);
+
     } catch (e) {
-        console.error('[Scraper] ❌ Ошибка JP-канала:', e.message);
+        console.error('[Scraper] ❌ Все прокси из пула провалились.');
     }
     return null;
 }
@@ -418,6 +496,7 @@ async function addGameToDB(folder, gamePath) {
     if (await checkExists(path.join(gamePath, 'cover.jpg'))) cover = `${folder}/cover.jpg`;
     else if (await checkExists(path.join(gamePath, 'cover.png'))) cover = `${folder}/cover.png`;
 
+    // Вытаскиваем RJ-код только для того, чтобы скачать обложку напрямую (если её нет)
     const rjCode = await findRJCode(folder, gamePath);
     if (rjCode && !cover) {
         if (await fetchDLsiteCover(rjCode, path.join(gamePath, 'cover.jpg'))) cover = `${folder}/cover.jpg`;
@@ -434,30 +513,18 @@ async function addGameToDB(folder, gamePath) {
 
     const stat = await fsp.stat(gamePath);
 
+    // Добавляем игру в БД. ready = 1 (чтобы сразу отображалась в интерфейсе), scraped = 0
     await db.run(
         `INSERT OR REPLACE INTO games (id, title, cover, tags, description, rating, lastPlayed, addedAt, scraped, ready)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [folder, title, cover, '[]', '', 0, 0, stat.birthtimeMs || stat.mtimeMs || Date.now(), 0, 0]
+        [folder, title, cover, '[]', '', 0, 0, stat.birthtimeMs || stat.mtimeMs || Date.now(), 0, 1]
     );
 
-    // ⚡ ВОССТАНОВЛЕНО: Моментальный (синхронный) скрейп для красивого UI
-    let scrapeSuccess = false;
-    if (rjCode) {
-        try {
-            const scrapedData = await executeFetchDLsiteTags(rjCode);
-            if (scrapedData?.tags?.length > 0) {
-                await db.run('UPDATE games SET tags = ?, description = ?, scraped = 1 WHERE id = ?',
-                    [JSON.stringify(scrapedData.tags), scrapedData.description, folder]);
-                scrapeSuccess = true;
-            }
-        } catch (e) {}
-    }
-
-    await db.run('UPDATE games SET ready = 1 WHERE id = ?', [folder]);
     if (io) io.emit('scrape-success', { message: `✅ Игра "${title}" добавлена в библиотеку!` });
 
-    // ⚡ Умная постановка в очередь с дедупликацией
-    if (rjCode && !scrapeSuccess && !queuedScrapes.has(folder)) {
+    // ⚡ Отправляем ВСЕ добавленные игры в умную фоновую очередь
+    // Очередь сама разберется: искать по RJ-коду на DLsite или по названию на VNDB/Steam
+    if (!queuedScrapes.has(folder)) {
         queuedScrapes.add(folder);
         backgroundScrapeQueue.push(folder);
         processBackgroundScrape();
