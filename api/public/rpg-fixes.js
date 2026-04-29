@@ -412,6 +412,53 @@
             }
         } 
     });
+
+    // ========================= 
+    // 4b) iOS RPGMVO → MP3/M4A FIX (Anti-Double-Decrypt)
+    // =========================
+    (function forceAppleAudioExt() {
+      const isApple = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+          (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+      if (!isApple) return;
+
+      const timer = setInterval(() => {
+          if (typeof AudioManager === 'undefined') return;
+          clearInterval(timer);
+
+          // 1. Заставляем Айфон просить файлы .m4a (наш сервер их сгенерирует)
+          AudioManager.audioFileExt = function() {
+              return '.m4a';
+          };
+
+          // 2. ⚡ ФИКС ДВОЙНОГО ШИФРОВАНИЯ: Запрещаем клиенту портить чистый аудиофайл!
+          if (typeof Decrypter !== 'undefined') {
+              // Обманываем игру, говоря, что аудио больше не зашифровано (только на iOS)
+              Object.defineProperty(Decrypter, 'hasEncryptedAudio', {
+                  get: () => false,
+                  set: () => {}
+              });
+              
+              // Абсолютная защита ядра: если пришедший файл не имеет заголовка 'RPGM', 
+              // значит это чистый файл от сервера. Блокируем его разрушение!
+              const origDecrypt = Decrypter.decryptArrayBuffer;
+              Decrypter.decryptArrayBuffer = function(buffer) {
+                  if (!buffer || buffer.byteLength < 16) return buffer;
+                  const header = new Uint8Array(buffer, 0, 4);
+                  // Проверяем наличие сигнатуры "RPGM" (0x52, 0x50, 0x47, 0x4D)
+                  const isRPGM = header[0]===0x52 && header[1]===0x50 && header[2]===0x47 && header[3]===0x4D;
+                  if (!isRPGM) {
+                      return buffer; // Спасаем чистый AAC файл от уничтожения!
+                  }
+                  return origDecrypt.call(this, buffer);
+              };
+          }
+
+          console.log('[Audio Fix] iOS Proxy: форсирован .m4a + защита от двойного шифрования!');
+      }, 100);
+
+      setTimeout(() => clearInterval(timer), 15000);
+    })();
   })();
 
   // =========================

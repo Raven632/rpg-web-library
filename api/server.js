@@ -35,6 +35,10 @@ const EXTRACT_TMP = path.join(GAMES_DIR, '_tmp_uploads'); // РЕАЛЬНЫЙ Д
 const UPLOAD_TMP = EXTRACT_TMP; // Грузим сразу на диск, чтобы не убить Docker
 const SAVES_DIR = path.join(GAMES_DIR, '_saves');
 
+const AUDIOCACHE = path.join(GAMES_DIR, '.audio-cache');
+fsp.mkdir(AUDIOCACHE, { recursive: true }).catch(() => {});
+
+
 const SESSION_TOKEN = crypto.randomBytes(32).toString('hex');
 
 let db;
@@ -1055,11 +1059,101 @@ app.post('/api/games/:id/saves/import', uploadLimiter, upload.single('saves'), a
     }
 });
 
+async function existsFile(p) {
+    try {
+        await fsp.access(p);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+// Расшифровка .rpgmvo/.rpgmvm → чистый аудиобуфер
+async function decryptRpgmvo(filePath, gamePath) {
+    const fileData = await fsp.readFile(filePath);
+    const header = fileData.slice(0, 4).toString('ascii');
+    // Если файл не зашифрован, отдаем как есть
+    if (header !== 'RPGM') return fileData;
+
+    let encKey = '';
+    try {
+        // Умный поиск System.json (для MV и MZ)
+        let sysPath = path.join(gamePath, 'data', 'System.json');
+        if (!fs.existsSync(sysPath)) sysPath = path.join(gamePath, 'www', 'data', 'System.json');
+        const sys = JSON.parse(await fsp.readFile(sysPath, 'utf8'));
+        encKey = sys.encryptionKey || '';
+    } catch(e) { console.warn('[Audio] System.json не найден для расшифровки'); }
+
+    const keyBytes = [];
+    for (let i = 0; i < encKey.length; i += 2) {
+        keyBytes.push(parseInt(encKey.substr(i, 2), 16));
+    }
+
+    // ⚡ ФИКС УТЕЧКИ БУФЕРА: Безопасно отрезаем заголовок без захвата мусора из ОЗУ
+    const out = Buffer.from(fileData.subarray(16));
+
+    if (keyBytes.length === 0) return out;
+
+    // Расшифровываем первые 16 байт
+    for (let i = 0; i < 16 && i < out.length; i++) {
+        out[i] ^= keyBytes[i % keyBytes.length];
+    }
+    return out;
+}
+
+async function ensureM4aFromSource(sourcePath, gamePath) {
+    const stat = await fsp.stat(sourcePath);
+    const cacheKey = require('crypto')
+        .createHash('sha1')
+        .update(sourcePath + '|' + stat.mtimeMs)
+        .digest('hex');
+
+    const outPath = path.join(AUDIOCACHE, cacheKey + '.m4a');
+    if (await existsFile(outPath)) return outPath;
+
+    const ext = path.extname(sourcePath).toLowerCase();
+
+    if (ext === '.m4a') return sourcePath;
+
+    // rpgmvm = зашифрованный m4a
+    if (ext === '.rpgmvm') {
+        const decrypted = await decryptRpgmvo(sourcePath, gamePath);
+        await fsp.writeFile(outPath, decrypted);
+        return outPath;
+    }
+
+    // rpgmvo/ogg -> m4a
+    const inputExt = ext === '.rpgmvo' ? '.ogg' : ext;
+    const tmpIn = path.join(EXTRACT_TMP, cacheKey + inputExt);
+
+    const inputBuffer =
+        ext === '.rpgmvo'
+            ? await decryptRpgmvo(sourcePath, gamePath)
+            : await fsp.readFile(sourcePath);
+
+    await fsp.writeFile(tmpIn, inputBuffer);
+
+    try {
+        await execFilePromise('ffmpeg', [
+            '-y',
+            '-i', tmpIn,
+            '-vn',
+            '-c:a', 'aac',
+            '-b:a', '128k',
+            outPath
+        ]);
+        return outPath;
+    } finally {
+        await fsp.unlink(tmpIn).catch(() => {});
+    }
+}
+
 
 
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.get('*', async (req, res, next) => {
+
     if (req.path.startsWith('/api/') || req.path === '/') return next();
 
     let reqPath = decodeURIComponent(req.path);
@@ -1089,7 +1183,7 @@ app.get('*', async (req, res, next) => {
             }
         } catch(_e) {}
         }
-        
+
         let stat;
         try { stat = await fsp.stat(filePath); } catch(e) {}
 
@@ -1113,7 +1207,6 @@ app.get('*', async (req, res, next) => {
         }
 
         // ⚡ УМНЫЙ РОУТИНГ АУДИО (Smart Audio Fallback 2026)
-        // Если движок (iOS) просит .m4a, но его нет, сервер сам найдет .ogg или зашифрованный файл
         const ext = path.extname(filePath).toLowerCase();
         
         async function tryPath(p) {
@@ -1123,17 +1216,43 @@ app.get('*', async (req, res, next) => {
         if (ext === '.m4a' || ext === '.ogg') {
             const base = filePath.slice(0, -4); // Отрезаем расширение
             
-            // Формируем список приоритетов (что ищем в первую очередь)
             const pathsToTry = ext === '.m4a' 
                 ? [filePath, base + '.ogg', filePath + '_', base + '.rpgmvo', base + '.rpgmvm'] // iOS Priority
                 : [filePath, base + '.m4a', filePath + '_', base + '.rpgmvm', base + '.rpgmvo']; // PC Priority
 
-            // Каскадный поиск: отдаем первый найденный файл из списка
+            let sourcePath = null;
             for (const p of pathsToTry) {
                 const found = await tryPath(p);
                 if (found) { 
-                    filePath = found; 
+                    sourcePath = found; 
                     break; 
+                }
+            }
+
+            if (sourcePath) {
+                const ua = req.headers['user-agent'] || '';
+                const isIOS = /iPad|iPhone|iPod/.test(ua) || (ua.includes('Mac') && ua.includes('Mobile'));
+                
+                // Извлекаем корень игры для чтения ключа шифрования
+                const reqParts = reqPath.split('/').filter(Boolean);
+                const gamePath = path.join(GAMES_DIR, reqParts[0]);
+
+                // ⚡ ЕСЛИ АЙФОН, и найден OGG или шифрованный файл (.rpgmvo) -> отправляем на декриптор и FFmpeg
+                const isEncrypted = sourcePath.endsWith('.rpgmvo') || sourcePath.endsWith('.rpgmvm');
+                
+                if (isIOS && (isEncrypted || sourcePath.endsWith('.ogg'))) {
+                    try {
+                        const readyPath = await ensureM4aFromSource(sourcePath, gamePath);
+                        res.type('audio/mp4');
+                        res.setHeader('Cache-Control', 'public, max-age=86400');
+                        res.setHeader('Access-Control-Allow-Origin', '*');
+                        return res.sendFile(readyPath);
+                    } catch (err) {
+                        console.error('[Audio] Ошибка конвертации:', err);
+                        filePath = sourcePath; // Если FFmpeg упал, пробуем отдать как есть
+                    }
+                } else {
+                    filePath = sourcePath;
                 }
             }
         }

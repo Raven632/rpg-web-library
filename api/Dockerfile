@@ -9,6 +9,7 @@ RUN sed -i 's/Components: main/Components: main contrib non-free non-free-firmwa
 RUN apt-get update && apt-get install -y \
     wget \
     curl \
+    ffmpeg \
     python3 \
     build-essential \
     --no-install-recommends \
