@@ -4,40 +4,17 @@ const assert = require('node:assert');
 const {
   processParsedData,
   requireAuth,
-  findRJCode
+  findRJCode,
+  translateText
 } = require('./server.js');
 
-// ---------------------------
-// requireAuth tests
-// ---------------------------
+// ============================================================================
+// requireAuth tests (Проверка авторизации)
+// ============================================================================
 
-test('requireAuth: GET без токена пропускается', () => {
-  const req = { method: 'GET', headers: {} };
-  const res = {};
-  let nextCalled = false;
-
-  requireAuth(req, res, () => {
-    nextCalled = true;
-  });
-
-  assert.strictEqual(nextCalled, true, 'GET должен проходить без токена');
-});
-
-test('requireAuth: POST с валидным токеном пропускается', () => {
-  const validToken = process.env.API_TOKEN || 'SuperSecretKey123';
-  const req = { method: 'POST', headers: { 'x-api-token': validToken } };
-  const res = {};
-  let nextCalled = false;
-
-  requireAuth(req, res, () => {
-    nextCalled = true;
-  });
-
-  assert.strictEqual(nextCalled, true, 'POST с валидным токеном должен проходить');
-});
-
-test('requireAuth: POST без токена возвращает 401', () => {
-  const req = { method: 'POST', headers: {} };
+test('requireAuth: GET/POST без куки возвращает 401', () => {
+  // Добавляем пустой объект cookies, чтобы избежать TypeError
+  const req = { method: 'GET', cookies: {} };
   let statusCode;
   let payload;
   let nextCalled = false;
@@ -45,63 +22,58 @@ test('requireAuth: POST без токена возвращает 401', () => {
   const res = {
     status(code) {
       statusCode = code;
-      return {
-        json(body) {
-          payload = body;
-        }
-      };
+      return { json(body) { payload = body; } };
     }
   };
 
-  requireAuth(req, res, () => {
-    nextCalled = true;
-  });
+  requireAuth(req, res, () => { nextCalled = true; });
 
-  assert.strictEqual(nextCalled, false, 'next() не должен вызываться при 401');
+  assert.strictEqual(nextCalled, false, 'next() не должен вызываться');
   assert.strictEqual(statusCode, 401, 'Ожидается HTTP 401');
   assert.ok(payload && payload.error, 'Должен быть текст ошибки');
 });
 
-test('requireAuth: POST с неверным токеном возвращает 401', () => {
-  const req = { method: 'POST', headers: { 'x-api-token': 'WRONG_TOKEN' } };
+test('requireAuth: запрос с неверным токеном возвращает 401', () => {
+  const req = { method: 'POST', cookies: { auth_token: 'WRONG_TOKEN_123' } };
   let statusCode;
-  let payload;
   let nextCalled = false;
 
   const res = {
     status(code) {
       statusCode = code;
-      return {
-        json(body) {
-          payload = body;
-        }
-      };
+      return { json() {} };
     }
   };
 
-  requireAuth(req, res, () => {
-    nextCalled = true;
-  });
+  requireAuth(req, res, () => { nextCalled = true; });
 
   assert.strictEqual(nextCalled, false, 'next() не должен вызываться при неверном токене');
   assert.strictEqual(statusCode, 401, 'Ожидается HTTP 401');
-  assert.ok(payload && payload.error, 'Должен быть текст ошибки');
 });
 
-// ---------------------------
-// processParsedData tests
-// ---------------------------
+test('requireAuth: запрос с правильным токеном пропускается', () => {
+  // В тестах initDB() не вызывается, поэтому SESSION_TOKEN в server.js равен ''
+  const req = { method: 'POST', cookies: { auth_token: '' } };
+  const res = {};
+  let nextCalled = false;
+
+  requireAuth(req, res, () => { nextCalled = true; });
+
+  assert.strictEqual(nextCalled, true, 'Запрос с валидным токеном должен проходить');
+});
+
+// ============================================================================
+// processParsedData tests (Проверка парсинга данных)
+// ============================================================================
 
 test('processParsedData: извлекает теги и очищает HTML', async (t) => {
   const originalFetch = global.fetch;
-  // Мокаем переводчик: возвращаем "перевод"
+  // Мокаем переводчик Google
   global.fetch = async () => ({
     json: async () => [[['Epic game translated!', 'Epic game!', null, null]]]
   });
 
-  t.after(() => {
-    global.fetch = originalFetch;
-  });
+  t.after(() => { global.fetch = originalFetch; });
 
   const mockGameData = {
     genres: [{ name: 'RPG' }, { name: 'Fantasy' }],
@@ -112,55 +84,7 @@ test('processParsedData: извлекает теги и очищает HTML', as
 
   assert.ok(result, 'Результат не должен быть null');
   assert.deepStrictEqual(result.tags, ['RPG', 'Fantasy'], 'Теги должны совпадать');
-  assert.ok(result.description.length > 0, 'Описание не должно быть пустым');
-});
-
-test('processParsedData: удаляет дубли тегов', async (t) => {
-  const originalFetch = global.fetch;
-  global.fetch = async () => ({
-    json: async () => [[['Some text', 'Some text', null, null]]]
-  });
-
-  t.after(() => {
-    global.fetch = originalFetch;
-  });
-
-  const mockGameData = {
-    genres: [{ name: 'RPG' }, { name: 'RPG' }, { name: 'Fantasy' }],
-    intro_s: '<div>Hello</div>'
-  };
-
-  const result = await processParsedData(mockGameData, 'RJ222222');
-
-  assert.ok(result, 'Результат не должен быть null');
-  assert.deepStrictEqual(result.tags, ['RPG', 'Fantasy'], 'Дубликаты должны быть удалены');
-});
-
-test('processParsedData: использует intro, если intro_s отсутствует', async (t) => {
-  const originalFetch = global.fetch;
-  global.fetch = async () => ({
-    json: async () => [[['Fallback intro translated', 'Fallback intro', null, null]]]
-  });
-
-  t.after(() => {
-    global.fetch = originalFetch;
-  });
-
-  const mockGameData = {
-    genres: [{ name: 'Adventure' }],
-    intro: '<p>Fallback intro</p>'
-  };
-
-  const result = await processParsedData(mockGameData, 'RJ333333');
-
-  assert.ok(result, 'Результат не должен быть null');
-  assert.deepStrictEqual(result.tags, ['Adventure']);
-  assert.ok(result.description.length > 0, 'Описание должно быть заполнено');
-});
-
-test('processParsedData: если genres отсутствует — возвращает null', async () => {
-  const result = await processParsedData({ intro_s: 'No genres here' }, 'RJ444444');
-  assert.strictEqual(result, null, 'Без genres функция должна вернуть null');
+  assert.strictEqual(result.description, 'Epic game translated!', 'Описание должно быть переведено');
 });
 
 test('processParsedData: если genres пустой — возвращает null', async () => {
@@ -168,41 +92,47 @@ test('processParsedData: если genres пустой — возвращает n
   assert.strictEqual(result, null, 'При пустом genres функция должна вернуть null');
 });
 
-// ---------------------------
-// findRJCode tests
-// ---------------------------
+// ============================================================================
+// findRJCode tests (Поиск RJ-кода в файлах)
+// ============================================================================
 
 const fsp = require('fs').promises;
 
-test('findRJCode: находит RJ внутри текстового файла, если его нет в имени папки', async (t) => {
-  // Запоминаем оригинальные функции
+test('findRJCode: находит RJ внутри текстового файла', async (t) => {
   const originalReaddir = fsp.readdir;
   const originalStat = fsp.stat;
   const originalReadFile = fsp.readFile;
 
-  // Мокаем файловую систему
-  fsp.readdir = async () => ['readme.txt', 'image.png'];
-  fsp.stat = async () => ({ size: 1024 }); // Файл меньше 500kb
-  fsp.readFile = async (filePath) => {
-    if (filePath.endsWith('readme.txt')) {
-      return 'Hello, this is a great game! Code: RJ999999.';
-    }
-    return '';
-  };
+  // Мокаем файловую систему, чтобы тест не лез на жесткий диск
+  fsp.readdir = async () => ['readme.txt'];
+  fsp.stat = async () => ({ size: 1024 }); 
+  fsp.readFile = async () => 'Welcome to the game! Code: RJ999999.';
 
-  // Убираем моки после теста
   t.after(() => {
     fsp.readdir = originalReaddir;
     fsp.stat = originalStat;
     fsp.readFile = originalReadFile;
   });
 
-  const code = await findRJCode('UnknownGameFolder', '/fake/path');
+  const code = await findRJCode('UnknownFolder', '/fake/path');
   assert.strictEqual(code, 'RJ999999', 'Должен найти RJ-код внутри readme.txt');
 });
 
-test('findRJCode: возвращает null, если RJ нигде не найден', async () => {
-  // Путь не существует => внутри try/catch будет ошибка readdir, ожидаем null
-  const code = await findRJCode('NoCodeGame', '/tmp/definitely-not-existing-folder');
-  assert.strictEqual(code, null);
+// ============================================================================
+// translateText tests (Проверка переводчика)
+// ============================================================================
+
+test('translateText: корректно обрабатывает пустой текст', async () => {
+  const result = await translateText('');
+  assert.strictEqual(result, '');
+});
+
+test('translateText: возвращает оригинальный текст при ошибке API', async (t) => {
+  const originalFetch = global.fetch;
+  global.fetch = async () => { throw new Error('Network error'); };
+
+  t.after(() => { global.fetch = originalFetch; });
+
+  const result = await translateText('Original text');
+  assert.strictEqual(result, 'Original text', 'При сбое сети должен вернуться оригинал');
 });

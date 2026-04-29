@@ -30,7 +30,7 @@ app.use(compression());
 // [1] КОНФИГУРАЦИЯ СЕРВЕРА
 // ============================================================================
 
-const GAMES_DIR = '/games';
+const GAMES_DIR = process.env.GAMES_DIR || path.join(__dirname, 'games');
 const EXTRACT_TMP = path.join(GAMES_DIR, '_tmp_uploads'); 
 const UPLOAD_TMP = EXTRACT_TMP; 
 const SAVES_DIR = path.join(GAMES_DIR, '_saves');
