@@ -9,6 +9,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="RPG Lib">
     <link rel="apple-touch-icon" href="/icon.png">
+    
     <script>
         // ВРЕМЕННЫЙ КОД ДЛЯ РАЗРАБОТКИ: Убиваем Service Worker, чтобы не кэшировал файлы
         if ('serviceWorker' in navigator) {
@@ -18,161 +19,288 @@
                 }
             });
         }
-    </script>
-    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700;900&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-    <style>
-        :root {
-            --gold: #c9a84c; --gold-light: #f0d080; --gold-dim: #7a6030;
-            --bg-deep: #080608; --bg-mid: #100e12; --bg-card: #13111a;
-            --text: #e8dfc8; --text-dim: #7a7060;
-        }
-        * { margin:0; padding:0; box-sizing:border-box; }
-        body { background:var(--bg-deep); color:var(--text); font-family:'Crimson Text',Georgia,serif; min-height:100vh; overflow-x:hidden; }
-        body::before { content:''; position:fixed; inset:0; background:radial-gradient(ellipse 80% 50% at 50% -10%, rgba(140,90,20,0.12) 0%, transparent 60%); pointer-events:none; z-index:0; }
 
+        // ============================================================================
+        // [0] СЛОВАРЬ И ЛОКАЛИЗАЦИЯ (i18n)
+        // ============================================================================
+        const translations = {
+            ru: {
+                subtitle: "Ваша личная коллекция приключений",
+                search: "Поиск по названию или тегам...",
+                all_genres: "Все жанры",
+                sort_new: "Новые поступления",
+                sort_recent: "Недавно запущенные",
+                sort_rating: "По оценке (Сначала лучшие)",
+                sort_name: "По алфавиту",
+                add_game: "Добавить игру",
+                empty_lib: "Библиотека пуста. Время добавить первую игру!",
+                not_found: "По вашему запросу ничего не найдено...",
+                play_btn: "Играть",
+                modal_backup: "Бэкап",
+                modal_import: "Импорт"
+            },
+            en: {
+                subtitle: "Your personal adventure collection",
+                search: "Search by title or tags...",
+                all_genres: "All genres",
+                sort_new: "Newly added",
+                sort_recent: "Recently played",
+                sort_rating: "Highest rated",
+                sort_name: "Alphabetical",
+                add_game: "Add game",
+                empty_lib: "The library is empty. Time to add your first game!",
+                not_found: "Nothing found for your query...",
+                play_btn: "Play",
+                modal_backup: "Backup",
+                modal_import: "Import"
+            },
+            de: {
+                subtitle: "Deine persönliche Abenteuersammlung",
+                search: "Suche nach Titel oder Tags...",
+                all_genres: "Alle Genres",
+                sort_new: "Neu hinzugefügt",
+                sort_recent: "Zuletzt gespielt",
+                sort_rating: "Bestbewertet",
+                sort_name: "Alphabetisch",
+                add_game: "Spiel hinzufügen",
+                empty_lib: "Die Bibliothek ist leer. Zeit, das erste Spiel hinzuzufügen!",
+                not_found: "Für deine Suchanfrage wurde nichts gefunden...",
+                play_btn: "Spielen",
+                modal_backup: "Backup",
+                modal_import: "Importieren"
+            }
+        };
+
+        // Загружаем язык из памяти или берем язык браузера
+        let currentLang = localStorage.getItem('rpg_lang') || (navigator.language.startsWith('de') ? 'de' : navigator.language.startsWith('ru') ? 'ru' : 'en');
+        if (!translations[currentLang]) currentLang = 'en';
+
+        function setLanguage(lang) {
+            if (!translations[lang]) return;
+            currentLang = lang;
+            localStorage.setItem('rpg_lang', lang);
+
+            const dict = translations[lang];
+            
+            // Переводим все элементы с атрибутом data-i18n
+            document.querySelectorAll('[data-i18n]').forEach(el => {
+                const key = el.getAttribute('data-i18n');
+                if (dict[key]) {
+                    // Используем textContent для обычных тегов, чтобы не сломать соседние SVG-иконки
+                    if (el.tagName === 'INPUT') el.placeholder = dict[key];
+                    else el.textContent = dict[key];
+                }
+            });
+
+            // Обновляем пункт "Все жанры" в фильтре, если он уже отрисован
+            const tagSelect = document.getElementById('tag-filter');
+            if (tagSelect && tagSelect.options.length > 0) {
+                tagSelect.options[0].textContent = dict['all_genres'];
+            }
+
+            // Если игры уже загружены, перерисовываем интерфейс с новым языком
+            if (window.state && window.state.allGames.length > 0) renderPage();
+        }
+    </script>
+    
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700;900&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+    
+    <style>
+        /* ========================================================= */
+        /* 1. ПЕРЕМЕННЫЕ И БАЗОВЫЕ СТИЛИ                             */
+        /* ========================================================= */
+        :root {
+            --gold: #c9a84c; 
+            --gold-light: #f0d080; 
+            --gold-dim: #7a6030;
+            --bg-deep: #080608; 
+            --bg-mid: #100e12; 
+            --bg-card: #13111a;
+            --text: #e8dfc8; 
+            --text-dim: #7a7060;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body { 
+            background: var(--bg-deep); 
+            color: var(--text); 
+            font-family: 'Crimson Text', Georgia, serif; 
+            min-height: 100vh; 
+            overflow-x: hidden; 
+        }
+
+        body::before { 
+            content: ''; 
+            position: fixed; 
+            inset: 0; 
+            background: radial-gradient(ellipse 80% 50% at 50% -10%, rgba(140,90,20,0.12) 0%, transparent 60%); 
+            pointer-events: none; 
+            z-index: 0; 
+        }
+
+        /* ========================================================= */
+        /* 2. ШАПКА И ЭЛЕМЕНТЫ УПРАВЛЕНИЯ                            */
+        /* ========================================================= */
         header { 
-            position:sticky; top:0; z-index:100; text-align:center; padding:30px 20px 20px; 
+            position: sticky; 
+            top: 0; 
+            z-index: 100; 
+            text-align: center; 
+            padding: 30px 20px 20px; 
             background: linear-gradient(to bottom, rgba(8,6,8,0.95) 40%, rgba(8,6,8,0.7) 100%);
-            backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+            backdrop-filter: blur(12px); 
+            -webkit-backdrop-filter: blur(12px);
             border-bottom: 1px solid rgba(201,168,76,0.1);
         }
-        .header-ornament { display:flex; align-items:center; justify-content:center; gap:20px; margin-bottom:10px; }
-        .ornament-line { flex:1; max-width:200px; height:1px; background:linear-gradient(90deg,transparent,var(--gold-dim),var(--gold),var(--gold-dim),transparent); }
-        .ornament-diamond { width:8px; height:8px; background:var(--gold); transform:rotate(45deg); box-shadow:0 0 12px rgba(201,168,76,0.6); }
-        h1 { font-family:'Cinzel',serif; font-size:clamp(1.8rem,5vw,3rem); font-weight:900; letter-spacing:0.15em; text-transform:uppercase; color:var(--gold-light); text-shadow:0 0 30px rgba(201,168,76,0.4); margin-bottom: 5px;}
-        .subtitle { font-style:italic; font-size:1rem; color:var(--text-dim); letter-spacing:0.1em; }
+
+        .header-ornament { 
+            display: flex; align-items: center; justify-content: center; gap: 20px; margin-bottom: 10px; 
+        }
+
+        .ornament-line { flex: 1; max-width: 200px; height: 1px; background: linear-gradient(90deg, transparent, var(--gold-dim), var(--gold), var(--gold-dim), transparent); }
+        .ornament-diamond { width: 8px; height: 8px; background: var(--gold); transform: rotate(45deg); box-shadow: 0 0 12px rgba(201,168,76,0.6); }
+
+        h1 { 
+            font-family: 'Cinzel', serif; font-size: clamp(1.8rem, 5vw, 3rem); font-weight: 900; 
+            letter-spacing: 0.15em; text-transform: uppercase; color: var(--gold-light); 
+            text-shadow: 0 0 30px rgba(201,168,76,0.4); margin-bottom: 5px;
+        }
+
+        .subtitle { font-style: italic; font-size: 1rem; color: var(--text-dim); letter-spacing: 0.1em; }
         
-        .controls-zone { position:relative; z-index:1; max-width:1100px; margin: 30px auto 40px; padding:0 20px; display: flex; gap: 15px; flex-wrap: wrap; }
+        .controls-zone { 
+            position: relative; z-index: 1; max-width: 1100px; margin: 30px auto 40px; 
+            padding: 0 20px; display: flex; gap: 15px; flex-wrap: wrap; 
+        }
         
         .search-box { flex: 2; min-width: 250px; position: relative; }
-        .search-box input { width: 100%; padding: 16px 20px 16px 45px; background: rgba(19, 17, 26, 0.6); border: 1px solid rgba(201,168,76,0.3); border-radius: 6px; font-family: 'Cinzel', serif; font-size: 0.9rem; letter-spacing: 0.05em; color: var(--text); outline: none; transition: all 0.3s; }
+        .search-box input { 
+            width: 100%; padding: 16px 20px 16px 45px; background: rgba(19, 17, 26, 0.6); 
+            border: 1px solid rgba(201,168,76,0.3); border-radius: 6px; font-family: 'Cinzel', serif; 
+            font-size: 0.9rem; letter-spacing: 0.05em; color: var(--text); outline: none; transition: all 0.3s; 
+        }
         .search-box input:focus { border-color: var(--gold); background: rgba(201,168,76,0.05); box-shadow: 0 0 15px rgba(201,168,76,0.15); }
         .search-box input::placeholder { color: var(--text-dim); }
+        
         .search-icon { position: absolute; left: 15px; top: 50%; transform: translateY(-50%); width: 18px; height: 18px; fill: var(--gold-dim); pointer-events: none; }
 
-        .sort-box { flex: 1; min-width: 180px; padding: 16px 20px; background: rgba(19, 17, 26, 0.6); border: 1px solid rgba(201,168,76,0.3); border-radius: 6px; font-family: 'Cinzel', serif; font-size: 0.85rem; letter-spacing: 0.05em; color: var(--gold-light); outline: none; cursor: pointer; transition: all 0.3s; appearance: none; -webkit-appearance: none; background-image: url('data:image/svg+xml;utf8,<svg fill="%23c9a84c" height="24" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg"><path d="M7 10l5 5 5-5z"/></svg>'); background-repeat: no-repeat; background-position: right 10px center; }
+        .sort-box { 
+            flex: 1; min-width: 180px; padding: 16px 20px; background: rgba(19, 17, 26, 0.6); 
+            border: 1px solid rgba(201,168,76,0.3); border-radius: 6px; font-family: 'Cinzel', serif; 
+            font-size: 0.85rem; letter-spacing: 0.05em; color: var(--gold-light); outline: none; 
+            cursor: pointer; transition: all 0.3s; appearance: none; -webkit-appearance: none; 
+            background-image: url('data:image/svg+xml;utf8,<svg fill="%23c9a84c" height="24" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg"><path d="M7 10l5 5 5-5z"/></svg>'); 
+            background-repeat: no-repeat; background-position: right 10px center; 
+        }
         .sort-box:focus, .sort-box:hover { border-color: var(--gold); box-shadow: 0 0 15px rgba(201,168,76,0.15); }
         .sort-box option { background: var(--bg-deep); color: var(--text); }
 
-        .upload-btn { flex: 1; min-width: 180px; padding:16px; background:rgba(201,168,76,0.08); border:1px dashed rgba(201,168,76,0.4); border-radius:6px; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:10px; font-family:'Cinzel',serif; font-size:0.8rem; letter-spacing:0.1em; color:var(--gold-dim); text-transform:uppercase; transition:all 0.3s ease; }
-        .upload-btn:hover { background:rgba(201,168,76,0.15); border-color:rgba(201,168,76,0.7); color:var(--gold); box-shadow: 0 0 15px rgba(201,168,76,0.1); }
-        .upload-btn.drag-over { background:rgba(201,168,76,0.2); border-color:var(--gold); color:var(--gold-light); }
-        .upload-btn svg { width:18px; height:18px; fill:currentColor; flex-shrink:0; }
-        #file-input { display:none; }
+        .upload-btn { 
+            flex: 1; min-width: 180px; padding: 16px; background: rgba(201,168,76,0.08); 
+            border: 1px dashed rgba(201,168,76,0.4); border-radius: 6px; cursor: pointer; 
+            display: flex; align-items: center; justify-content: center; gap: 10px; 
+            font-family: 'Cinzel', serif; font-size: 0.8rem; letter-spacing: 0.1em; 
+            color: var(--gold-dim); text-transform: uppercase; transition: all 0.3s ease; 
+        }
+        .upload-btn:hover { background: rgba(201,168,76,0.15); border-color: rgba(201,168,76,0.7); color: var(--gold); box-shadow: 0 0 15px rgba(201,168,76,0.1); }
+        .upload-btn.drag-over { background: rgba(201,168,76,0.2); border-color: var(--gold); color: var(--gold-light); }
+        .upload-btn svg { width: 18px; height: 18px; fill: currentColor; flex-shrink: 0; }
+        #file-input { display: none; }
 
-        .progress-wrap { display:none; width: 100%; margin-top:15px; background:rgba(0,0,0,0.6); border:1px solid rgba(201,168,76,0.3); border-radius:6px; overflow:hidden; }
-        .progress-bar { height:6px; background:linear-gradient(90deg, var(--gold-dim), var(--gold), var(--gold-light)); background-size: 200% 200%; animation: shimmer 2s infinite linear; width:0%; transition:width 0.3s ease; }
+        .progress-wrap { display: none; width: 100%; margin-top: 15px; background: rgba(0,0,0,0.6); border: 1px solid rgba(201,168,76,0.3); border-radius: 6px; overflow: hidden; }
+        .progress-bar { height: 6px; background: linear-gradient(90deg, var(--gold-dim), var(--gold), var(--gold-light)); background-size: 200% 200%; animation: shimmer 2s infinite linear; width: 0%; transition: width 0.3s ease; }
         @keyframes shimmer { 0% { background-position: 200% center; } 100% { background-position: -200% center; } }
-        .progress-text { padding:12px; font-family:'Cinzel',serif; font-size:0.75rem; letter-spacing:0.1em; color:var(--gold-light); text-align:center; }
+        .progress-text { padding: 12px; font-family: 'Cinzel', serif; font-size: 0.75rem; letter-spacing: 0.1em; color: var(--gold-light); text-align: center; }
 
-        .toast { position:fixed; bottom:30px; left:50%; transform:translateX(-50%) translateY(100px); z-index:9999; padding:14px 24px; background:rgba(20,18,26,0.95); border:1px solid rgba(201,168,76,0.3); border-radius:6px; font-family:'Cinzel',serif; font-size:0.8rem; letter-spacing:0.1em; color:var(--text); transition:transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275), opacity 0.4s ease; opacity:0; max-width:90vw; text-align:center; box-shadow: 0 10px 30px rgba(0,0,0,0.8); }
-        .toast.show { transform:translateX(-50%) translateY(0); opacity:1; }
-        .toast.success { border-color:rgba(80,200,80,0.6); color:#a0f0a0; box-shadow: 0 0 20px rgba(80,200,80,0.1); }
-        .toast.error   { border-color:rgba(220,60,60,0.6); color:#f09090; box-shadow: 0 0 20px rgba(220,60,60,0.1); }
+        /* ========================================================= */
+        /* 3. КОМПОНЕНТЫ УВЕДОМЛЕНИЙ И СОСТОЯНИЙ                     */
+        /* ========================================================= */
+        .toast { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%) translateY(100px); z-index: 9999; padding: 14px 24px; background: rgba(20,18,26,0.95); border: 1px solid rgba(201,168,76,0.3); border-radius: 6px; font-family: 'Cinzel', serif; font-size: 0.8rem; letter-spacing: 0.1em; color: var(--text); transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275), opacity 0.4s ease; opacity: 0; max-width: 90vw; text-align: center; box-shadow: 0 10px 30px rgba(0,0,0,0.8); }
+        .toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
+        .toast.success { border-color: rgba(80,200,80,0.6); color: #a0f0a0; box-shadow: 0 0 20px rgba(80,200,80,0.1); }
+        .toast.error   { border-color: rgba(220,60,60,0.6); color: #f09090; box-shadow: 0 0 20px rgba(220,60,60,0.1); }
 
-        .library { position:relative; z-index:1; display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:28px; max-width:1400px; margin:0 auto; padding:0 20px 80px; }
+        .loading { position: relative; z-index: 1; text-align: center; padding: 80px 20px; font-family: 'Cinzel', serif; color: var(--text-dim); letter-spacing: 0.2em; font-size: 0.85rem; }
+        .loading-dots span { display: inline-block; animation: blink 1.4s infinite both; font-size: 1.2rem; color: var(--gold-dim); }
+        .loading-dots span:nth-child(2) { animation-delay: 0.2s; }
+        .loading-dots span:nth-child(3) { animation-delay: 0.4s; }
+        @keyframes blink { 0%,80%,100%{opacity:0} 40%{opacity:1} }
+        
+        .empty-state { grid-column: 1 / -1; text-align: center; padding: 60px 20px; color: var(--text-dim); font-family: 'Cinzel', serif; font-size: 1.1rem; letter-spacing: 0.1em; }
 
-        .game-card { position:relative; background:var(--bg-card); border:1px solid rgba(201,168,76,0.15); border-radius: 4px; cursor:pointer; text-decoration:none; color:inherit; display:block; transition:all 0.4s ease; overflow:hidden; animation:fadeInUp 0.6s ease both; }
+        /* ========================================================= */
+        /* 4. КАРТОЧКА ИГРЫ (БИБЛИОТЕКА)                             */
+        /* ========================================================= */
+        .library { position: relative; z-index: 1; display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 28px; max-width: 1400px; margin: 0 auto; padding: 0 20px 80px; }
+        .game-card { position: relative; background: var(--bg-card); border: 1px solid rgba(201,168,76,0.15); border-radius: 4px; cursor: pointer; text-decoration: none; color: inherit; display: block; transition: all 0.4s ease; overflow: hidden; animation: fadeInUp 0.6s ease both; }
         @keyframes fadeInUp { from{opacity:0;transform:translateY(30px)} to{opacity:1;transform:translateY(0)} }
-        .game-card::before { content:''; position:absolute; inset:0; background:radial-gradient(circle at center, rgba(201,168,76,0.15) 0%, transparent 70%); opacity:0; transition:opacity 0.4s; z-index:1; pointer-events:none; }
         
-        .game-card:hover { transform:translateY(-8px); border-color:rgba(201,168,76,0.6); box-shadow:0 15px 40px rgba(0,0,0,0.8), 0 0 20px rgba(201,168,76,0.2); }
-        .game-card:hover::before { opacity:1; }
+        .game-card::before { content: ''; position: absolute; inset: 0; background: radial-gradient(circle at center, rgba(201,168,76,0.15) 0%, transparent 70%); opacity: 0; transition: opacity 0.4s; z-index: 1; pointer-events: none; }
+        .game-card:hover { transform: translateY(-8px); border-color: rgba(201,168,76,0.6); box-shadow: 0 15px 40px rgba(0,0,0,0.8), 0 0 20px rgba(201,168,76,0.2); }
+        .game-card:hover::before { opacity: 1; }
         
-        .card-corner-tl { position:absolute; top:0; left:0; width:20px; height:20px; border-top:2px solid var(--gold-dim); border-left:2px solid var(--gold-dim); transition:all 0.3s; z-index:2; border-top-left-radius: 4px;}
-        .card-corner-br { position:absolute; bottom:0; right:0; width:20px; height:20px; border-bottom:2px solid var(--gold-dim); border-right:2px solid var(--gold-dim); transition:all 0.3s; z-index:2; border-bottom-right-radius: 4px;}
-        .game-card:hover .card-corner-tl, .game-card:hover .card-corner-br { border-color:var(--gold); width:35px; height:35px; }
+        .card-corner-tl { position: absolute; top: 0; left: 0; width: 20px; height: 20px; border-top: 2px solid var(--gold-dim); border-left: 2px solid var(--gold-dim); transition: all 0.3s; z-index: 2; border-top-left-radius: 4px;}
+        .card-corner-br { position: absolute; bottom: 0; right: 0; width: 20px; height: 20px; border-bottom: 2px solid var(--gold-dim); border-right: 2px solid var(--gold-dim); transition: all 0.3s; z-index: 2; border-bottom-right-radius: 4px;}
+        .game-card:hover .card-corner-tl, .game-card:hover .card-corner-br { border-color: var(--gold); width: 35px; height: 35px; }
 
-        .card-cover { width:100%; aspect-ratio:16/10; overflow:hidden; position:relative; background:#0f0d15; }
-        .card-cover img { width:100%; height:100%; object-fit:cover; display:block; transition:transform 0.6s cubic-bezier(0.25, 0.46, 0.45, 0.94), filter 0.4s; filter:brightness(0.7) saturate(0.8); }
-        .game-card:hover .card-cover img { transform:scale(1.08); filter:brightness(1.05) saturate(1.2); }
+        .card-cover { width: 100%; aspect-ratio: 16/10; overflow: hidden; position: relative; background: #0f0d15; }
+        .card-cover img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform 0.6s cubic-bezier(0.25, 0.46, 0.45, 0.94), filter 0.4s; filter: brightness(0.7) saturate(0.8); }
+        .game-card:hover .card-cover img { transform: scale(1.08); filter: brightness(1.05) saturate(1.2); }
         
-        .card-rating { position:absolute; top:10px; left:10px; z-index:10; display:flex; gap:2px; background:rgba(0,0,0,0.6); padding:4px 8px; border-radius:12px; border:1px solid rgba(201,168,76,0.2); backdrop-filter:blur(4px); opacity: 0; transition: opacity 0.3s; }
+        .card-rating { position: absolute; top: 10px; left: 10px; z-index: 10; display: flex; gap: 2px; background: rgba(0,0,0,0.6); padding: 4px 8px; border-radius: 12px; border: 1px solid rgba(201,168,76,0.2); backdrop-filter: blur(4px); opacity: 0; transition: opacity 0.3s; }
         .game-card:hover .card-rating, .card-rating.has-rating { opacity: 1; }
-        .card-rating .star { color: rgba(255,255,255,0.2); font-size: 16px; cursor:pointer; transition: 0.2s; line-height: 1;}
+        .card-rating .star { color: rgba(255,255,255,0.2); font-size: 16px; cursor: pointer; transition: 0.2s; line-height: 1;}
         .card-rating .star:hover { transform: scale(1.3); }
         .card-rating .star.active { color: var(--gold); text-shadow: 0 0 8px var(--gold); }
 
-        .cover-placeholder { width:100%; height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; background:linear-gradient(135deg,#0f0d15 0%,#1a1525 50%,#0f0d15 100%); gap:8px; }
-        .cover-placeholder .rune { font-family:'Cinzel',serif; font-size:2.5rem; color:var(--gold-dim); opacity:0.5; transition:all 0.4s; }
-        .cover-placeholder .folder-name { font-family:'Cinzel',serif; font-size:0.9rem; font-weight:700; color:var(--gold-dim); letter-spacing:0.1em; text-transform:uppercase; transition:color 0.4s; text-align:center; padding:0 12px; }
-        .game-card:hover .cover-placeholder .rune { opacity:1; color:var(--gold); transform: scale(1.1);}
-        .game-card:hover .cover-placeholder .folder-name { color:var(--gold-light); }
-        .card-cover-overlay { position:absolute; inset:0; background:linear-gradient(to top, rgba(19,17,26,1) 0%, transparent 60%); z-index:1; pointer-events: none;}
+        .cover-placeholder { width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; background: linear-gradient(135deg, #0f0d15 0%, #1a1525 50%, #0f0d15 100%); gap: 8px; }
+        .cover-placeholder .rune { font-family: 'Cinzel', serif; font-size: 2.5rem; color: var(--gold-dim); opacity: 0.5; transition: all 0.4s; }
+        .cover-placeholder .folder-name { font-family: 'Cinzel', serif; font-size: 0.9rem; font-weight: 700; color: var(--gold-dim); letter-spacing: 0.1em; text-transform: uppercase; transition: color 0.4s; text-align: center; padding: 0 12px; }
+        .game-card:hover .cover-placeholder .rune { opacity: 1; color: var(--gold); transform: scale(1.1);}
+        .game-card:hover .cover-placeholder .folder-name { color: var(--gold-light); }
+        .card-cover-overlay { position: absolute; inset: 0; background: linear-gradient(to top, rgba(19,17,26,1) 0%, transparent 60%); z-index: 1; pointer-events: none;}
 
-        .card-delete { position:absolute; top:12px; right:12px; z-index:10; width:32px; height:32px; background:rgba(20,10,10,0.8); border:1px solid rgba(220,60,60,0.5); border-radius:50%; display:flex; align-items:center; justify-content:center; opacity:0; transition:all 0.3s; cursor:pointer; backdrop-filter: blur(4px);}
-        .game-card:hover .card-delete { opacity:1; transform: rotate(90deg); }
-        .card-delete:hover { background:rgba(220,50,50,0.9); transform: rotate(90deg) scale(1.1) !important; box-shadow: 0 0 10px rgba(220,50,50,0.5);}
-        .card-delete svg { width:16px; height:16px; fill:white; }
+        .card-delete { position: absolute; top: 12px; right: 12px; z-index: 10; width: 32px; height: 32px; background: rgba(20,10,10,0.8); border: 1px solid rgba(220,60,60,0.5); border-radius: 50%; display: flex; align-items: center; justify-content: center; opacity: 0; transition: all 0.3s; cursor: pointer; backdrop-filter: blur(4px);}
+        .game-card:hover .card-delete { opacity: 1; transform: rotate(90deg); }
+        .card-delete:hover { background: rgba(220,50,50,0.9); transform: rotate(90deg) scale(1.1) !important; box-shadow: 0 0 10px rgba(220,50,50,0.5);}
+        .card-delete svg { width: 16px; height: 16px; fill: white; }
 
-        .card-info { padding:10px 20px 24px; position:relative; z-index:1; }
-        .card-number { font-family:'Cinzel',serif; font-size:0.65rem; color:var(--gold-dim); letter-spacing:0.2em; text-transform:uppercase; margin-bottom:8px; display: flex; align-items: center; justify-content: space-between; gap: 6px;}
+        .card-info { padding: 10px 20px 24px; position: relative; z-index: 1; }
+        .card-number { font-family: 'Cinzel', serif; font-size: 0.65rem; color: var(--gold-dim); letter-spacing: 0.2em; text-transform: uppercase; margin-bottom: 8px; display: flex; align-items: center; justify-content: space-between; gap: 6px;}
         .card-number::before { content: ''; width: 6px; height: 6px; background: var(--gold-dim); border-radius: 50%; display: inline-block; margin-right: auto;}
         .game-card:hover .card-number { color: var(--gold); }
         .game-card:hover .card-number::before { background: var(--gold-light); box-shadow: 0 0 8px var(--gold-light); }
         
-        .card-title { font-family:'Cinzel',serif; font-size:1.1rem; font-weight:700; color:var(--text); letter-spacing:0.02em; line-height:1.3; transition:color 0.3s; min-height:2.6em; display:-webkit-box; -webkit-line-clamp:2; line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
-        .game-card:hover .card-title { color:var(--gold-light); }
+        .card-title { font-family: 'Cinzel', serif; font-size: 1.1rem; font-weight: 700; color: var(--text); letter-spacing: 0.02em; line-height: 1.3; transition: color 0.3s; min-height: 2.6em; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+        .game-card:hover .card-title { color: var(--gold-light); }
         
-        .card-launch { margin-top: 15px; display:inline-flex; align-items:center; gap:8px; font-size:0.75rem; color:var(--text-dim); font-family:'Cinzel',serif; letter-spacing:0.15em; text-transform:uppercase; transition:all 0.3s; padding: 6px 12px; border: 1px solid transparent; border-radius: 4px;}
-        .game-card:hover .card-launch { color:var(--bg-deep); background: var(--gold); font-weight: 700; box-shadow: 0 4px 15px rgba(201,168,76,0.3);}
-        .launch-arrow { display:inline-block; transition:transform 0.3s; }
-        .game-card:hover .launch-arrow { transform:translateX(4px); }
+        .card-launch { margin-top: 15px; display: inline-flex; align-items: center; gap: 8px; font-size: 0.75rem; color: var(--text-dim); font-family: 'Cinzel', serif; letter-spacing: 0.15em; text-transform: uppercase; transition: all 0.3s; padding: 6px 12px; border: 1px solid transparent; border-radius: 4px;}
+        .game-card:hover .card-launch { color: var(--bg-deep); background: var(--gold); font-weight: 700; box-shadow: 0 4px 15px rgba(201,168,76,0.3);}
+        .launch-arrow { display: inline-block; transition: transform 0.3s; }
+        .game-card:hover .launch-arrow { transform: translateX(4px); }
 
-        .loading { position:relative; z-index:1; text-align:center; padding:80px 20px; font-family:'Cinzel',serif; color:var(--text-dim); letter-spacing:0.2em; font-size:0.85rem; }
-        .loading-dots span { display:inline-block; animation:blink 1.4s infinite both; font-size:1.2rem; color:var(--gold-dim); }
-        .loading-dots span:nth-child(2) { animation-delay:0.2s; }
-        .loading-dots span:nth-child(3) { animation-delay:0.4s; }
-        @keyframes blink { 0%,80%,100%{opacity:0} 40%{opacity:1} }
-        
-        .empty-state { grid-column: 1 / -1; text-align: center; padding: 60px 20px; color: var(--text-dim); font-family: 'Cinzel', serif; font-size: 1.1rem; letter-spacing: 0.1em; }
-        
-        .library-info { position:relative; z-index:1; text-align:center; font-family:'Cinzel',serif; font-size:0.75rem; color:var(--text-dim); letter-spacing:0.2em; padding-bottom:20px; }
-        footer { position:relative; z-index:1; text-align:center; padding:25px; border-top:1px solid rgba(201,168,76,0.1); background: rgba(0,0,0,0.3); font-size:0.75rem; color:var(--text-dim); letter-spacing:0.1em; }
+        .library-info { position: relative; z-index: 1; text-align: center; font-family: 'Cinzel', serif; font-size: 0.75rem; color: var(--text-dim); letter-spacing: 0.2em; padding-bottom: 20px; }
+        footer { position: relative; z-index: 1; text-align: center; padding: 25px; border-top: 1px solid rgba(201,168,76,0.1); background: rgba(0,0,0,0.3); font-size: 0.75rem; color: var(--text-dim); letter-spacing: 0.1em; }
 
         /* ========================================================= */
-        /* --- СТИЛИ ВСПЛЫВАЮЩЕГО ОКНА (ИДЕАЛЬНЫЙ DESKTOP UI) --- */
+        /* 5. МОДАЛЬНЫЕ ОКНА                                         */
         /* ========================================================= */
-        
         .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.85); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); z-index: 2000; display: flex; align-items: center; justify-content: center; opacity: 0; pointer-events: none; transition: opacity 0.3s ease; padding: 20px; }
         .modal-overlay.active { opacity: 1; pointer-events: all; }
-        
-        /* ⚡ ФИКС 1: Окно теперь может быть широким (до 1400px), занимая 92% ширины экрана! */
         .modal-content { background: var(--bg-card); border: 1px solid rgba(201,168,76,0.3); border-radius: 8px; max-width: 1400px; width: 92vw; max-height: 90vh; display: flex; flex-direction: column; position: relative; transform: translateY(30px) scale(0.95); transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); box-shadow: 0 25px 60px rgba(0,0,0,0.9), 0 0 40px rgba(201,168,76,0.1); overflow: hidden; margin: 0 auto; }
         .modal-overlay.active .modal-content { transform: translateY(0) scale(1); }
-        
         .modal-close { position: absolute; top: 15px; right: 20px; font-size: 2.5rem; color: var(--text-dim); cursor: pointer; line-height: 1; transition: color 0.2s; z-index: 100; font-family: sans-serif; text-shadow: 0 2px 10px rgba(0,0,0,0.8); }
         .modal-close:hover { color: var(--gold-light); }
-        
-        /* ⚡ ФИКС 2: Отключаем перенос (flex-wrap: nowrap), чтобы картинка и текст всегда стояли в 2 ровные колонки */
         .modal-header { display: flex; flex-wrap: nowrap; gap: 40px; padding: 40px; background: linear-gradient(to bottom right, rgba(201,168,76,0.05), transparent); overflow-y: auto; flex: 1; }
         
-        /* ⚡ ФИКС 3: Умная обложка (Steam-style). Не обрезается и парит при скролле текста */
-        .modal-cover-wrapper { width: 40%; min-width: 320px; max-width: 550px; border-radius: 8px; overflow: hidden; border: 1px solid rgba(201,168,76,0.2); 
-            background: #0f0d15; 
-            position: sticky; /* Магия: картинка прилипает к верху при прокрутке */
-            top: 0; 
-            align-self: flex-start; /* Убираем жесткое растягивание */
-            flex-shrink: 0; 
-            box-shadow: 0 10px 30px rgba(0,0,0,0.6); 
-        }
-        
-        #modal-cover { 
-            width: 100%; 
-            height: auto; /* Высота подстраивается под пропорции */
-            max-height: 75vh; /* Не дает картинке вылезти за пределы экрана */
-            object-fit: contain; /* ⚡ Картинка ВСЕГДА помещается целиком, без обрезки! */
-            display: block; 
-        }
+        .modal-cover-wrapper { width: 40%; min-width: 320px; max-width: 550px; border-radius: 8px; overflow: hidden; border: 1px solid rgba(201,168,76,0.2); background: #0f0d15; position: sticky; top: 0; align-self: flex-start; flex-shrink: 0; box-shadow: 0 10px 30px rgba(0,0,0,0.6); }
+        #modal-cover { width: 100%; height: auto; max-height: 75vh; object-fit: contain; display: block; }
 
-        
-        /* ⚡ ФИКС 4: Текст забирает все оставшиеся 60% ширины и имеет жесткую относительную позицию для кнопки */
         .modal-info { flex: 1; min-width: 300px; display: flex; flex-direction: column; position: relative; }
-        
         #modal-number { font-family: 'Cinzel', serif; font-size: 0.85rem; color: var(--gold-dim); letter-spacing: 0.2em; margin-bottom: 15px; text-transform: uppercase; display: flex; align-items: center; gap: 8px;}
         #modal-number::before { content: ''; width: 6px; height: 6px; background: var(--gold); border-radius: 50%; display: inline-block; box-shadow: 0 0 8px var(--gold);}
         #modal-title { font-family: 'Cinzel', serif; font-size: 2rem; color: var(--text); line-height: 1.25; margin-bottom: 25px; text-shadow: 0 0 20px rgba(201,168,76,0.2); padding-right: 40px; }
-        
         .modal-meta { display: flex; flex-direction: column; gap: 10px; margin-bottom: 30px; font-family: 'Cinzel', serif; font-size: 0.9rem; color: var(--text-dim); letter-spacing: 0.05em; }
         .modal-meta b { color: var(--gold-dim); font-weight: normal; margin-right: 5px; }
         
@@ -180,51 +308,32 @@
         .modal-tags::-webkit-scrollbar { width: 4px; }
         .modal-tags::-webkit-scrollbar-track { background: rgba(0,0,0,0.2); border-radius: 2px; }
         .modal-tags::-webkit-scrollbar-thumb { background: var(--gold-dim); border-radius: 2px; }
-        .modal-tags .tag { padding: 6px 14px; font-size: 0.75rem; border-color: rgba(201,168,76,0.3); background: rgba(20,18,26,0.8); }
+        .modal-tags .tag { padding: 6px 14px; font-size: 0.75rem; border: 1px solid rgba(201,168,76,0.3); background: rgba(20,18,26,0.8); border-radius: 4px;}
         
-        .modal-description { font-family: 'Crimson Text', serif; font-size: 1.05rem; line-height: 1.7; color: var(--text-dim); white-space: pre-wrap; padding-right: 20px; border-left: 2px solid rgba(201,168,76,0.3); padding-left: 15px; 
-            margin-bottom: 60px; /* ⚡ СОЗДАЕМ БУФЕР: Текст отъедет вверх на высоту кнопки */
-        }
+        .modal-description { font-family: 'Crimson Text', serif; font-size: 1.05rem; line-height: 1.7; color: var(--text-dim); white-space: pre-wrap; padding-right: 20px; border-left: 2px solid rgba(201,168,76,0.3); padding-left: 15px; margin-bottom: 60px; }
         .modal-description::-webkit-scrollbar { width: 6px; }
         .modal-description::-webkit-scrollbar-track { background: rgba(0,0,0,0.2); }
         .modal-description::-webkit-scrollbar-thumb { background: var(--gold-dim); border-radius: 3px; }
         
-        /* ⚡ ФИКС 5: Парящая кнопка приклеена к самому низу текстового блока! */
-        #modal-play-btn { 
-            position: sticky; 
-            bottom: 0; /* ⚡ Идеально прилипает ровно к нижнему краю окна прокрутки */
-            margin-top: auto; 
-            width: 100%; z-index: 10;
-            padding: 18px; background: rgba(20, 18, 26, 0.95); border: 1px solid var(--gold); border-radius: 6px; color: var(--gold-light); font-family: 'Cinzel', serif; font-size: 1.2rem; font-weight: 700; letter-spacing: 0.15em; text-transform: uppercase; cursor: pointer; transition: all 0.3s; display: inline-flex; align-items: center; justify-content: center; gap: 12px; text-decoration: none; box-shadow: 0 -15px 30px rgba(0,0,0,0.8); backdrop-filter: blur(10px); 
-        }
+        #modal-play-btn { position: sticky; bottom: 0; margin-top: auto; width: 100%; z-index: 10; padding: 18px; background: rgba(20, 18, 26, 0.95); border: 1px solid var(--gold); border-radius: 6px; color: var(--gold-light); font-family: 'Cinzel', serif; font-size: 1.2rem; font-weight: 700; letter-spacing: 0.15em; text-transform: uppercase; cursor: pointer; transition: all 0.3s; display: inline-flex; align-items: center; justify-content: center; gap: 12px; text-decoration: none; box-shadow: 0 -15px 30px rgba(0,0,0,0.8); backdrop-filter: blur(10px); }
         #modal-play-btn:hover { background: var(--gold); color: var(--bg-deep); box-shadow: 0 0 25px rgba(201,168,76,0.6); transform: translateY(-2px); }
-       
         #modal-export-btn:hover, #modal-import-btn:hover { background: rgba(201,168,76,0.15); border-color: var(--gold); }
 
         /* ========================================================= */
-        /* --- МОБИЛЬНАЯ АДАПТАЦИЯ --- */
+        /* 6. МОБИЛЬНАЯ АДАПТАЦИЯ                                    */
         /* ========================================================= */
         @media (max-width: 700px) { 
             html, body { max-width: 100vw; overflow-x: hidden; }
             .search-box, .sort-box, .upload-btn { min-width: 100%; }
             .controls-zone { gap: 10px; margin-bottom: 20px; }
-
             .modal-overlay { padding: 10px; align-items: center; justify-content: center; } 
             .modal-content { width: 100%; max-width: calc(100vw - 20px); max-height: 90vh; border-radius: 12px; margin: 0; }
             .modal-header { padding: 15px; gap: 15px; display: flex; flex-direction: column; flex-wrap: nowrap; } 
-            
-            /* ⚡ ФИКС 3: Умная обложка (Steam-style). Не обрезается и парит при скролле текста */
             .modal-cover-wrapper { width: 100%; min-width: 0 !important; max-width: none; max-height: 220px; align-self: center; position: relative; display: flex; align-items: center; justify-content: center; }
-        
-            #modal-cover { width: 100%; height: auto; /* Высота подстраивается под пропорции */max-height: 75vh; /* Не дает картинке вылезти за пределы экрана */object-fit: contain; /* ⚡ Картинка ВСЕГДА помещается целиком, без обрезки! */display: block; }
-            
+            #modal-cover { width: 100%; height: auto; max-height: 75vh; object-fit: contain; display: block; }
             .modal-info { width: 100%; min-width: 0 !important; }
-            
             #modal-title { font-size: 1.3rem; margin-bottom: 12px; padding-right: 25px; word-break: break-word; } 
-            .modal-description { font-size: 0.95rem; padding-left: 10px; padding-right: 5px; 
-                margin-bottom: 60px; /* ⚡ Такой же буфер для мобилок */
-                border-left-width: 1px; 
-            }
+            .modal-description { font-size: 0.95rem; padding-left: 10px; padding-right: 5px; margin-bottom: 60px; border-left-width: 1px; }
             #modal-play-btn { font-size: 1rem; padding: 14px; position: sticky; bottom: 0; width: 100%; }
         }
     </style>
@@ -238,29 +347,35 @@
         <div class="ornament-line"></div>
     </div>
     <h1>RPG Library</h1>
-    <p class="subtitle">Ваша личная коллекция приключений</p>
+    <p class="subtitle" data-i18n="subtitle">Ваша личная коллекция приключений</p>
+
+    <select id="lang-switcher" class="sort-box" style="position:absolute; right:20px; top:30px; min-width:auto; padding:8px 12px; font-size:0.75rem;">
+        <option value="en">English</option>
+        <option value="de">Deutsch</option>
+        <option value="ru">Русский</option>
+    </select>
 </header>
 
 <div class="controls-zone">
     <div class="search-box">
         <svg class="search-icon" viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
-        <input type="text" id="search-input" placeholder="Поиск по названию или тегам (например: RPG)...">
+        <input type="text" id="search-input" data-i18n="search" placeholder="Поиск по названию или тегам (например: RPG)...">
     </div>
 
     <select id="tag-filter" class="sort-box">
-        <option value="all">Все жанры</option>
+        <option value="all" data-i18n="all_genres">Все жанры</option>
     </select>
 
     <select id="sort-select" class="sort-box">
-        <option value="newest">Новые поступления</option>
-        <option value="recent">Недавно запущенные</option>
-        <option value="rating">По оценке (Сначала лучшие)</option>
-        <option value="name">По алфавиту</option>
+        <option value="newest" data-i18n="sort_new">Новые поступления</option>
+        <option value="recent" data-i18n="sort_recent">Недавно запущенные</option>
+        <option value="rating" data-i18n="sort_rating">По оценке (Сначала лучшие)</option>
+        <option value="name" data-i18n="sort_name">По алфавиту</option>
     </select>
     
     <div class="upload-btn" id="upload-btn">
         <svg viewBox="0 0 24 24"><path d="M9 16h6v-6h4l-7-7-7 7h4zm-4 2h14v2H5z"/></svg>
-        Добавить игру
+        <span data-i18n="add_game">Добавить игру</span>
     </div>
     <input type="file" id="file-input" accept=".zip,.7z,.rar">
     
@@ -325,21 +440,22 @@
                     <span id="modal-added"></span>
                     <span id="modal-played"></span>
                 </div>
-
                 
                 <div style="display: flex; gap: 10px; margin-bottom: 25px;">
                     <button id="modal-export-btn" style="flex: 1; padding: 10px; background: rgba(20,18,26,0.8); color: var(--text); border: 1px solid var(--gold-dim); border-radius: 4px; cursor: pointer; font-family: 'Cinzel', serif; transition: all 0.3s; display: flex; align-items: center; justify-content: center; gap: 8px;">
-                        📦 Бэкап
+                        📦 <span data-i18n="modal_backup">Бэкап</span>
                     </button>
                     <button id="modal-import-btn" style="flex: 1; padding: 10px; background: rgba(20,18,26,0.8); color: var(--text); border: 1px solid var(--gold-dim); border-radius: 4px; cursor: pointer; font-family: 'Cinzel', serif; transition: all 0.3s; display: flex; align-items: center; justify-content: center; gap: 8px;">
-                        📥 Импорт
+                        📥 <span data-i18n="modal_import">Импорт</span>
                     </button>
                     <input type="file" id="import-saves-input" accept=".zip" style="display: none;">
                 </div>
 
                 <div class="modal-tags" id="modal-tags"></div>
                 <div class="modal-description" id="modal-description"></div>
-                <button class="modal-play-btn" id="modal-play-btn">Играть <span class="launch-arrow">→</span></button>
+                <button class="modal-play-btn" id="modal-play-btn">
+                    <span data-i18n="play_btn">Играть</span> <span class="launch-arrow">→</span>
+                </button>
             </div>
         </div>
     </div>
@@ -349,33 +465,156 @@
 
 <script src="/socket.io/socket.io.js"></script>
 <script>
-const ROMAN = ['Ⅰ','Ⅱ','Ⅲ','Ⅳ','Ⅴ','Ⅵ','Ⅶ','Ⅷ','Ⅸ','Ⅹ','Ⅺ','Ⅻ'];
-const API = ''; 
+// ============================================================================
+// [1] КОНФИГУРАЦИЯ И ГЛОБАЛЬНОЕ СОСТОЯНИЕ
+// ============================================================================
+const ROMAN_NUMERALS = ['Ⅰ','Ⅱ','Ⅲ','Ⅳ','Ⅴ','Ⅵ','Ⅶ','Ⅷ','Ⅸ','Ⅹ','Ⅺ','Ⅻ'];
+const API_URL = ''; 
 const socket = io();
 
-socket.on('upload-status', function(data) {
-    var progressWrap = document.getElementById('progress-wrap');
-    if (progressWrap.style.display === 'block') {
-        document.getElementById('progress-text').textContent = data.message;
+const state = {
+    allGames: [],
+    filteredGames: [],
+    currentPage: 1,
+    itemsPerPage: 24,
+    currentSort: 'newest'
+};
+
+// Элементы загрузки
+const els = {
+    uploadBtn: document.getElementById('upload-btn'),
+    fileInput: document.getElementById('file-input'),
+    progressWrap: document.getElementById('progress-wrap'),
+    progressBar: document.getElementById('progress-bar'),
+    progressText: document.getElementById('progress-text'),
+    library: document.getElementById('library'),
+    status: document.getElementById('status'),
+    libraryInfo: document.getElementById('library-info')
+};
+
+// ============================================================================
+// [2] ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (UI)
+// ============================================================================
+function showToast(msg, type = '') {
+    const toast = document.getElementById('toast');
+    toast.textContent = msg;
+    toast.className = `toast ${type}`;
+    setTimeout(() => toast.classList.add('show'), 10);
+    setTimeout(() => toast.classList.remove('show'), 4000);
+}
+
+function formatDate(ms) {
+    if (!ms) return 'Никогда';
+    return new Date(ms).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' });
+}
+
+// ============================================================================
+// [3] СЕТЕВОЕ ВЗАИМОДЕЙСТВИЕ И АВТОРИЗАЦИЯ
+// ============================================================================
+socket.on('upload-status', (data) => {
+    if (els.progressWrap.style.display === 'block') {
+        els.progressText.textContent = data.message;
     }
 });
 
-socket.on('scrape-success', function(data) {
+socket.on('scrape-success', (data) => {
     showToast(data.message, 'success');
     loadGames();
 });
 
-let allGames = [];
-let currentSort = 'newest';
+async function loadGames() {
+    try {
+        const statusRes = await fetch('/api/setup/status');
+        const statusData = await statusRes.json();
 
-function showToast(msg, type) {
-    var t = document.getElementById('toast');
-    t.textContent = msg;
-    t.className = 'toast ' + (type || '');
-    setTimeout(function() { t.classList.add('show'); }, 10);
-    setTimeout(function() { t.classList.remove('show'); }, 4000);
+        // Если БД чистая - режим создания Мастера
+        if (!statusData.initialized) {
+            document.getElementById('login-header').textContent = 'Первая Настройка';
+            document.getElementById('login-btn').textContent = 'Создать Мастера';
+            document.getElementById('login-btn').dataset.mode = 'setup';
+            document.getElementById('login-modal').classList.add('active');
+            els.status.style.display = 'none';
+            return;
+        }
+
+        const res = await fetch(`${API_URL}/api/games?_t=${Date.now()}`, { cache: 'no-store' });
+        
+        // Требуется авторизация
+        if (res.status === 401) {
+            document.getElementById('login-header').textContent = 'Хранилище';
+            document.getElementById('login-btn').textContent = 'Открыть Врата';
+            document.getElementById('login-btn').dataset.mode = 'login';
+            document.getElementById('login-modal').classList.add('active');
+            els.status.style.display = 'none';
+            return;
+        }
+
+        if (!res.ok) throw new Error();
+        
+        const rawGames = await res.json();
+        rawGames.forEach(g => {
+            if (g.tags && g.tags.length > 0) {
+                const cleanedTags = g.tags.map(t => t.replace(/\s*\(\d+\)$/, '').trim());
+                g.tags = [...new Set(cleanedTags)]; 
+            }
+        });
+        
+        state.allGames = rawGames;
+        populateTagFilter(state.allGames);
+        applyFilters();
+
+    } catch (e) {
+        els.status.innerHTML = '<div style="color:#e08080;font-family:Cinzel,serif;font-size:0.9rem;letter-spacing:0.1em;">⚠ Связь с сервером потеряна</div>';
+    }
 }
 
+document.getElementById('login-btn').addEventListener('click', async (e) => {
+    const btn = e.target;
+    const mode = btn.dataset.mode;
+    const user = document.getElementById('login-username').value.trim();
+    const pwd = document.getElementById('login-password').value.trim();
+    
+    const originalText = btn.textContent;
+    btn.textContent = 'Проверка...';
+    
+    const endpoint = mode === 'setup' ? '/api/setup/init' : '/api/login';
+    
+    try {
+        const res = await fetch(API_URL + endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: user, password: pwd })
+        });
+        const data = await res.json();
+        
+        if (data.success) {
+            if (mode === 'setup') {
+                document.getElementById('login-username').value = '';
+                document.getElementById('login-password').value = '';
+                document.getElementById('login-error').style.display = 'none';
+                alert('Мастер успешно создан! Теперь введите эти данные для входа.');
+                location.reload(); 
+            } else {
+                document.getElementById('login-modal').classList.remove('active');
+                document.getElementById('login-error').style.display = 'none';
+                els.status.style.display = 'block';
+                loadGames(); 
+            }
+        } else {
+            document.getElementById('login-error').textContent = data.error || 'Ошибка';
+            document.getElementById('login-error').style.display = 'block';
+            btn.textContent = originalText;
+        }
+    } catch (err) {
+        document.getElementById('login-error').textContent = 'Связь с сервером потеряна';
+        document.getElementById('login-error').style.display = 'block';
+        btn.textContent = originalText;
+    }
+});
+
+// ============================================================================
+// [4] ЛОГИКА БИБЛИОТЕКИ (ФИЛЬТРЫ И РЕНДЕР)
+// ============================================================================
 function populateTagFilter(games) {
     const tagSelect = document.getElementById('tag-filter');
     const tagCounts = {};
@@ -387,439 +626,447 @@ function populateTagFilter(games) {
     });
 
     const sortedTags = Object.keys(tagCounts).sort((a, b) => a.localeCompare(b));
-    tagSelect.innerHTML = '<option value="all">Все жанры</option>';
+    // При генерации используем текущий язык
+    tagSelect.innerHTML = `<option value="all" data-i18n="all_genres">${translations[currentLang].all_genres}</option>`;
+    
     sortedTags.forEach(tag => {
         const opt = document.createElement('option');
-        opt.value = tag; opt.textContent = `${tag} (${tagCounts[tag]})`;
+        opt.value = tag; 
+        opt.textContent = `${tag} (${tagCounts[tag]})`;
         tagSelect.appendChild(opt);
     });
 }
 
-async function loadGames() {
-    try {
-        // Сначала спрашиваем сервер: есть ли в базе админ?
-        const statusRes = await fetch('/api/setup/status');
-        const status = await statusRes.json();
-
-        // Если админа нет — включаем режим СОЗДАНИЯ
-        if (!status.initialized) {
-            const btn = document.getElementById('login-btn');
-            document.getElementById('login-header').textContent = 'Первая Настройка';
-            btn.textContent = 'Создать Мастера';
-            btn.dataset.mode = 'setup';
-            
-            document.getElementById('login-modal').classList.add('active');
-            document.getElementById('status').style.display = 'none';
-            return;
-        }
-
-        // Если админ есть — пытаемся скачать игры
-        var res = await fetch(API + '/api/games?_t=' + Date.now(), { cache: 'no-store' });
-        
-        // Если просит пароль — включаем режим ВХОДА
-        if (res.status === 401) {
-            document.getElementById('login-header').textContent = 'Хранилище';
-            document.getElementById('login-btn').textContent = 'Открыть Врата';
-            document.getElementById('login-btn').dataset.mode = 'login';
-            
-            document.getElementById('login-modal').classList.add('active');
-            document.getElementById('status').style.display = 'none';
-            return;
-        }
-
-        if (!res.ok) throw new Error();
-        let rawGames = await res.json();
-        
-        rawGames.forEach(g => {
-            if (g.tags && g.tags.length > 0) {
-                let cleanedTags = g.tags.map(t => t.replace(/\s*\(\d+\)$/, '').trim());
-                g.tags = [...new Set(cleanedTags)]; 
-            }
-        });
-        
-        allGames = rawGames;
-        populateTagFilter(allGames);
-        applyFilters();
-    } catch(e) {
-        document.getElementById('status').innerHTML = '<div style="color:#e08080;font-family:Cinzel,serif;font-size:0.9rem;letter-spacing:0.1em;">⚠ Связь с сервером потеряна</div>';
-    }
-}
-
-// ⚡ ЛОГИКА АВТОРИЗАЦИИ И ПЕРВИЧНОЙ НАСТРОЙКИ
-document.getElementById('login-btn').addEventListener('click', async () => {
-    const btn = document.getElementById('login-btn');
-    const mode = btn.dataset.mode; // 'setup' или 'login'
-    
-    const user = document.getElementById('login-username').value.trim();
-    const pwd = document.getElementById('login-password').value.trim();
-    
-    const originalText = btn.textContent;
-    btn.textContent = 'Проверка...';
-    
-    const endpoint = mode === 'setup' ? '/api/setup/init' : '/api/login';
-    
-    try {
-        const res = await fetch(API + endpoint, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username: user, password: pwd })
-        });
-        const data = await res.json();
-        
-        if (data.success) {
-            if (mode === 'setup') {
-                // Если мы успешно создали админа
-                document.getElementById('login-username').value = '';
-                document.getElementById('login-password').value = '';
-                document.getElementById('login-error').style.display = 'none';
-                alert('Мастер успешно создан! Теперь введите эти данные для входа.');
-                location.reload(); // Перезагружаем, чтобы показать обычное окно входа
-            } else {
-                // Если мы успешно вошли
-                document.getElementById('login-modal').classList.remove('active');
-                document.getElementById('login-error').style.display = 'none';
-                document.getElementById('status').style.display = 'block';
-                loadGames(); 
-            }
-        } else {
-            document.getElementById('login-error').textContent = data.error || 'Ошибка';
-            document.getElementById('login-error').style.display = 'block';
-            btn.textContent = originalText;
-        }
-    } catch(e) {
-        document.getElementById('login-error').textContent = 'Связь с сервером потеряна';
-        document.getElementById('login-error').style.display = 'block';
-        btn.textContent = originalText;
-    }
-});
-
-// ⚡ ПЕРЕМЕННЫЕ ДЛЯ ПАГИНАЦИИ (БЕСКОНЕЧНАЯ ЛЕНТА)
-let filteredGames = [];
-let currentPage = 1;
-const ITEMS_PER_PAGE = 24; // Сколько игр грузить за один раз
-
-document.getElementById('search-input').addEventListener('input', applyFilters);
-document.getElementById('sort-select').addEventListener('change', function(e) { currentSort = e.target.value; applyFilters(); });
-document.getElementById('tag-filter').addEventListener('change', applyFilters);
-
-// ⚡ 1. ФИЛЬТРАЦИЯ И СОРТИРОВКА (Вызывается только при поиске)
 function applyFilters() {
-    var query = document.getElementById('search-input').value.toLowerCase();
-    var selectedTag = document.getElementById('tag-filter').value;
+    const query = document.getElementById('search-input').value.toLowerCase();
+    const selectedTag = document.getElementById('tag-filter').value;
 
-    filteredGames = allGames.filter(function(g) {
-        var matchTitle = g.title.toLowerCase().includes(query) || g.id.toLowerCase().includes(query);
-        var matchTags = g.tags && g.tags.some(t => t.toLowerCase().includes(query));
-        var passesSearch = matchTitle || matchTags;
-        var passesTag = true;
-        if (selectedTag !== 'all') passesTag = g.tags && g.tags.includes(selectedTag);
+    state.filteredGames = state.allGames.filter(g => {
+        const matchTitle = g.title.toLowerCase().includes(query) || g.id.toLowerCase().includes(query);
+        const matchTags = g.tags && g.tags.some(t => t.toLowerCase().includes(query));
+        const passesSearch = matchTitle || matchTags;
+        
+        let passesTag = true;
+        if (selectedTag !== 'all') {
+            passesTag = g.tags && g.tags.includes(selectedTag);
+        }
         return passesSearch && passesTag;
     });
 
-    if (currentSort === 'newest') filteredGames.sort((a,b) => b.addedAt - a.addedAt);
-    if (currentSort === 'recent') filteredGames.sort((a,b) => b.lastPlayed - a.lastPlayed);
-    if (currentSort === 'rating') filteredGames.sort((a,b) => b.rating - a.rating);
-    if (currentSort === 'name')   filteredGames.sort((a,b) => a.title.localeCompare(b.title));
+    if (state.currentSort === 'newest') state.filteredGames.sort((a,b) => b.addedAt - a.addedAt);
+    if (state.currentSort === 'recent') state.filteredGames.sort((a,b) => b.lastPlayed - a.lastPlayed);
+    if (state.currentSort === 'rating') state.filteredGames.sort((a,b) => b.rating - a.rating);
+    if (state.currentSort === 'name')   state.filteredGames.sort((a,b) => a.title.localeCompare(b.title));
 
-    currentPage = 1;
-    document.getElementById('library').innerHTML = ''; // Очищаем библиотеку
+    state.currentPage = 1;
+    els.library.innerHTML = ''; 
     renderPage();
 }
 
-// ⚡ 2. ПОРЦИОННЫЙ РЕНДЕР (Рисует только 24 игры за раз)
 function renderPage() {
-    document.getElementById('status').style.display = 'none';
-    var lib = document.getElementById('library');
+    els.status.style.display = 'none';
 
-    if (!filteredGames.length) {
-        lib.innerHTML = '<div class="empty-state">По вашему запросу ничего не найдено...</div>';
-        if(allGames.length === 0) lib.innerHTML = '<div class="empty-state">Библиотека пуста. Время добавить первую игру!</div>';
-        document.getElementById('library-info').textContent = '';
+    // ДИНАМИЧЕСКИЙ ПЕРЕВОД ПУСТЫХ СОСТОЯНИЙ
+    if (!state.filteredGames.length) {
+        els.library.innerHTML = state.allGames.length === 0 
+            ? `<div class="empty-state" data-i18n="empty_lib">${translations[currentLang].empty_lib}</div>`
+            : `<div class="empty-state" data-i18n="not_found">${translations[currentLang].not_found}</div>`;
+        els.libraryInfo.textContent = '';
         return;
     }
 
-    const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
-    const endIndex = startIndex + ITEMS_PER_PAGE;
-    const gamesToRender = filteredGames.slice(startIndex, endIndex);
+    const startIndex = (state.currentPage - 1) * state.itemsPerPage;
+    const endIndex = startIndex + state.itemsPerPage;
+    const gamesToRender = state.filteredGames.slice(startIndex, endIndex);
 
     if (gamesToRender.length === 0) return;
 
-    // ⚡ ОПТИМИЗАЦИЯ ПРОЦЕССОРА: Собираем карточки в виртуальной памяти
     const fragment = document.createDocumentFragment();
 
-    gamesToRender.forEach(function(game, i) {
+    gamesToRender.forEach((game, i) => {
         const absoluteIndex = startIndex + i;
-        var card = document.createElement('div');
+        const roman = ROMAN_NUMERALS[absoluteIndex % ROMAN_NUMERALS.length] || String(absoluteIndex + 1);
+        const card = document.createElement('div');
+        
         card.className = 'game-card';
-        card.style.animationDelay = ((i % ITEMS_PER_PAGE) * 0.05) + 's';
-        var roman = ROMAN[absoluteIndex % ROMAN.length] || (absoluteIndex + 1).toString();
+        card.style.animationDelay = `${(i % state.itemsPerPage) * 0.05}s`;
         
         let starsHtml = `<div class="card-rating ${game.rating > 0 ? 'has-rating' : ''}">`;
-        for (let s = 1; s <= 5; s++) starsHtml += `<span class="star ${s <= game.rating ? 'active' : ''}" data-val="${s}">★</span>`;
+        for (let s = 1; s <= 5; s++) {
+            starsHtml += `<span class="star ${s <= game.rating ? 'active' : ''}" data-val="${s}">★</span>`;
+        }
         starsHtml += `</div>`;
         
-        // ⚡ ОПТИМИЗАЦИЯ ОЗУ: loading="lazy" decoding="async"
-        card.innerHTML =
-            '<div class="card-corner-tl"></div>' +
-            '<div class="card-delete" data-id="' + game.id + '" title="Сжечь игру">' +
-                '<svg viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>' +
-            '</div>' +
-            '<div class="card-cover">' +
-                starsHtml + 
-                (game.cover
-                    ? '<img src="' + game.cover + '" loading="lazy" decoding="async" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\';" alt="">' +
-                      '<div class="cover-placeholder" style="display:none"><span class="rune">' + roman + '</span><span class="folder-name">' + game.id + '</span></div>'
-                    : '<div class="cover-placeholder"><span class="rune">' + roman + '</span><span class="folder-name">' + game.id + '</span></div>'
-                ) +
-                '<div class="card-cover-overlay"></div>' +
-            '</div>' +
-            '<div class="card-info">' +
-                '<div class="card-number"><span>Том ' + String(game.number).padStart(2,'0') + '</span></div>' +
-                '<div class="card-title">' + game.title + '</div>' +
-                '<div class="card-launch">Подробнее <span class="launch-arrow">→</span></div>' +
-            '</div>' +
-            '<div class="card-corner-br"></div>';
+        const coverHtml = game.cover
+            ? `<img src="${game.cover}" loading="lazy" decoding="async" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';" alt="">
+               <div class="cover-placeholder" style="display:none">
+                   <span class="rune">${roman}</span>
+                   <span class="folder-name">${game.id}</span>
+               </div>`
+            : `<div class="cover-placeholder">
+                   <span class="rune">${roman}</span>
+                   <span class="folder-name">${game.id}</span>
+               </div>`;
 
-        var stars = card.querySelectorAll('.star');
-        stars.forEach(function(star) {
-            star.addEventListener('click', function(e) {
-                e.preventDefault(); e.stopPropagation();
-                var val = parseInt(this.getAttribute('data-val'));
+        card.innerHTML = `
+            <div class="card-corner-tl"></div>
+            <div class="card-delete" data-id="${game.id}" title="Сжечь игру">
+                <svg viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+            </div>
+            <div class="card-cover">
+                ${starsHtml}
+                ${coverHtml}
+                <div class="card-cover-overlay"></div>
+            </div>
+            <div class="card-info">
+                <div class="card-number"><span>Том ${String(game.number).padStart(2,'0')}</span></div>
+                <div class="card-title">${game.title}</div>
+                <div class="card-launch">Подробнее <span class="launch-arrow">→</span></div>
+            </div>
+            <div class="card-corner-br"></div>
+        `;
+
+        const stars = card.querySelectorAll('.star');
+        stars.forEach(star => {
+            star.addEventListener('click', (e) => {
+                e.preventDefault(); 
+                e.stopPropagation();
+                const val = parseInt(e.target.getAttribute('data-val'));
                 game.rating = val;
+                
                 card.querySelector('.card-rating').classList.add('has-rating');
                 stars.forEach(s => {
-                    if (parseInt(s.getAttribute('data-val')) <= val) s.classList.add('active');
-                    else s.classList.remove('active');
+                    parseInt(s.getAttribute('data-val')) <= val ? s.classList.add('active') : s.classList.remove('active');
                 });
-                fetch(API + '/api/games/' + encodeURIComponent(game.id) + '/meta', {
-                    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ rating: val })
+                
+                fetch(`${API_URL}/api/games/${encodeURIComponent(game.id)}/meta`, {
+                    method: 'POST', 
+                    headers: {'Content-Type': 'application/json'}, 
+                    body: JSON.stringify({ rating: val })
                 });
             });
         });
 
-        card.querySelector('.card-delete').addEventListener('click', async function(e) {
-            e.preventDefault(); e.stopPropagation();
-            if (!confirm('Сжечь том "' + game.title + '"?\nЭто заклинание необратимо!')) return;
+        card.querySelector('.card-delete').addEventListener('click', async (e) => {
+            e.preventDefault(); 
+            e.stopPropagation();
+            if (!confirm(`Сжечь том "${game.title}"?\nЭто заклинание необратимо!`)) return;
+            
             try {
-                var r = await fetch(API + '/api/games/' + encodeURIComponent(game.id), { method: 'DELETE'});
-                var d = await r.json();
+                const r = await fetch(`${API_URL}/api/games/${encodeURIComponent(game.id)}`, { method: 'DELETE'});
+                const d = await r.json();
                 if (d.success) { 
                     showToast('Том обратился в пепел', 'success'); 
-                    allGames = allGames.filter(g => g.id !== game.id);
-                    applyFilters(); // Обновляем мгновенно без скачивания с сервера!
-                } else showToast('Ошибка: ' + d.error, 'error');
-            } catch(err) { showToast('Магия дала сбой', 'error'); }
+                    state.allGames = state.allGames.filter(g => g.id !== game.id);
+                    applyFilters(); 
+                } else {
+                    showToast(`Ошибка: ${d.error}`, 'error');
+                }
+            } catch(err) { 
+                showToast('Магия дала сбой', 'error'); 
+            }
         });
 
-        card.addEventListener('click', function(e) {
+        card.addEventListener('click', (e) => {
             if (e.target.closest('.card-delete') || e.target.closest('.card-rating')) return;
-            
-            document.getElementById('modal-title').textContent = game.title;
-            document.getElementById('modal-number').textContent = 'Том ' + String(game.number).padStart(2,'0');
-            
-            const coverEl = document.getElementById('modal-cover');
-            const placeholder = document.getElementById('modal-cover-placeholder');
-            if (game.cover) {
-                coverEl.src = game.cover; coverEl.style.display = 'block'; placeholder.style.display = 'none';
-            } else {
-                coverEl.style.display = 'none'; placeholder.style.display = 'flex';
-                document.getElementById('modal-placeholder-rune').textContent = ROMAN[absoluteIndex % ROMAN.length] || (absoluteIndex + 1);
-                document.getElementById('modal-placeholder-name').textContent = game.id;
-            }
-
-            const formatDate = (ms) => ms ? new Date(ms).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' }) : 'Никогда';
-            document.getElementById('modal-added').innerHTML = '<b>Свиток получен:</b> ' + formatDate(game.addedAt);
-            document.getElementById('modal-played').innerHTML = '<b>Последний ритуал:</b> ' + formatDate(game.lastPlayed);
-
-            const tagsDiv = document.getElementById('modal-tags');
-            tagsDiv.innerHTML = '';
-            if (game.tags && game.tags.length > 0) {
-                game.tags.forEach(t => {
-                    const span = document.createElement('span'); span.className = 'tag'; span.textContent = t; tagsDiv.appendChild(span);
-                });
-            } else {
-                tagsDiv.innerHTML = '<span class="tag" style="opacity:0.5; border-color:transparent;">Теги не расшифрованы</span>';
-            }
-
-            const descDiv = document.getElementById('modal-description');
-            if (game.description) {
-                descDiv.textContent = game.description; descDiv.style.display = 'block';
-            } else {
-                descDiv.style.display = 'none';
-            }
-
-            // Экспорт (Скачивание)
-            document.getElementById('modal-export-btn').onclick = function(e) {
-                e.preventDefault();
-                window.location.href = API + '/api/games/' + encodeURIComponent(game.id) + '/saves/export';
-            };
-
-            // Импорт (Загрузка)
-            const importInput = document.getElementById('import-saves-input');
-            const newImportInput = importInput.cloneNode(true);
-            importInput.parentNode.replaceChild(newImportInput, importInput);
-
-            newImportInput.addEventListener('change', async function(e) {
-                if (!e.target.files[0]) return;
-                const file = e.target.files[0];
-                const formData = new FormData();
-                formData.append('saves', file);
-
-                const btn = document.getElementById('modal-import-btn');
-                const oldText = btn.innerHTML;
-                btn.innerHTML = '⏳ Ожидайте...';
-                btn.style.pointerEvents = 'none';
-
-                try {
-                    const res = await fetch(API + '/api/games/' + encodeURIComponent(game.id) + '/saves/import', {
-                        method: 'POST', body: formData
-                    });
-                    const data = await res.json();
-                    if (data.success) showToast(data.message, 'success');
-                    else showToast(data.error, 'error');
-                } catch(err) { showToast('Ошибка при отправке архива', 'error'); } 
-                finally { btn.innerHTML = oldText; btn.style.pointerEvents = 'auto'; e.target.value = ''; }
-            });
-
-            document.getElementById('modal-import-btn').onclick = function(e) {
-                e.preventDefault();
-                newImportInput.click();
-            };
-
-            // ЗАПУСК ИГРЫ
-            document.getElementById('modal-play-btn').onclick = async function(e) {
-                e.preventDefault();
-                game.lastPlayed = Date.now();
-                
-                const btn = e.currentTarget;
-                const originalText = btn.innerHTML;
-                btn.style.opacity = '0.7'; btn.style.pointerEvents = 'none';
-                btn.innerHTML = 'Запуск... <span class="launch-arrow">→</span>';
-
-                try {
-                    await fetch(API + '/api/games/' + encodeURIComponent(game.id) + '/meta', {
-                        method: 'POST', headers: {'Content-Type': 'application/json'}, 
-                        body: JSON.stringify({ lastPlayed: game.lastPlayed }),
-                        keepalive: true 
-                    });
-                } catch(err) {} 
-                finally {
-                    window.location.href = game.url;
-                    setTimeout(() => { 
-                        btn.innerHTML = originalText; btn.style.opacity = '1'; btn.style.pointerEvents = 'auto';
-                    }, 1000);
-                }
-            };
-
-            // РЕДАКТИРОВАНИЕ
-            const editForm = document.getElementById('modal-edit-form');
-            const titleDisplay = document.getElementById('modal-title');
-            const saveBtn = document.getElementById('edit-save-btn');
-            const statusEl = document.getElementById('edit-status');
-            
-            editForm.style.display = 'none'; titleDisplay.style.display = 'block';
-            document.getElementById('edit-title-input').value = game.title;
-            document.getElementById('edit-rj-input').value = ''; 
-
-            document.getElementById('modal-edit-btn').onclick = function() { titleDisplay.style.display = 'none'; editForm.style.display = 'block'; };
-            document.getElementById('edit-cancel-btn').onclick = function() { titleDisplay.style.display = 'block'; editForm.style.display = 'none'; };
-
-            saveBtn.onclick = async function() {
-                const newTitle = document.getElementById('edit-title-input').value.trim();
-                const newRj = document.getElementById('edit-rj-input').value.trim();
-                
-                statusEl.style.display = 'block'; statusEl.textContent = newRj ? 'Связь с серверами... (ожидание ~15 сек)' : 'Сохранение...';
-                saveBtn.disabled = true; saveBtn.style.opacity = '0.5';
-
-                try {
-                    const res = await fetch(`${API}/api/games/${encodeURIComponent(game.id)}/edit`, {
-                        method: 'POST', headers: { 'Content-Type': 'application/json'}, body: JSON.stringify({ title: newTitle, rjCode: newRj })
-                    });
-                    const data = await res.json();
-                    if (data.success) {
-                        if (data.warning) showToast(data.warning, 'error'); else showToast('Том успешно переписан!', 'success');
-                        game.title = data.title; game.cover = data.cover; game.tags = data.tags; game.description = data.description;
-                        
-                        titleDisplay.textContent = game.title;
-                        if (game.cover) { document.getElementById('modal-cover').src = game.cover; document.getElementById('modal-cover').style.display = 'block'; document.getElementById('modal-cover-placeholder').style.display = 'none'; }
-                        
-                        tagsDiv.innerHTML = '';
-                        if (game.tags && game.tags.length > 0) { game.tags.forEach(t => { const span = document.createElement('span'); span.className = 'tag'; span.textContent = t; tagsDiv.appendChild(span); }); }
-                        if (game.description) { descDiv.textContent = game.description; descDiv.style.display = 'block'; }
-
-                        titleDisplay.style.display = 'block'; editForm.style.display = 'none';
-                        applyFilters(); // Обновляем ленту моментально
-                    } else showToast(data.error, 'error');
-                } catch(e) { showToast('Сеть недоступна', 'error'); } 
-                finally { saveBtn.disabled = false; saveBtn.style.opacity = '1'; statusEl.style.display = 'none'; }
-            };
-
-            document.getElementById('game-modal').classList.add('active');
+            openGameModal(game, absoluteIndex);
         });
 
         fragment.appendChild(card);
     });
     
-    // ⚡ ОПТИМИЗАЦИЯ ПРОЦЕССОРА: Вставляем все 24 карточки разом
-    lib.appendChild(fragment);
+    els.library.appendChild(fragment);
     
-    const countText = Math.min(endIndex, filteredGames.length);
-    document.getElementById('library-info').textContent = `Показано ${countText} из ${filteredGames.length} свитков`;
+    const countText = Math.min(endIndex, state.filteredGames.length);
+    els.libraryInfo.textContent = `Показано ${countText} из ${state.filteredGames.length} свитков`;
 }
 
-// ⚡ 3. НАБЛЮДАТЕЛЬ СКРОЛЛА (Автоматически грузит следующую страницу)
-const scrollObserver = new IntersectionObserver((entries) => {
-    // Если юзер проскроллил до сенсора, и еще остались игры - грузим дальше
-    if (entries[0].isIntersecting && filteredGames.length > currentPage * ITEMS_PER_PAGE) {
-        currentPage++;
-        renderPage();
+// ============================================================================
+// [5] МОДАЛЬНОЕ ОКНО ИГРЫ
+// ============================================================================
+function openGameModal(game, absoluteIndex) {
+    document.getElementById('modal-title').textContent = game.title;
+    document.getElementById('modal-number').textContent = `Том ${String(game.number).padStart(2,'0')}`;
+    
+    const coverEl = document.getElementById('modal-cover');
+    const placeholder = document.getElementById('modal-cover-placeholder');
+    
+    if (game.cover) {
+        coverEl.src = game.cover; 
+        coverEl.style.display = 'block'; 
+        placeholder.style.display = 'none';
+    } else {
+        coverEl.style.display = 'none'; 
+        placeholder.style.display = 'flex';
+        document.getElementById('modal-placeholder-rune').textContent = ROMAN_NUMERALS[absoluteIndex % ROMAN_NUMERALS.length] || String(absoluteIndex + 1);
+        document.getElementById('modal-placeholder-name').textContent = game.id;
     }
-}, { rootMargin: '400px' }); // Начинает грузить за 400 пикселей до конца (без рывков)
 
-// Запускаем наблюдение за невидимым блоком в HTML
-const sentinel = document.getElementById('scroll-sentinel');
-if (sentinel) scrollObserver.observe(sentinel);
+    document.getElementById('modal-added').innerHTML = `<b>Свиток получен:</b> ${formatDate(game.addedAt)}`;
+    document.getElementById('modal-played').innerHTML = `<b>Последний ритуал:</b> ${formatDate(game.lastPlayed)}`;
 
-var uploadBtn = document.getElementById('upload-btn');
-var fileInput = document.getElementById('file-input');
-var progressWrap = document.getElementById('progress-wrap');
-var progressBar = document.getElementById('progress-bar');
-var progressText = document.getElementById('progress-text');
+    const tagsDiv = document.getElementById('modal-tags');
+    tagsDiv.innerHTML = '';
+    if (game.tags && game.tags.length > 0) {
+        game.tags.forEach(t => {
+            const span = document.createElement('span'); 
+            span.className = 'tag'; 
+            span.textContent = t; 
+            tagsDiv.appendChild(span);
+        });
+    } else {
+        tagsDiv.innerHTML = '<span class="tag" style="opacity:0.5; border-color:transparent;">Теги не расшифрованы</span>';
+    }
 
-uploadBtn.addEventListener('click', function() { fileInput.click(); });
-uploadBtn.addEventListener('dragover', function(e) { e.preventDefault(); uploadBtn.classList.add('drag-over'); });
-uploadBtn.addEventListener('dragleave', function() { uploadBtn.classList.remove('drag-over'); });
-uploadBtn.addEventListener('drop', function(e) { e.preventDefault(); uploadBtn.classList.remove('drag-over'); var file = e.dataTransfer.files[0]; if (file) uploadFile(file); });
-fileInput.addEventListener('change', function() { if (fileInput.files[0]) uploadFile(fileInput.files[0]); fileInput.value = ''; });
+    const descDiv = document.getElementById('modal-description');
+    if (game.description) {
+        descDiv.textContent = game.description; 
+        descDiv.style.display = 'block';
+    } else {
+        descDiv.style.display = 'none';
+    }
 
-function uploadFile(file) {
-    if (!file.name.toLowerCase().match(/\.(zip|7z|rar)$/)) { showToast('Сервер принимает только архивы ZIP, 7z или RAR!', 'error'); return; }
-    var formData = new FormData(); formData.append('game', file);
-    var xhr = new XMLHttpRequest();
-    progressWrap.style.display = 'block'; progressBar.style.width = '0%'; progressText.textContent = 'Передача ' + file.name + '...';
-    uploadBtn.style.pointerEvents = 'none'; uploadBtn.style.opacity = '0.5';
+    document.getElementById('modal-export-btn').onclick = (e) => {
+        e.preventDefault();
+        window.location.href = `${API_URL}/api/games/${encodeURIComponent(game.id)}/saves/export`;
+    };
 
-    xhr.upload.addEventListener('progress', function(e) {
-        if (e.lengthComputable) {
-            progressBar.style.width = Math.round(e.loaded / e.total * 90) + '%';
-            progressText.textContent = 'Передача маны: ' + (e.loaded / 1024 / 1024).toFixed(1) + ' / ' + (e.total / 1024 / 1024).toFixed(1) + ' MB';
+    const importInput = document.getElementById('import-saves-input');
+    const newImportInput = importInput.cloneNode(true);
+    importInput.parentNode.replaceChild(newImportInput, importInput);
+
+    newImportInput.addEventListener('change', async (e) => {
+        if (!e.target.files[0]) return;
+        
+        const file = e.target.files[0];
+        const formData = new FormData();
+        formData.append('saves', file);
+
+        const btn = document.getElementById('modal-import-btn');
+        const spanText = btn.querySelector('span');
+        const oldText = spanText ? spanText.textContent : 'Импорт';
+        
+        if (spanText) spanText.textContent = 'Ожидайте...';
+        btn.style.pointerEvents = 'none';
+
+        try {
+            const res = await fetch(`${API_URL}/api/games/${encodeURIComponent(game.id)}/saves/import`, {
+                method: 'POST', body: formData
+            });
+            const data = await res.json();
+            if (data.success) showToast(data.message, 'success');
+            else showToast(data.error, 'error');
+        } catch(err) { 
+            showToast('Ошибка при отправке архива', 'error'); 
+        } finally { 
+            if (spanText) spanText.textContent = oldText; 
+            btn.style.pointerEvents = 'auto'; 
+            e.target.value = ''; 
         }
     });
 
-    xhr.addEventListener('load', function() {
-        progressBar.style.width = '100%';
+    document.getElementById('modal-import-btn').onclick = (e) => {
+        e.preventDefault();
+        newImportInput.click();
+    };
+
+    document.getElementById('modal-play-btn').onclick = async (e) => {
+        e.preventDefault();
+        game.lastPlayed = Date.now();
+        
+        const btn = e.currentTarget;
+        const spanText = btn.querySelector('span[data-i18n="play_btn"]');
+        const originalText = spanText ? spanText.textContent : 'Играть';
+        
+        btn.style.opacity = '0.7'; 
+        btn.style.pointerEvents = 'none';
+        if (spanText) spanText.textContent = 'Запуск...';
+
         try {
-            var data = JSON.parse(xhr.responseText);
-            if (data.success) { progressText.textContent = '✓ ' + data.message; showToast(data.message, 'success'); setTimeout(function() { progressWrap.style.display = 'none'; loadGames(); }, 2000); } 
-            else { progressText.textContent = '✗ ' + data.error; showToast(data.error, 'error'); }
-        } catch(e) { progressText.textContent = '✗ Сервер не отвечает'; showToast('Ошибка сервера', 'error'); }
-        uploadBtn.style.pointerEvents = ''; uploadBtn.style.opacity = '';
+            await fetch(`${API_URL}/api/games/${encodeURIComponent(game.id)}/meta`, {
+                method: 'POST', 
+                headers: {'Content-Type': 'application/json'}, 
+                body: JSON.stringify({ lastPlayed: game.lastPlayed }),
+                keepalive: true 
+            });
+        } catch(err) {} 
+        finally {
+            window.location.href = game.url;
+            setTimeout(() => { 
+                if (spanText) spanText.textContent = originalText; 
+                btn.style.opacity = '1'; 
+                btn.style.pointerEvents = 'auto';
+            }, 1000);
+        }
+    };
+
+    const editForm = document.getElementById('modal-edit-form');
+    const titleDisplay = document.getElementById('modal-title');
+    const saveBtn = document.getElementById('edit-save-btn');
+    const statusEl = document.getElementById('edit-status');
+    
+    editForm.style.display = 'none'; 
+    titleDisplay.style.display = 'block';
+    
+    document.getElementById('edit-title-input').value = game.title;
+    document.getElementById('edit-rj-input').value = ''; 
+
+    document.getElementById('modal-edit-btn').onclick = () => { 
+        titleDisplay.style.display = 'none'; 
+        editForm.style.display = 'block'; 
+    };
+    
+    document.getElementById('edit-cancel-btn').onclick = () => { 
+        titleDisplay.style.display = 'block'; 
+        editForm.style.display = 'none'; 
+    };
+
+    saveBtn.onclick = async () => {
+        const newTitle = document.getElementById('edit-title-input').value.trim();
+        const newRj = document.getElementById('edit-rj-input').value.trim();
+        
+        statusEl.style.display = 'block'; 
+        statusEl.textContent = newRj ? 'Связь с серверами... (ожидание ~15 сек)' : 'Сохранение...';
+        saveBtn.disabled = true; 
+        saveBtn.style.opacity = '0.5';
+
+        try {
+            const res = await fetch(`${API_URL}/api/games/${encodeURIComponent(game.id)}/edit`, {
+                method: 'POST', 
+                headers: { 'Content-Type': 'application/json'}, 
+                body: JSON.stringify({ title: newTitle, rjCode: newRj })
+            });
+            
+            const data = await res.json();
+            
+            if (data.success) {
+                if (data.warning) showToast(data.warning, 'error'); 
+                else showToast('Том успешно переписан!', 'success');
+                
+                game.title = data.title; 
+                game.cover = data.cover; 
+                game.tags = data.tags; 
+                game.description = data.description;
+                
+                titleDisplay.textContent = game.title;
+                
+                if (game.cover) { 
+                    coverEl.src = game.cover; 
+                    coverEl.style.display = 'block'; 
+                    placeholder.style.display = 'none'; 
+                }
+                
+                tagsDiv.innerHTML = '';
+                if (game.tags && game.tags.length > 0) { 
+                    game.tags.forEach(t => { 
+                        const span = document.createElement('span'); 
+                        span.className = 'tag'; 
+                        span.textContent = t; 
+                        tagsDiv.appendChild(span); 
+                    }); 
+                }
+                
+                if (game.description) { 
+                    descDiv.textContent = game.description; 
+                    descDiv.style.display = 'block'; 
+                }
+
+                titleDisplay.style.display = 'block'; 
+                editForm.style.display = 'none';
+                applyFilters(); 
+            } else {
+                showToast(data.error, 'error');
+            }
+        } catch(e) { 
+            showToast('Сеть недоступна', 'error'); 
+        } finally { 
+            saveBtn.disabled = false; 
+            saveBtn.style.opacity = '1'; 
+            statusEl.style.display = 'none'; 
+        }
+    };
+
+    document.getElementById('game-modal').classList.add('active');
+}
+
+// ============================================================================
+// [6] ЗАГРУЗКА АРХИВОВ
+// ============================================================================
+els.uploadBtn.addEventListener('click', () => els.fileInput.click());
+els.uploadBtn.addEventListener('dragover', (e) => { e.preventDefault(); els.uploadBtn.classList.add('drag-over'); });
+els.uploadBtn.addEventListener('dragleave', () => els.uploadBtn.classList.remove('drag-over'));
+els.uploadBtn.addEventListener('drop', (e) => { 
+    e.preventDefault(); 
+    els.uploadBtn.classList.remove('drag-over'); 
+    const file = e.dataTransfer.files[0]; 
+    if (file) uploadFile(file); 
+});
+els.fileInput.addEventListener('change', () => { 
+    if (els.fileInput.files[0]) uploadFile(els.fileInput.files[0]); 
+    els.fileInput.value = ''; 
+});
+
+function uploadFile(file) {
+    if (!file.name.toLowerCase().match(/\.(zip|7z|rar)$/)) { 
+        showToast('Сервер принимает только архивы ZIP, 7z или RAR!', 'error'); 
+        return; 
+    }
+    
+    const formData = new FormData(); 
+    formData.append('game', file);
+    const xhr = new XMLHttpRequest();
+    
+    els.progressWrap.style.display = 'block'; 
+    els.progressBar.style.width = '0%'; 
+    els.progressText.textContent = `Передача ${file.name}...`;
+    els.uploadBtn.style.pointerEvents = 'none'; 
+    els.uploadBtn.style.opacity = '0.5';
+
+    xhr.upload.addEventListener('progress', (e) => {
+        if (e.lengthComputable) {
+            els.progressBar.style.width = Math.round(e.loaded / e.total * 90) + '%';
+            els.progressText.textContent = `Передача маны: ${(e.loaded / 1024 / 1024).toFixed(1)} / ${(e.total / 1024 / 1024).toFixed(1)} MB`;
+        }
     });
 
-    xhr.addEventListener('error', function() { progressText.textContent = '✗ Ритуал прерван'; showToast('Связь разорвана', 'error'); uploadBtn.style.pointerEvents = ''; uploadBtn.style.opacity = ''; });
-    xhr.open('POST', API + '/api/upload');
+    xhr.addEventListener('load', () => {
+        els.progressBar.style.width = '100%';
+        try {
+            const data = JSON.parse(xhr.responseText);
+            if (data.success) { 
+                els.progressText.textContent = `✓ ${data.message}`; 
+                showToast(data.message, 'success'); 
+                setTimeout(() => { els.progressWrap.style.display = 'none'; loadGames(); }, 2000); 
+            } else { 
+                els.progressText.textContent = `✗ ${data.error}`; 
+                showToast(data.error, 'error'); 
+            }
+        } catch(e) { 
+            els.progressText.textContent = '✗ Сервер не отвечает'; 
+            showToast('Ошибка сервера', 'error'); 
+        }
+        els.uploadBtn.style.pointerEvents = ''; 
+        els.uploadBtn.style.opacity = '';
+    });
+
+    xhr.addEventListener('error', () => { 
+        els.progressText.textContent = '✗ Ритуал прерван'; 
+        showToast('Связь разорвана', 'error'); 
+        els.uploadBtn.style.pointerEvents = ''; 
+        els.uploadBtn.style.opacity = ''; 
+    });
+    
+    xhr.open('POST', `${API_URL}/api/upload`);
     xhr.send(formData);
 }
+
+// ============================================================================
+// [7] ИНИЦИАЛИЗАЦИЯ И СИСТЕМНЫЕ СОБЫТИЯ
+// ============================================================================
+
+document.getElementById('search-input').addEventListener('input', applyFilters);
+document.getElementById('sort-select').addEventListener('change', (e) => { state.currentSort = e.target.value; applyFilters(); });
+document.getElementById('tag-filter').addEventListener('change', applyFilters);
 
 document.getElementById('modal-close').addEventListener('click', () => document.getElementById('game-modal').classList.remove('active'));
 document.getElementById('game-modal').addEventListener('click', (e) => {
@@ -829,28 +1076,38 @@ document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') document.getElementById('game-modal').classList.remove('active');
 });
 
-loadGames();
+const scrollObserver = new IntersectionObserver((entries) => {
+    if (entries[0].isIntersecting && state.filteredGames.length > state.currentPage * state.itemsPerPage) {
+        state.currentPage++;
+        renderPage();
+    }
+}, { rootMargin: '400px' });
 
-// ==========================================
-// ⚡ УМНОЕ ОБНОВЛЕНИЕ ДАННЫХ (Reactivation)
-// ==========================================
+const sentinel = document.getElementById('scroll-sentinel');
+if (sentinel) scrollObserver.observe(sentinel);
 
-// 1. Слушаем возврат на страницу через кнопку "Назад" или свайп (BFCache)
-window.addEventListener('pageshow', function(event) {
-    // event.persisted означает, что страница была "разморожена" из памяти
+window.addEventListener('pageshow', (event) => {
     if (event.persisted) {
         console.log('🔄 Возврат из BFCache, обновляем данные...');
         loadGames();
     }
 });
 
-// 2. Слушаем возврат в PWA-приложение (если ты сворачивал его в фон)
 document.addEventListener('visibilitychange', () => {
     if (!document.hidden) {
         console.log('🔄 Приложение снова активно, обновляем данные...');
         loadGames();
     }
 });
+
+document.getElementById('lang-switcher').value = currentLang;
+setLanguage(currentLang); 
+
+document.getElementById('lang-switcher').addEventListener('change', (e) => {
+    setLanguage(e.target.value);
+});
+
+loadGames();
 
 </script>
 </body>
