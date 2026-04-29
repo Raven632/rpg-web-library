@@ -564,25 +564,34 @@
       const el = document.getElementById(id);
       if (!el) return;
 
-      const press = (e) => {
+      const KEY_CODES = { up:38, down:40, left:37, right:39, ok:32, escape:27, control:17, shift:16 };
+
+      const press = e => {
         e.preventDefault(); e.stopPropagation();
         el.classList.add('_on');
-        try { el.setPointerCapture(e.pointerId); } catch (_) {}
-        
-        // Моментальная запись в память движка! 0 спайков процессора.
+        try { el.setPointerCapture(e.pointerId); } catch {}
+        const kn = rpgKeyMap[id];
+        // Прямой Input (оба варианта — с _ и без)
         if (typeof Input !== 'undefined') {
-            Input._currentState[rpgKeyMap[id]] = true;
+          if (Input._currentState) Input._currentState[kn] = true;
+          if (Input.currentState)  Input.currentState[kn]  = true;
         }
+        // KeyboardEvent — работает со всеми плагинами без исключений
+        const kc = KEY_CODES[kn];
+        if (kc) document.dispatchEvent(new KeyboardEvent('keydown', { keyCode: kc, which: kc, bubbles: true, cancelable: true }));
       };
 
-      const release = (e) => {
+      const release = e => {
         e.preventDefault(); e.stopPropagation();
         el.classList.remove('_on');
-        try { if (el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId); } catch (_) {}
-        
+        try { if (el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId); } catch {}
+        const kn = rpgKeyMap[id];
         if (typeof Input !== 'undefined') {
-            Input._currentState[rpgKeyMap[id]] = false;
+          if (Input._currentState) Input._currentState[kn] = false;
+          if (Input.currentState)  Input.currentState[kn]  = false;
         }
+        const kc = KEY_CODES[kn];
+        if (kc) document.dispatchEvent(new KeyboardEvent('keyup', { keyCode: kc, which: kc, bubbles: true, cancelable: true }));
       };
 
       el.addEventListener('pointerdown', press);
@@ -1014,17 +1023,6 @@
               if (SceneManager._scene) SceneManager._scene.pause = false;
           }
       });
-
-      // Снижение нагрузки на шину VRAM при выводе текста
-      if (typeof Window_Message !== 'undefined' && !Window_Message.prototype.__textOptimized) {
-          Window_Message.prototype.__textOptimized = true;
-          const origUpdate = Window_Message.prototype.update;
-          let frameCounter = 0;
-          Window_Message.prototype.update = function() {
-              frameCounter++;
-              if (frameCounter % 2 === 0) origUpdate.call(this);
-          };
-      }
 
       console.log('[RPG Fixes] 🔧 Память оптимизирована (Auto-GC отключен)!');
       clearInterval(initTimer);
