@@ -13,7 +13,6 @@ const rateLimit = require('express-rate-limit');
 const sqlite3 = require('sqlite3');
 const { open } = require('sqlite');
 
-// ⚡ 1. ПОДКЛЮЧАЕМ SOCKET.IO
 const http = require('http');
 const { Server } = require('socket.io');
 
@@ -22,26 +21,36 @@ const crypto = require('crypto');
 const bcrypt = require('bcrypt');
 
 const app = express();
-
-// ⚡ 2. СОЗДАЕМ HTTP СЕРВЕР С СОКЕТАМИ
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: '*' } });
 
 app.use(compression());
 
-// ⚡ ИДЕАЛЬНАЯ АРХИТЕКТУРА ПАПОК
+// ============================================================================
+// [1] КОНФИГУРАЦИЯ СЕРВЕРА
+// ============================================================================
+
 const GAMES_DIR = '/games';
-const EXTRACT_TMP = path.join(GAMES_DIR, '_tmp_uploads'); // РЕАЛЬНЫЙ ДИСК
-const UPLOAD_TMP = EXTRACT_TMP; // Грузим сразу на диск, чтобы не убить Docker
+const EXTRACT_TMP = path.join(GAMES_DIR, '_tmp_uploads'); 
+const UPLOAD_TMP = EXTRACT_TMP; 
 const SAVES_DIR = path.join(GAMES_DIR, '_saves');
+const AUDIOCACHE = path.join(GAMES_DIR, '.audio-cache');
 
-const SESSION_TOKEN = crypto.randomBytes(32).toString('hex');
+// ⚡ Уникальный токен сессии (Генерируется при первом запуске и хранится в БД)
+let SESSION_TOKEN = '';
 
-let db;
+const TAGS_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const dlsiteTagCache = new Map();
+let db; 
 
-fsp.mkdir(UPLOAD_TMP, { recursive: true }).catch(() => {});
-fsp.mkdir(EXTRACT_TMP, { recursive: true }).catch(() => {});
-fsp.mkdir(SAVES_DIR, { recursive: true }).catch(() => {});
+// ⚡ Очередь фонового скрейпинга с дедупликацией
+const backgroundScrapeQueue = [];
+const queuedScrapes = new Set(); // Защита от дублирования
+let isBackgroundScraping = false;
+
+// ============================================================================
+// [2] ИНИЦИАЛИЗАЦИЯ И MIDDLEWARE
+// ============================================================================
 
 app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
 app.use(express.json({ limit: '50mb' }));
@@ -51,123 +60,87 @@ const apiLimiter = rateLimit({ windowMs: 60 * 1000, max: 200, message: { error: 
 const uploadLimiter = rateLimit({ windowMs: 60 * 1000, max: 5, message: { error: 'Слишком много загрузок' } });
 app.use('/api/', apiLimiter);
 
-// ⚡ ПРОВЕРКА СТАТУСА НАСТРОЙКИ (Открыто для всех)
-app.get('/api/setup/status', async (req, res) => {
-    const adminSet = await db.get('SELECT value FROM settings WHERE key = "admin_user"');
-    res.json({ initialized: !!adminSet });
-});
-
-// ⚡ ПЕРВИЧНАЯ НАСТРОЙКА АДМИНА (Сработает только один раз!)
-app.post('/api/setup/init', apiLimiter, async (req, res) => {
-    const adminSet = await db.get('SELECT value FROM settings WHERE key = "admin_user"');
-    if (adminSet) return res.status(403).json({ error: 'Сервер уже настроен!' });
-
-    const { username, password } = req.body;
-    if (!username || !password || username.length < 3 || password.length < 4) {
-        return res.status(400).json({ error: 'Слишком короткий логин или пароль' });
-    }
-
-    const hashedPass = await bcrypt.hash(password, 10);
-    await db.run('INSERT INTO settings (key, value) VALUES (?, ?)', ['admin_user', username]);
-    await db.run('INSERT INTO settings (key, value) VALUES (?, ?)', ['admin_pass', hashedPass]);
-
-    res.json({ success: true });
-});
-
-// ⚡ ВХОД В БИБЛИОТЕКУ
-app.post('/api/login', apiLimiter, async (req, res) => {
-    const { username, password } = req.body;
-    
-    const dbUser = await db.get('SELECT value FROM settings WHERE key = "admin_user"');
-    const dbPass = await db.get('SELECT value FROM settings WHERE key = "admin_pass"');
-
-    if (dbUser && dbPass && username === dbUser.value) {
-        const match = await bcrypt.compare(password, dbPass.value);
-        if (match) {
-            res.cookie('auth_token', SESSION_TOKEN, {
-                httpOnly: true, sameSite: 'lax', maxAge: 30 * 24 * 60 * 60 * 1000 
-            });
-            return res.json({ success: true });
-        }
-    }
-    res.status(401).json({ error: 'Неверный логин или пароль' });
-});
-
-app.post('/api/logout', (req, res) => {
-    res.clearCookie('auth_token');
-    res.json({ success: true });
-});
-
-// ⚡ ЖЕСТКИЙ ФИЛЬТР БЕЗОПАСНОСТИ ДЛЯ ОСТАЛЬНОГО API
-function requireAuth(req, res, next) {
-    if (req.cookies.auth_token !== SESSION_TOKEN) {
-        return res.status(401).json({ error: 'Требуется авторизация' });
-    }
-    next();
-}
-app.use('/api/', requireAuth);
+Promise.all([
+    fsp.mkdir(EXTRACT_TMP, { recursive: true }),
+    fsp.mkdir(SAVES_DIR, { recursive: true }),
+    fsp.mkdir(AUDIOCACHE, { recursive: true })
+]).catch(err => console.error('[Init] Ошибка создания системных папок:', err));
 
 const storage = multer.diskStorage({
-    destination: function (req, file, cb) { cb(null, UPLOAD_TMP); },
-    filename: function (req, file, cb) {
+    destination: (req, file, cb) => cb(null, UPLOAD_TMP),
+    filename: (req, file, cb) => {
         const ext = path.extname(file.originalname) || '';
-        cb(null, 'archive_' + Date.now() + ext);
+        cb(null, `archive_${Date.now()}${ext}`);
     }
 });
 
 const upload = multer({
-    storage: storage,
-    limits: { fileSize: 10 * 1024 * 1024 * 1024 }, // Лимит 10 ГБ
+    storage,
+    limits: { fileSize: 10 * 1024 * 1024 * 1024 }, 
     fileFilter: (req, file, cb) => {
         if (file.originalname.match(/\.(zip|7z|rar)$/i)) cb(null, true);
         else cb(new Error('Поддерживаются только ZIP, 7z и RAR!'));
     }
 });
 
-// =====================================================================
-// ✅ КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: spawn вместо execFilePromise для распаковки
-//
-// Проблема: execFilePromise буферизует ВСЁ stdout в оперативке.
-// При распаковке 2.8GB архива с тысячами файлов 7zz/unar печатает
-// каждый файл — это сотни МБ текста → buffer overflow → крэш.
-//
-// Решение: spawn с stdio: ['pipe', 'ignore', 'pipe']
-//   - stdout идет в /dev/null (не в память)
-//   - stderr собирается только первые 50KB для диагностики ошибок
-// =====================================================================
+// ============================================================================
+// [3] СИСТЕМНЫЕ УТИЛИТЫ И ФОНОВАЯ ОЧЕРЕДЬ
+// ============================================================================
+
+// Процессор фоновой очереди
+async function processBackgroundScrape() {
+    if (isBackgroundScraping || backgroundScrapeQueue.length === 0) return;
+    isBackgroundScraping = true;
+    
+    while (backgroundScrapeQueue.length > 0) {
+        const folder = backgroundScrapeQueue.shift();
+        
+        try {
+            console.log(`[Queue] ⏳ Фоновый парсинг для: ${folder}`);
+            const gamePath = path.join(GAMES_DIR, folder);
+            const rjCode = await findRJCode(folder, gamePath);
+            
+            if (rjCode) {
+                const scrapedData = await executeFetchDLsiteTags(rjCode);
+                if (scrapedData?.tags?.length > 0) {
+                    await db.run('UPDATE games SET tags = ?, description = ?, scraped = 1 WHERE id = ?',
+                        [JSON.stringify(scrapedData.tags), scrapedData.description, folder]);
+                    io.emit('scrape-success', { message: `✅ Данные для "${folder}" успешно загружены!` });
+                    console.log(`[Queue] ✅ Успешно обновлено: ${folder}`);
+                }
+            }
+        } catch (e) {
+            console.error(`[Queue] ❌ Ошибка для ${folder}:`, e.message);
+        } finally {
+            // ⚡ ИСПРАВЛЕНИЕ: Удаляем блокировку ТОЛЬКО после полного завершения работы
+            queuedScrapes.delete(folder); 
+        }
+        
+        // Защита от бана DLsite (пауза 3 сек)
+        await new Promise(r => setTimeout(r, 3000));
+    }
+    isBackgroundScraping = false;
+}
+
 function spawnExtract(cmd, args) {
     return new Promise((resolve, reject) => {
-        const proc = spawn(cmd, args, {
-            stdio: ['pipe', 'ignore', 'pipe'] // stdout игнорируем, stderr для ошибок
-        });
-
+        const proc = spawn(cmd, args, { stdio: ['pipe', 'ignore', 'pipe'] });
         let stderr = '';
-        proc.stderr.on('data', d => {
-            // Собираем только первые 50KB stderr (достаточно для диагностики)
-            if (stderr.length < 50000) stderr += d.toString();
-        });
-
-        proc.on('close', code => {
-            if (code === 0) {
-                resolve();
-            } else {
-                reject(new Error(`${cmd} завершился с кодом ${code}. Stderr: ${stderr.slice(0, 2000)}`));
-            }
-        });
-
-        proc.on('error', err => {
-            reject(new Error(`Не удалось запустить ${cmd}: ${err.message}`));
-        });
+        proc.stderr.on('data', d => { if (stderr.length < 50000) stderr += d.toString(); });
+        proc.on('close', code => code === 0 ? resolve() : reject(new Error(`Exit code ${code}. Stderr: ${stderr.slice(0, 2000)}`)));
+        proc.on('error', err => reject(new Error(`Запуск ${cmd} не удался: ${err.message}`)));
     });
 }
 
 async function findGameFolder(dir, depth = 0) {
     if (depth > 10) return null;
     const items = await fsp.readdir(dir, { withFileTypes: true });
-    const wwwFolder = items.find(i => i.isDirectory() && i.name.toLowerCase() === 'www');
-    if (wwwFolder) return path.join(dir, wwwFolder.name);
-    const hasIndexHtml = items.some(i => i.isFile() && i.name.toLowerCase() === 'index.html');
-    if (hasIndexHtml) return dir;
+    
+    if (items.some(i => i.isDirectory() && i.name.toLowerCase() === 'www')) {
+        return path.join(dir, items.find(i => i.name.toLowerCase() === 'www').name);
+    }
+    if (items.some(i => i.isFile() && i.name.toLowerCase() === 'index.html')) return dir;
+    
     for (const item of items) {
         if (item.isDirectory()) {
             const found = await findGameFolder(path.join(dir, item.name), depth + 1);
@@ -198,11 +171,13 @@ async function findRJCode(folderName, gamePath) {
     return null;
 }
 
+// ============================================================================
+// [4] КАСКАДНЫЙ ПАРСЕР МЕТАДАННЫХ
+// ============================================================================
+
 async function fetchDLsiteCover(rjCode, destPath) {
     const numStr = rjCode.replace(/RJ/i, '');
-    const num = parseInt(numStr, 10);
-    const dirNum = Math.ceil(num / 1000) * 1000;
-    const dirStr = 'RJ' + String(dirNum).padStart(numStr.length, '0');
+    const dirStr = 'RJ' + String(Math.ceil(parseInt(numStr, 10) / 1000) * 1000).padStart(numStr.length, '0');
     const urls = [
         `https://img.dlsite.jp/modpub/images2/work/doujin/${dirStr}/${rjCode}_img_main.jpg`,
         `https://img.dlsite.jp/modpub/images2/work/professional/${dirStr}/${rjCode}_img_main.jpg`
@@ -211,8 +186,7 @@ async function fetchDLsiteCover(rjCode, destPath) {
         try {
             const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
             if (res.ok) {
-                const buffer = await res.arrayBuffer();
-                await fsp.writeFile(destPath, Buffer.from(buffer));
+                await fsp.writeFile(destPath, Buffer.from(await res.arrayBuffer()));
                 return true;
             }
         } catch (e) {}
@@ -220,12 +194,16 @@ async function fetchDLsiteCover(rjCode, destPath) {
     return false;
 }
 
-// =====================================================================
-// DLsite Tags & Translate
-// =====================================================================
-const backgroundScrapeQueue = [];
-const queuedScrapes = new Set();
-let isBackgroundScraping = false;
+async function downloadRemoteCover(url, destPath) {
+    try {
+        const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+        if (res.ok) {
+            await fsp.writeFile(destPath, Buffer.from(await res.arrayBuffer()));
+            return true;
+        }
+    } catch (e) {}
+    return false;
+}
 
 async function translateText(text, targetLang = 'en') {
     if (!text) return '';
@@ -233,62 +211,19 @@ async function translateText(text, targetLang = 'en') {
         const res = await fetch(`https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${targetLang}&dt=t&q=${encodeURIComponent(text)}`);
         const data = await res.json();
         return data[0].map(item => item[0]).join('');
-    } catch (e) {
-        return text;
-    }
+    } catch (e) { return text; }
 }
 
-async function processBackgroundScrape() {
-    if (isBackgroundScraping) return;
-    if (backgroundScrapeQueue.length === 0) return;
-
-    isBackgroundScraping = true;
-    const task = backgroundScrapeQueue.shift();
-    console.log(`\n[Queue] 🚀 Запускаем парсинг для ${task.rjCode}`);
-
-    try {
-        const scrapedData = await executeFetchDLsiteTags(task.rjCode);
-        if (scrapedData && scrapedData.tags && scrapedData.tags.length > 0) {
-            await db.run(
-                'UPDATE games SET tags = ?, description = ?, scraped = 1 WHERE id = ?',
-                [JSON.stringify(scrapedData.tags), scrapedData.description, task.folder]
-            );
-
-            const row = await db.get('SELECT title FROM games WHERE id = ?', [task.folder]);
-            const gameTitle = row ? row.title : task.rjCode;
-            io.emit('scrape-success', { message: `✨ Свиток расшифрован: Описание для "${gameTitle}" добавлено!` });
-        }
-    } catch (e) {
-        console.error(`[Queue] 🚫 Ошибка парсинга ${task.rjCode}:`, e.message);
-    } finally {
-        queuedScrapes.delete(task.rjCode);
-        isBackgroundScraping = false;
-        processBackgroundScrape();
-    }
-}
-
-const TAGS_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
-const dlsiteTagCache = new Map();
-
-function nowMs() { return Date.now(); }
-
-// ⚡ 1. УСИЛЕННЫЙ ЯПОНСКИЙ КАНАЛ (Используем 2 независимые базы прокси)
-// ⚡ 1. УСИЛЕННЫЙ ЯПОНСКИЙ КАНАЛ (ПАРАЛЛЕЛЬНАЯ АТАКА - ВЕЕРНЫЙ ЗАПРОС)
 async function fetchViaJapanProxy(url) {
     try {
-        console.log('[Scraper] 📡 Собираем Японские прокси из нескольких баз...');
+        console.log('[Scraper] 📡 Собираем Японские прокси...');
         let proxies = [];
 
-        // База 1: ProxyScrape
         try {
             const res1 = await fetch('https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=10000&country=JP');
-            if (res1.ok) {
-                const text1 = await res1.text();
-                proxies.push(...text1.split('\n').map(p => p.trim()).filter(p => p.includes(':')));
-            }
+            if (res1.ok) proxies.push(...(await res1.text()).split('\n').map(p => p.trim()).filter(p => p.includes(':')));
         } catch(e) {}
 
-        // База 2: Geonode
         try {
             const res2 = await fetch('https://proxylist.geonode.com/api/proxy-list?country=JP&protocols=http&limit=50&sort_by=lastChecked&sort_type=desc');
             if (res2.ok) {
@@ -297,255 +232,148 @@ async function fetchViaJapanProxy(url) {
             }
         } catch(e) {}
 
-        // База 3: Дополнительный GitHub-источник для страховки
-        try {
-            const res3 = await fetch('https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt');
-            if (res3.ok) {
-                const text3 = await res3.text();
-                // Так как тут весь мир, фильтруем хотя бы по порту 8080/3128/80 (частые для JP) для количества
-                proxies.push(...text3.split('\n').map(p => p.trim()).filter(p => p.includes(':')).slice(0, 20));
-            }
-        } catch(e) {}
-
-        // Убираем дубликаты и перемешиваем
         proxies = [...new Set(proxies)].sort(() => Math.random() - 0.5);
 
         if (proxies.length === 0) {
-            console.log('[Scraper] ⚠️ Японские прокси сейчас недоступны.');
+            console.log('[Scraper] ⚠️ Японские прокси недоступны.');
             return null;
         }
 
-        // Берем до 20 прокси для одновременного удара
         const maxConcurrent = Math.min(20, proxies.length);
-        const selectedProxies = proxies.slice(0, maxConcurrent);
-        
-        console.log(`[Scraper] 🚀 ЗАПУСК ПАРАЛЛЕЛЬНОЙ АТАКИ через ${maxConcurrent} прокси одновременно...`);
+        console.log(`[Scraper] 🚀 ЗАПУСК АТАКИ через ${maxConcurrent} прокси...`);
 
-        // Создаем массив одновременно выполняющихся задач (Promise)
-        const promises = selectedProxies.map((proxy, index) => {
+        const promises = proxies.slice(0, maxConcurrent).map((proxy) => {
             return new Promise(async (resolve, reject) => {
                 try {
-                    // Уменьшаем таймаут до 7 секунд (кто не успел, тот опоздал)
                     const { stdout } = await execFilePromise('curl', [
-                        '-sS', '-L', '-m', '7', 
-                        '-x', proxy, 
-                        '-H', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-                        url
+                        '-sS', '-L', '-m', '7', '-x', proxy, 
+                        '-H', 'User-Agent: Mozilla/5.0', url
                     ]);
-                    
                     const data = JSON.parse(stdout); 
-                    if (data && data[0] && data[0].work_name) {
-                        console.log(`[Scraper] 🎯 ПРОРЫВ! Прокси ${proxy} (Поток ${index + 1}) первым достал данные!`);
-                        resolve(data); // Первый успешный завершает всю гонку (Promise.any)
-                    } else {
-                        reject(new Error('Пустой JSON'));
-                    }
-                } catch (e) {
-                    reject(e); // Молча убиваем неудачные потоки
-                }
+                    if (data?.[0]?.work_name) resolve(data);
+                    else reject(new Error('Пустой JSON'));
+                } catch (e) { reject(e); }
             });
         });
 
-        // ⚡ PROMISE.ANY: Магия NodeJS. Возвращает результат ПЕРВОГО успешного промиса
-        // и мгновенно игнорирует все остальные ошибки и таймауты!
-        try {
-            const winningData = await Promise.any(promises);
-            return winningData;
-        } catch (e) {
-            console.log(`[Scraper] 💀 Параллельная атака захлебнулась. Ни один из ${maxConcurrent} прокси не смог пробиться за 7 секунд.`);
-        }
-
+        return await Promise.any(promises);
     } catch (e) {
-        console.error('[Scraper] ❌ Системная ошибка JP-канала:', e.message);
+        console.error('[Scraper] ❌ Ошибка JP-канала:', e.message);
     }
     return null;
 }
 
-// ⚡ 2. ОБРАБОТЧИК И ПЕРЕВОДЧИК
 async function processParsedData(gameData, rjCode) {
-    let tags = [];
-    if (gameData.genres) {
-        tags = gameData.genres.map(g => g.name);
-    }
-    
-    let description = gameData.intro_s || gameData.intro || '';
-    description = description.replace(/<[^>]*>?/gm, '').trim();
+    const tags = gameData.genres ? gameData.genres.map(g => g.name) : [];
+    let description = (gameData.intro_s || gameData.intro || '').replace(/<[^>]*>?/gm, '').trim();
 
-    console.log(`[Scraper] 🏷️ Найдено тегов: ${tags.length}`);
-    
     if (tags.length > 0) {
-        const uniqueTags = [...new Set(tags)];
-        console.log(`[Scraper] 🗣️ Переводим описание...`);
         const translatedDesc = await translateText(description, 'en');
-        const finalData = { tags: uniqueTags, description: translatedDesc };
-        
-        dlsiteTagCache.set(rjCode, { data: finalData, expiresAt: nowMs() + TAGS_CACHE_TTL_MS }); 
-        console.log(`[Scraper] ✅ УСПЕХ! Данные расшифрованы.`);
+        const finalData = { tags: [...new Set(tags)], description: translatedDesc };
+        dlsiteTagCache.set(rjCode, { data: finalData, expiresAt: Date.now() + TAGS_CACHE_TTL_MS }); 
         return finalData;
     }
     return null;
 }
 
-// ⚡ 3. ГЛАВНАЯ ФУНКЦИЯ (С обходом Language Lock)
 async function executeFetchDLsiteTags(rjCode) {
     const cached = dlsiteTagCache.get(rjCode);
-    if (cached && cached.expiresAt > nowMs()) return cached.data;
+    if (cached && cached.expiresAt > Date.now()) return cached.data;
 
-    console.log(`\n[Scraper] 🚀=== СТАРТ БЫСТРОГО ПАРСИНГА ДЛЯ ${rjCode} ===🚀`);
-    
-    // ⚡ ХИТРОСТЬ: Пробуем сначала Английский магазин, затем Японский
     const locales = ['en_US', 'ja_JP'];
-
     for (const loc of locales) {
-        console.log(`[Scraper] 🌍 Проверяем локаль магазина: ${loc}...`);
         const targetUrl = `https://www.dlsite.com/maniax/api/=/product.json?workno=${rjCode}&locale=${loc}`;
-        
         const gateways = [
             `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`,
             `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetUrl)}`,
             `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`
         ];
 
-        for (let i = 0; i < gateways.length; i++) {
-            console.log(`[Scraper] 🌐 Запрос через шлюз ${i + 1}...`);
+        for (const gateway of gateways) {
             try {
                 const controller = new AbortController();
                 const timeoutId = setTimeout(() => controller.abort(), 8000); 
-                const res = await fetch(gateways[i], { signal: controller.signal });
+                const res = await fetch(gateway, { signal: controller.signal });
                 clearTimeout(timeoutId);
                 
-                if (!res.ok) throw new Error(`Статус ${res.status}`);
                 const data = await res.json();
-                
-                // Если API вернуло данные - мы победили!
-                if (data && data[0] && data[0].work_name) {
-                    return await processParsedData(data[0], rjCode);
-                }
-                throw new Error('Данные пусты (Регионлок)');
-            } catch (e) {
-                console.warn(`[Scraper] ⚠️ Шлюз ${i + 1} не справился:`, e.message);
-            }
+                if (data?.[0]?.work_name) return await processParsedData(data[0], rjCode);
+            } catch (e) {}
         }
     }
 
-    // Если даже японская версия через шлюзы США не отдалась, значит это жесткий IP-блок
-    console.log(`[Scraper] 💀 Шлюзы бессильны (Жесткий IP-блок). Запуск Японского спецназа...`);
     const jpUrl = `https://www.dlsite.com/maniax/api/=/product.json?workno=${rjCode}&locale=en_US`;
     const jpData = await fetchViaJapanProxy(jpUrl);
-    
-    if (jpData && jpData[0] && jpData[0].work_name) {
-        console.log(`[Scraper] 🌸 Японский прокси успешно пробил защиту!`);
-        return await processParsedData(jpData[0], rjCode);
-    }
+    if (jpData?.[0]?.work_name) return await processParsedData(jpData[0], rjCode);
 
-    console.log(`[Scraper] ❌ Финальный отказ. Парсинг провален.`);
     return null;
 }
 
-// =====================================================================
-// УНИВЕРСАЛЬНЫЙ СКРАПИНГ: DLsite -> VNDB -> Steam
-// =====================================================================
-
-// Вспомогательная функция для скачивания обложек из Steam/VNDB
-async function downloadRemoteCover(url, destPath) {
-    try {
-        const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
-        if (res.ok) {
-            const buffer = await res.arrayBuffer();
-            await fsp.writeFile(destPath, Buffer.from(buffer));
-            return true;
-        }
-    } catch (e) {
-        console.warn(`[Scraper] ⚠️ Не удалось скачать обложку: ${url}`);
-    }
-    return false;
-}
-
-// 🌐 1. Поиск по базе VNDB (Идеально для новелл и инди)
 async function fetchVNDBMetadata(title) {
     try {
         console.log(`[Scraper] 🌸 Ищем на VNDB: "${title}"...`);
         const res = await fetch('https://api.vndb.org/kana/vn', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                filters: ["search", "=", title],
-                fields: "title, description, image.url, tags.name"
-            })
+            body: JSON.stringify({ filters: ["search", "=", title], fields: "title, description, image.url, tags.name" })
         });
         const data = await res.json();
         if (data.results && data.results.length > 0) {
             const vn = data.results[0];
-            console.log(`[Scraper] ✅ Найдено на VNDB: ${vn.title}`);
-            // VNDB использует BBCode, чистим его
-            let desc = vn.description || '';
-            desc = desc.replace(/\[\/?(b|i|u|url|spoiler|quote)[^\]]*\]/gi, '').trim();
-            
-            return {
-                coverUrl: vn.image ? vn.image.url : null,
-                description: desc,
-                tags: vn.tags ? vn.tags.map(t => t.name) : []
-            };
+            let desc = (vn.description || '').replace(/\[\/?(b|i|u|url|spoiler|quote)[^\]]*\]/gi, '').trim();
+            return { coverUrl: vn.image ? vn.image.url : null, description: desc, tags: vn.tags ? vn.tags.map(t => t.name) : [] };
         }
-    } catch (e) { console.warn(`[Scraper] ⚠️ Ошибка VNDB:`, e.message); }
+    } catch (e) {}
     return null;
 }
 
-// 🚂 2. Поиск по базе Steam (Официальные инди-игры)
 async function fetchSteamMetadata(title) {
     try {
         console.log(`[Scraper] 🚂 Ищем в Steam: "${title}"...`);
         const searchRes = await fetch(`https://store.steampowered.com/api/storesearch/?term=${encodeURIComponent(title)}&l=english&cc=US`);
         const searchData = await searchRes.json();
 
-        if (searchData.total > 0 && searchData.items && searchData.items.length > 0) {
+        if (searchData.total > 0 && searchData.items?.length > 0) {
             const appId = searchData.items[0].id;
             const detailRes = await fetch(`https://store.steampowered.com/api/appdetails?appids=${appId}`);
             const detailData = await detailRes.json();
 
-            if (detailData[appId] && detailData[appId].success) {
+            if (detailData[appId]?.success) {
                 const game = detailData[appId].data;
-                console.log(`[Scraper] ✅ Найдено в Steam: ${game.name}`);
-
-                let desc = game.short_description || game.about_the_game || '';
-                desc = desc.replace(/<[^>]*>?/gm, '').trim();
-
-                return {
-                    coverUrl: game.header_image,
-                    description: desc,
-                    tags: game.genres ? game.genres.map(g => g.description) : []
-                };
+                const desc = (game.short_description || game.about_the_game || '').replace(/<[^>]*>?/gm, '').trim();
+                return { coverUrl: game.header_image, description: desc, tags: game.genres ? game.genres.map(g => g.description) : [] };
             }
         }
-    } catch (e) { console.warn(`[Scraper] ⚠️ Ошибка Steam:`, e.message); }
+    } catch (e) {}
     return null;
 }
 
-// 🧠 3. ГЛАВНЫЙ МЕНЕДЖЕР (Каскадный поиск)
 async function fetchUniversalMetadata(title, rjCode) {
-    // 1. Пытаемся DLsite (Только если есть RJ-код)
     if (rjCode) {
         const dlsiteData = await executeFetchDLsiteTags(rjCode);
-        if (dlsiteData && dlsiteData.tags && dlsiteData.tags.length > 0) return dlsiteData;
+        if (dlsiteData?.tags?.length > 0) return dlsiteData;
     }
 
-    // Чистим название от мусора вроде [v1.2] или (Steam) перед поиском по названию
     const cleanTitle = title.replace(/v\d+\.\d+/gi, '').replace(/\[.*?\]/g, '').replace(/\(.*?\)/g, '').trim();
     if (!cleanTitle || cleanTitle.length < 3) return null;
 
-    // 2. VNDB
     const vndbData = await fetchVNDBMetadata(cleanTitle);
     if (vndbData) return vndbData;
 
-    // 3. Steam
     const steamData = await fetchSteamMetadata(cleanTitle);
     if (steamData) return steamData;
 
     return null;
 }
 
+// ============================================================================
+// [5] БАЗА ДАННЫХ
+// ============================================================================
+
 async function initDB() {
     db = await open({ filename: path.join(GAMES_DIR, 'library.db'), driver: sqlite3.Database });
+    
+    // 1. Создаем таблицы
     await db.exec(`
         CREATE TABLE IF NOT EXISTS games (
             id TEXT PRIMARY KEY, title TEXT, cover TEXT, tags TEXT, description TEXT,
@@ -553,39 +381,31 @@ async function initDB() {
             ready INTEGER DEFAULT 0
         )
     `);
+    await db.exec('CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)');
 
-    // Таблица для хранения логина и зашифрованного пароля владельца
-    await db.exec(`
-        CREATE TABLE IF NOT EXISTS settings (
-            key TEXT PRIMARY KEY,
-            value TEXT
-        )
-    `);
-
-    // миграция для добавления колонки (если её ещё нет)
-    try {
-        await db.exec('ALTER TABLE games ADD COLUMN ready INTEGER DEFAULT 0');
-    } catch (_) {}
-
-    // 🔥 СПАСАТЕЛЬНЫЙ КРУГ ДЛЯ СТАРЫХ ИГР 🔥
-    // Находим все старые игры, которые застряли со статусом ready = 0, 
-    // но у которых уже есть название или обложка, и принудительно делаем их "готовыми".
-    try {
-        const result = await db.run(`
-            UPDATE games 
-            SET ready = 1 
-            WHERE ready = 0 AND (title IS NOT NULL OR cover IS NOT NULL)
-        `);
-        if (result.changes > 0) {
-            console.log(`[DB Migration] 🚀 Восстановлено старых игр: ${result.changes}`);
-        }
-    } catch (e) {
-        console.error('[DB Migration Error]', e);
+    // ⚡ 2. БЛОК БЕЗОПАСНОСТИ ZERO-CONFIG (То, что потерялось)
+    let tokenRow = await db.get('SELECT value FROM settings WHERE key = "session_secret"');
+    if (!tokenRow) {
+        // Если сервер запускается ВПЕРВЫЕ - создаем сверхнадежный пароль
+        SESSION_TOKEN = crypto.randomBytes(64).toString('hex');
+        await db.run('INSERT INTO settings (key, value) VALUES (?, ?)', ['session_secret', SESSION_TOKEN]);
+        console.log('🛡️ [Security] Сгенерирован уникальный и безопасный ключ сессии для этой установки.');
+    } else {
+        // Сервер уже запускался - берем существующий пароль из базы
+        SESSION_TOKEN = tokenRow.value;
     }
+
+    // 3. Миграции старых данных
+    try { await db.exec('ALTER TABLE games ADD COLUMN ready INTEGER DEFAULT 0'); } catch (_) {}
+    try { 
+        console.log('[DB] Проверка миграций...');
+        await db.run('UPDATE games SET ready = 1 WHERE ready = 0 AND (title IS NOT NULL OR cover IS NOT NULL)'); 
+    } catch (e) {}
 }
 
 async function addGameToDB(folder, gamePath) {
     let title = folder.replace(/\[?RJ\d{6,8}\]?/gi, '').replace(/[-_]/g, ' ').replace(/\s+/g, ' ').trim() || folder;
+    
     try {
         const sysRaw = await fsp.readFile(path.join(gamePath, 'data', 'System.json'), 'utf8');
         const sys = JSON.parse(sysRaw);
@@ -599,10 +419,8 @@ async function addGameToDB(folder, gamePath) {
     else if (await checkExists(path.join(gamePath, 'cover.png'))) cover = `${folder}/cover.png`;
 
     const rjCode = await findRJCode(folder, gamePath);
-
     if (rjCode && !cover) {
-        const success = await fetchDLsiteCover(rjCode, path.join(gamePath, 'cover.jpg'));
-        if (success) cover = `${folder}/cover.jpg`;
+        if (await fetchDLsiteCover(rjCode, path.join(gamePath, 'cover.jpg'))) cover = `${folder}/cover.jpg`;
     }
 
     if (!cover) {
@@ -616,35 +434,33 @@ async function addGameToDB(folder, gamePath) {
 
     const stat = await fsp.stat(gamePath);
 
-    // Черновик (не виден на сайте, пока ready=0)
     await db.run(
-        `INSERT OR REPLACE INTO games
-         (id, title, cover, tags, description, rating, lastPlayed, addedAt, scraped, ready)
+        `INSERT OR REPLACE INTO games (id, title, cover, tags, description, rating, lastPlayed, addedAt, scraped, ready)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [folder, title, cover, '[]', '', 0, 0, stat.birthtimeMs || stat.mtimeMs || Date.now(), 0, 0]
     );
 
-    // Пытаемся дотянуть теги/описание сразу (не в фоне), чтобы игра появилась уже "готовой"
+    // ⚡ ВОССТАНОВЛЕНО: Моментальный (синхронный) скрейп для красивого UI
+    let scrapeSuccess = false;
     if (rjCode) {
         try {
             const scrapedData = await executeFetchDLsiteTags(rjCode);
-            if (scrapedData && scrapedData.tags && scrapedData.tags.length > 0) {
-                await db.run(
-                    'UPDATE games SET tags = ?, description = ?, scraped = 1 WHERE id = ?',
-                    [JSON.stringify(scrapedData.tags), scrapedData.description, folder]
-                );
+            if (scrapedData?.tags?.length > 0) {
+                await db.run('UPDATE games SET tags = ?, description = ?, scraped = 1 WHERE id = ?',
+                    [JSON.stringify(scrapedData.tags), scrapedData.description, folder]);
+                scrapeSuccess = true;
             }
-        } catch (e) {
-            console.warn(`[AddGame] scrape fail for ${folder}:`, e.message);
-        }
+        } catch (e) {}
     }
 
-    // Публикуем только после всех шагов
     await db.run('UPDATE games SET ready = 1 WHERE id = ?', [folder]);
+    if (io) io.emit('scrape-success', { message: `✅ Игра "${title}" добавлена в библиотеку!` });
 
-    // ⚡ БОНУС: Уведомляем сайт точечно, с названием конкретной игры!
-    if (io) {
-        io.emit('scrape-success', { message: `✅ Игра "${title}" полностью обработана и добавлена!` });
+    // ⚡ Умная постановка в очередь с дедупликацией
+    if (rjCode && !scrapeSuccess && !queuedScrapes.has(folder)) {
+        queuedScrapes.add(folder);
+        backgroundScrapeQueue.push(folder);
+        processBackgroundScrape();
     }
 }
 
@@ -655,51 +471,87 @@ async function syncDatabase() {
 
     for (const folder of entries) {
         const gamePath = path.join(GAMES_DIR, folder);
-        let stat;
-        try { stat = await fsp.stat(gamePath); } catch(e) { continue; }
-
-        if (!stat.isDirectory() || folder === 'node_modules' || folder === '_saves' || folder === '_tmp_uploads') continue;
-
-        if (!dbIds.includes(folder)) {
-            await addGameToDB(folder, gamePath);
-        }
+        try { 
+            const stat = await fsp.stat(gamePath); 
+            if (!stat.isDirectory() || ['node_modules', '_saves', '_tmp_uploads', '.audio-cache'].includes(folder)) continue;
+            if (!dbIds.includes(folder)) await addGameToDB(folder, gamePath);
+        } catch(e) { continue; }
     }
 
     for (const id of dbIds) {
-        if (!entries.includes(id) || id === '_saves' || id === '_tmp_uploads' || id === 'node_modules') {
+        if (!entries.includes(id) || ['_saves', '_tmp_uploads', 'node_modules', '.audio-cache'].includes(id)) {
             await db.run('DELETE FROM games WHERE id = ?', [id]);
         }
     }
 }
 
-// =====================================================================
-// API Routes
-// =====================================================================
+// ============================================================================
+// [6] МАРШРУТЫ АВТОРИЗАЦИИ
+// ============================================================================
+
+app.get('/api/setup/status', async (req, res) => {
+    const adminSet = await db.get('SELECT value FROM settings WHERE key = "admin_user"');
+    res.json({ initialized: !!adminSet });
+});
+
+app.post('/api/setup/init', apiLimiter, async (req, res) => {
+    const adminSet = await db.get('SELECT value FROM settings WHERE key = "admin_user"');
+    if (adminSet) return res.status(403).json({ error: 'Сервер уже настроен!' });
+
+    const { username, password } = req.body;
+    if (!username || !password || username.length < 3 || password.length < 4) {
+        return res.status(400).json({ error: 'Слишком короткий логин или пароль' });
+    }
+
+    const hashedPass = await bcrypt.hash(password, 10);
+    await db.run('INSERT INTO settings (key, value) VALUES (?, ?)', ['admin_user', username]);
+    await db.run('INSERT INTO settings (key, value) VALUES (?, ?)', ['admin_pass', hashedPass]);
+    res.json({ success: true });
+});
+
+app.post('/api/login', apiLimiter, async (req, res) => {
+    const { username, password } = req.body;
+    const dbUser = await db.get('SELECT value FROM settings WHERE key = "admin_user"');
+    const dbPass = await db.get('SELECT value FROM settings WHERE key = "admin_pass"');
+
+    if (dbUser && dbPass && username === dbUser.value) {
+        if (await bcrypt.compare(password, dbPass.value)) {
+            res.cookie('auth_token', SESSION_TOKEN, { httpOnly: true, sameSite: 'lax', maxAge: 30 * 24 * 60 * 60 * 1000 });
+            return res.json({ success: true });
+        }
+    }
+    res.status(401).json({ error: 'Неверный логин или пароль' });
+});
+
+app.post('/api/logout', (req, res) => {
+    res.clearCookie('auth_token');
+    res.json({ success: true });
+});
+
+function requireAuth(req, res, next) {
+    if (req.cookies.auth_token !== SESSION_TOKEN) return res.status(401).json({ error: 'Требуется авторизация' });
+    next();
+}
+app.use('/api/', requireAuth);
+
+// ============================================================================
+// [7] ОСНОВНЫЕ API МАРШРУТЫ
+// ============================================================================
 
 app.get('/api/games', async (req, res) => {
     try {
         const rows = await db.all('SELECT * FROM games WHERE ready = 1');
         const games = rows.map(row => ({
-            id: row.id,
-            title: row.title,
-            cover: row.cover,
+            id: row.id, title: row.title, cover: row.cover,
             tags: row.tags ? JSON.parse(row.tags) : [],
-            description: row.description,
-            url: `/${row.id}/`,
-            number: 0,
-            addedAt: row.addedAt,
-            lastPlayed: row.lastPlayed,
-            rating: row.rating
-        }));
-
-        games.sort((a, b) => a.addedAt - b.addedAt).forEach((g, i) => g.number = i + 1);
+            description: row.description, url: `/${row.id}/`, number: 0,
+            addedAt: row.addedAt, lastPlayed: row.lastPlayed, rating: row.rating
+        })).sort((a, b) => a.addedAt - b.addedAt);
+        games.forEach((g, i) => g.number = i + 1);
         res.json(games);
-    } catch (e) {
-        res.status(500).json({ error: 'DB Error' });
-    }
+    } catch (e) { res.status(500).json({ error: 'DB Error' }); }
 });
 
-// 🔥 РУЧНОЕ РЕДАКТИРОВАНИЕ И ПРИНУДИТЕЛЬНЫЙ ПАРСИНГ (УЛУЧШЕНО)
 app.post('/api/games/:id/edit', async (req, res) => {
     const folder = path.basename(req.params.id);
     const { title, rjCode } = req.body;
@@ -707,123 +559,68 @@ app.post('/api/games/:id/edit', async (req, res) => {
 
     try {
         let scrapeWarning = null;
-
-        // 1. Обновляем название в базе (всегда)
-        if (title) {
-            await db.run('UPDATE games SET title = ? WHERE id = ?', [title, folder]);
-        }
+        if (title) await db.run('UPDATE games SET title = ? WHERE id = ?', [title, folder]);
 
         const gameObj = await db.get('SELECT title FROM games WHERE id = ?', [folder]);
         const searchTitle = title || gameObj.title; 
         const searchRj = (rjCode && rjCode.match(/RJ\d+/i)) ? rjCode.match(/RJ\d+/i)[0].toUpperCase() : null;
-
         let coverUpdated = false;
 
-        // ⚡ ШАГ 1: Независимая попытка взять обложку с DLsite (если есть RJ-код)
-        if (searchRj) {
-            const coverDest = path.join(gamePath, 'cover.jpg');
-            const coverSuccess = await fetchDLsiteCover(searchRj, coverDest);
-            if (coverSuccess) {
+        if (searchRj && await fetchDLsiteCover(searchRj, path.join(gamePath, 'cover.jpg'))) {
+            await db.run('UPDATE games SET cover = ? WHERE id = ?', [`${folder}/cover.jpg`, folder]);
+            coverUpdated = true;
+        }
+
+        const scrapedData = await fetchUniversalMetadata(searchTitle, searchRj);
+        if (scrapedData) {
+            if (scrapedData.coverUrl && !coverUpdated && await downloadRemoteCover(scrapedData.coverUrl, path.join(gamePath, 'cover.jpg'))) {
                 await db.run('UPDATE games SET cover = ? WHERE id = ?', [`${folder}/cover.jpg`, folder]);
                 coverUpdated = true;
             }
-        }
-
-        // ⚡ ШАГ 2: Вызов Универсального менеджера (Snippet 2)
-        const scrapedData = await fetchUniversalMetadata(searchTitle, searchRj);
-
-        if (scrapedData) {
-            // Если DLsite не дал обложку, но её нашел VNDB или Steam — качаем
-            if (scrapedData.coverUrl && !coverUpdated) {
-                const coverDest = path.join(gamePath, 'cover.jpg');
-                const success = await downloadRemoteCover(scrapedData.coverUrl, coverDest);
-                if (success) {
-                    await db.run('UPDATE games SET cover = ? WHERE id = ?', [`${folder}/cover.jpg`, folder]);
-                    coverUpdated = true;
-                }
-            }
-
-            // Обновляем теги и описание из любого найденного источника
-            if (scrapedData.tags && scrapedData.tags.length > 0) {
-                await db.run(
-                    'UPDATE games SET tags = ?, description = ?, scraped = 1 WHERE id = ?',
-                    [JSON.stringify(scrapedData.tags), scrapedData.description, folder]
-                );
+            if (scrapedData.tags?.length > 0) {
+                await db.run('UPDATE games SET tags = ?, description = ?, scraped = 1 WHERE id = ?', [JSON.stringify(scrapedData.tags), scrapedData.description, folder]);
             } else if (coverUpdated) {
-                // Если обложка есть, а тегов нет (специфика DLsite)
-                scrapeWarning = 'Обложка обновлена, но теги не найдены (Возможно защита Cloudflare или игра из раздела Pro).';
+                scrapeWarning = 'Обложка обновлена, но теги не найдены.';
             }
         } else if (searchRj || title) {
-            scrapeWarning = 'Данные не найдены ни в одном из источников (DLsite/VNDB/Steam).';
+            scrapeWarning = 'Данные не найдены (DLsite/VNDB/Steam).';
         }
 
-        // 3. Возврат актуальных данных на фронтенд
         const updatedGame = await db.get('SELECT * FROM games WHERE id = ?', [folder]);
         res.json({
-            success: true,
-            warning: scrapeWarning,
-            title: updatedGame.title,
-            cover: updatedGame.cover,
-            tags: updatedGame.tags ? JSON.parse(updatedGame.tags) : [],
-            description: updatedGame.description
+            success: true, warning: scrapeWarning, title: updatedGame.title, cover: updatedGame.cover,
+            tags: updatedGame.tags ? JSON.parse(updatedGame.tags) : [], description: updatedGame.description
         });
-
-    } catch (e) {
-        console.error('[Edit Error]', e);
-        res.status(500).json({ error: 'Сбой сервера при обновлении' });
-    }
+    } catch (e) { res.status(500).json({ error: 'Сбой сервера при обновлении' }); }
 });
 
-// 🔥 ОБНОВЛЕНИЕ МЕТАДАННЫХ (Рейтинг и Последний запуск)
 app.post('/api/games/:id/meta', async (req, res) => {
     const folder = path.basename(req.params.id);
     const { rating, lastPlayed } = req.body;
 
     try {
-        // Проверяем, существует ли игра в базе
         const game = await db.get('SELECT id FROM games WHERE id = ?', [folder]);
         if (!game) return res.status(404).json({ error: 'Игра не найдена' });
 
-        // Умный динамический апдейт: обновляем только то, что прислал фронтенд
-        const updates = [];
-        const params = [];
-        
-        if (rating !== undefined) {
-            updates.push('rating = ?');
-            params.push(rating);
-        }
-        if (lastPlayed !== undefined) {
-            updates.push('lastPlayed = ?');
-            params.push(lastPlayed);
-        }
+        const updates = [], params = [];
+        if (rating !== undefined) { updates.push('rating = ?'); params.push(rating); }
+        if (lastPlayed !== undefined) { updates.push('lastPlayed = ?'); params.push(lastPlayed); }
 
         if (updates.length > 0) {
             params.push(folder);
             await db.run(`UPDATE games SET ${updates.join(', ')} WHERE id = ?`, params);
         }
-
         res.json({ success: true });
-    } catch (e) {
-        console.error('[Meta Update Error]', e);
-        res.status(500).json({ error: 'Ошибка при сохранении метаданных' });
-    }
+    } catch (e) { res.status(500).json({ error: 'Ошибка сохранения метаданных' }); }
 });
 
-// 🔥 БРОНЕБОЙНАЯ ЗАГРУЗКА И РАСПАКОВКА
 app.post('/api/upload', uploadLimiter, upload.single('game'), async (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'Файл не получен' });
 
-    console.log(`[Upload] 📥 ${req.file.originalname} | ${(req.file.size / 1024 / 1024).toFixed(2)} MB`);
-
     const archivePath = req.file.path;
-    let originalName = req.file.originalname
-        .replace(/\.(zip|7z|rar)$/i, '')
-        .replace(/[^\w\s\-\.а-яА-Я\[\]]/g, '_')
-        .trim() || 'game_archive';
+    let originalName = req.file.originalname.replace(/\.(zip|7z|rar)$/i, '').replace(/[^\w\s\-\.а-яА-Я\[\]]/g, '_').trim() || 'game_archive';
     
-    // ⚡ ДОБАВИТЬ ЧЕРНЫЙ СПИСОК ИМЕН:
-    const blacklist = ['_saves', '_tmp_uploads', 'api', 'socket.io', 'public', 'node_modules'];
-    if (blacklist.includes(originalName.toLowerCase())) {
+    if (['_saves', '_tmp_uploads', 'api', 'socket.io', 'public', 'node_modules', '.audio-cache'].includes(originalName.toLowerCase())) {
         originalName = 'game_' + Date.now();
     }    
 
@@ -833,31 +630,16 @@ app.post('/api/upload', uploadLimiter, upload.single('game'), async (req, res) =
         await fsp.mkdir(tmpExtractDir, { recursive: true });
         io.emit('upload-status', { message: '🛡️ Проверка безопасности архива...' });
 
-        // ⚡ ЕДИНАЯ И БЕЗОПАСНАЯ ЗАЩИТА ZIP SLIP (Берем твой метод path.resolve + maxBuffer)
-        async function validateArchivePaths(archive) {
-            // maxBuffer 200MB критически важен для крупных игр (спасет Node.js от краша)
-            const { stdout } = await execFilePromise('7zz', ['l', '-ba', '-slt', archive], { maxBuffer: 200 * 1024 * 1024 });
-            const lines = stdout.split('\n').filter(l => l.startsWith('Path = '));
-                
-            const baseTarget = path.resolve(tmpExtractDir) + path.sep;
+        const { stdout } = await execFilePromise('7zz', ['l', '-ba', '-slt', archivePath], { maxBuffer: 200 * 1024 * 1024 });
+        const lines = stdout.split('\n').filter(l => l.startsWith('Path = '));
+        const baseTarget = path.resolve(tmpExtractDir) + path.sep;
 
-            for (const line of lines) {
-                const internalPath = line.replace('Path = ', '').trim();
-                const entryPath = path.resolve(tmpExtractDir, internalPath);
-                    
-                // Надежная проверка через path.resolve (как было в твоем старом коде!)
-                if (!entryPath.startsWith(baseTarget)) {
-                    throw new Error(`Обнаружен опасный путь в архиве (Zip Slip): ${internalPath}`);
-                }
-            }
+        for (const line of lines) {
+            const internalPath = line.replace('Path = ', '').trim();
+            if (!path.resolve(tmpExtractDir, internalPath).startsWith(baseTarget)) throw new Error(`Опасный путь (Zip Slip): ${internalPath}`);
         }
 
-        // Запускаем проверку перед распаковкой (для любых архивов)
-        await validateArchivePaths(archivePath);
-
         io.emit('upload-status', { message: '🗜️ Распаковка архива...' });
-            
-        // 7zz справляется со всем: zip, 7z, rar, rar5
         await spawnExtract('7zz', ['x', archivePath, `-o${tmpExtractDir}`, '-y']);
 
         io.emit('upload-status', { message: '🔍 Поиск файлов игры...' });
@@ -866,26 +648,20 @@ app.post('/api/upload', uploadLimiter, upload.single('game'), async (req, res) =
         
         let finalDestFolder = originalName;
         let counter = 1;
-        while (fs.existsSync(path.join(GAMES_DIR, finalDestFolder))) {
-            finalDestFolder = `${originalName}_${counter++}`;
-        }
+        while (fs.existsSync(path.join(GAMES_DIR, finalDestFolder))) finalDestFolder = `${originalName}_${counter++}`;
         const finalPath = path.join(GAMES_DIR, finalDestFolder);
 
         io.emit('upload-status', { message: '📦 Сохранение в библиотеку...' });
         await execFilePromise('mv', [sourceDir, finalPath]);
 
-        await Promise.all([
-            fsp.rm(tmpExtractDir, { recursive: true, force: true }).catch(() => {}),
-            fsp.unlink(archivePath).catch(() => {})
-        ]);
+        await fsp.rm(tmpExtractDir, { recursive: true, force: true }).catch(() => {});
+        await fsp.unlink(archivePath).catch(() => {});
 
         await addGameToDB(finalDestFolder, finalPath);
 
         io.emit('upload-status', { message: '✨ Готово!' });
-        res.json({ success: true, folder: finalDestFolder, message: `Игра "${finalDestFolder}" добавлена!` });
-
+        res.json({ success: true, folder: finalDestFolder, message: `Игра добавлена!` });
     } catch (e) {
-        console.error('[UPLOAD ERROR]', e);
         await fsp.rm(tmpExtractDir, { recursive: true, force: true }).catch(() => {});
         await fsp.unlink(archivePath).catch(() => {});
         io.emit('upload-status', { message: '❌ Ошибка: ' + e.message });
@@ -896,164 +672,170 @@ app.post('/api/upload', uploadLimiter, upload.single('game'), async (req, res) =
 app.delete('/api/games/:id', async (req, res) => {
     const id = path.basename(req.params.id);
     const gamePath = path.join(GAMES_DIR, id);
+    
     try {
+        // ⚡ ИСПРАВЛЕНИЕ: Проверяем физическое существование папки перед удалением
         await fsp.access(gamePath);
+        
         await fsp.rm(gamePath, { recursive: true, force: true });
         await db.run('DELETE FROM games WHERE id = ?', [id]);
         res.json({ success: true });
-    } catch(e) { res.status(404).json({ error: 'Игра не найдена' }); }
+    } catch(e) { 
+        res.status(404).json({ error: 'Игра не найдена' }); 
+    }
 });
 
+// ============================================================================
+// [8] СОХРАНЕНИЯ (СИНХРОНИЗАЦИЯ, ИМПОРТ, ЭКСПОРТ)
+// ============================================================================
+
 app.get('/api/saves/:gameId', async (req, res) => {
-    const gameId = path.basename(req.params.gameId);
-    const gameSavesDir = path.join(SAVES_DIR, gameId);
+    const gameSavesDir = path.join(SAVES_DIR, path.basename(req.params.gameId));
     try {
         const files = await fsp.readdir(gameSavesDir);
         const saves = {};
-        for (const file of files) {
-            if (file.endsWith('.json')) {
-                const filePath = path.join(gameSavesDir, file);
-                const stats = await fsp.stat(filePath); // Берем дату файла с жесткого диска
-                const content = await fsp.readFile(filePath, 'utf8');
-                const key = decodeURIComponent(file.replace('.json', ''));
-                
-                // ⚡ БЕЗ ПАРСИНГА. Просто отдаем сырой контент + дату изменения с диска
-                saves[key] = {
-                    value: content,
-                    updatedAt: stats.mtimeMs 
-                };
-            }
+        for (const file of files.filter(f => f.endsWith('.json'))) {
+            const filePath = path.join(gameSavesDir, file);
+            const stats = await fsp.stat(filePath);
+            saves[decodeURIComponent(file.replace('.json', ''))] = {
+                value: await fsp.readFile(filePath, 'utf8'), updatedAt: stats.mtimeMs 
+            };
         }
         res.json(saves);
     } catch(e) { res.json({}); }
 });
 
 app.post('/api/saves/:gameId/:key', async (req, res) => {
-    const gameId = path.basename(req.params.gameId);
-    const key = path.basename(req.params.key);
-    const gameSavesDir = path.join(SAVES_DIR, gameId);
-    const value = req.body.value;
-    if (typeof value !== 'string') return res.status(400).json({ error: 'Bad data' });
+    if (typeof req.body.value !== 'string') return res.status(400).json({ error: 'Bad data' });
     try {
-        await fsp.mkdir(gameSavesDir, { recursive: true });
-        await fsp.writeFile(path.join(gameSavesDir, encodeURIComponent(key) + '.json'), value, 'utf8');
+        const dir = path.join(SAVES_DIR, path.basename(req.params.gameId));
+        await fsp.mkdir(dir, { recursive: true });
+        await fsp.writeFile(path.join(dir, encodeURIComponent(path.basename(req.params.key)) + '.json'), req.body.value, 'utf8');
         res.json({ success: true });
     } catch(e) { res.status(500).json({ error: 'Server error' }); }
 });
 
 app.delete('/api/saves/:gameId/:key', async (req, res) => {
-    const gameId = path.basename(req.params.gameId);
-    const key = path.basename(req.params.key);
-    try {
-        await fsp.unlink(path.join(SAVES_DIR, gameId, encodeURIComponent(key) + '.json'));
-        res.json({ success: true });
-    } catch(e) { res.json({ success: true }); }
+    try { await fsp.unlink(path.join(SAVES_DIR, path.basename(req.params.gameId), encodeURIComponent(path.basename(req.params.key)) + '.json')); } catch(e) {}
+    res.json({ success: true });
 });
 
-// 🔥 ЭКСПОРТ СОХРАНЕНИЙ (Скачать в ZIP) - ENTERPRISE УРОВЕНЬ
 app.get('/api/games/:id/saves/export', async (req, res) => {
     const gameId = path.basename(req.params.id);
     const gameSavesDir = path.join(SAVES_DIR, gameId);
 
     try {
-        await fsp.access(gameSavesDir);
         const files = await fsp.readdir(gameSavesDir);
-        // Экспортируем только .json файлы (без мусора)
-        const saveFiles = files.filter(f => f.endsWith('.json'));
-        if (saveFiles.length === 0) throw new Error('Пусто');
-    } catch (e) {
-        return res.status(404).json({ error: 'У этой игры еще нет сохранений' });
-    }
-
-    const tmpZip = path.join(EXTRACT_TMP, `saves_${gameId}_${crypto.randomBytes(4).toString('hex')}.zip`);
-
-    try {
-        // Упаковываем строго файлы .json, игнорируя всё остальное
+        if (files.filter(f => f.endsWith('.json')).length === 0) throw new Error();
+        
+        const tmpZip = path.join(EXTRACT_TMP, `saves_${gameId}_${crypto.randomBytes(4).toString('hex')}.zip`);
         await execFilePromise('7zz', ['a', '-tzip', tmpZip, path.join(gameSavesDir, '*.json')]);
         
-        res.download(tmpZip, `${gameId}_saves.zip`, () => {
-            fsp.unlink(tmpZip).catch(() => {});
-        });
-    } catch (e) {
-        console.error('[Export Saves Error]', e);
-        res.status(500).json({ error: 'Ошибка создания архива' });
-    }
+        res.download(tmpZip, `${gameId}_saves.zip`, () => fsp.unlink(tmpZip).catch(() => {}));
+    } catch (e) { res.status(404).json({ error: 'У этой игры еще нет сохранений' }); }
 });
 
-// 🔥 ИМПОРТ СОХРАНЕНИЙ (Загрузить из ZIP) - ENTERPRISE УРОВЕНЬ
 app.post('/api/games/:id/saves/import', uploadLimiter, upload.single('saves'), async (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'Файл не получен' });
-    
-    // ⚡ БЕЗОПАСНОСТЬ 1: Жесткий лимит размера только для сейвов (макс 50 МБ).
     if (req.file.size > 50 * 1024 * 1024) {
         await fsp.unlink(req.file.path).catch(() => {});
-        return res.status(400).json({ error: 'Архив сохранений слишком большой (макс 50 МБ)' });
+        return res.status(400).json({ error: 'Архив слишком большой' });
     }
 
-    const gameId = path.basename(req.params.id);
-    const gameSavesDir = path.join(SAVES_DIR, gameId);
+    const gameSavesDir = path.join(SAVES_DIR, path.basename(req.params.id));
     const archivePath = req.file.path;
 
     try {
         await fsp.mkdir(gameSavesDir, { recursive: true });
-
-        // ⚡ БЕЗОПАСНОСТЬ 2: ИДЕАЛЬНАЯ ЗАЩИТА ZIP SLIP (Через path.resolve)
         const { stdout } = await execFilePromise('7zz', ['l', '-ba', '-slt', archivePath], { maxBuffer: 50 * 1024 * 1024 });
-        const lines = stdout.split('\n').filter(l => l.startsWith('Path = '));
         const baseTarget = path.resolve(gameSavesDir) + path.sep;
 
-        for (const line of lines) {
+        for (const line of stdout.split('\n').filter(l => l.startsWith('Path = '))) {
             const internalPath = line.replace('Path = ', '').trim();
-            const entryPath = path.resolve(gameSavesDir, internalPath);
-            if (!entryPath.startsWith(baseTarget)) {
-                throw new Error(`Обнаружен опасный путь в архиве (Zip Slip): ${internalPath}`);
-            }
+            if (!path.resolve(gameSavesDir, internalPath).startsWith(baseTarget)) throw new Error('Zip Slip Attack!');
         }
         
-        // ⚡ UX МАГИЯ 1: Распаковка в плоский вид (Flat Extract - флаг 'e'). 
-        // Если юзер запакует папку, сервер всё равно вытащит файлы прямо в корень!
         await spawnExtract('7zz', ['e', archivePath, `-o${gameSavesDir}`, '-y']);
         await fsp.unlink(archivePath).catch(() => {});
         
-        // ⚡ UX МАГИЯ 2: Умный клинер и "Омоложение" (Твоя старая логика, доведенная до ума)
         const now = new Date();
-        const extractedFiles = await fsp.readdir(gameSavesDir);
-        
-        for (const file of extractedFiles) {
+        for (const file of await fsp.readdir(gameSavesDir)) {
             const filePath = path.join(gameSavesDir, file);
-            const stat = await fsp.stat(filePath);
-            
-            if (stat.isDirectory()) {
-                // Удаляем случайно просочившиеся папки
+            if ((await fsp.stat(filePath)).isDirectory()) {
                 await fsp.rm(filePath, { recursive: true, force: true }).catch(() => {});
                 continue;
             }
 
-            const ext = path.extname(file).toLowerCase();
-            
-            if (ext === '.rpgsave') {
-                // Юзер закинул сырые сейвы с ПК! Авто-переименовываем их в .json
+            if (file.toLowerCase().endsWith('.rpgsave')) {
                 const newPath = path.join(gameSavesDir, file.replace(/\.rpgsave$/i, '.json'));
                 await fsp.rename(filePath, newPath);
                 await fsp.utimes(newPath, now, now).catch(() => {});
-            } 
-            else if (ext === '.json') {
-                // Омолаживаем обычные json (твоя логика синхронизации)
+            } else if (file.toLowerCase().endsWith('.json')) {
                 await fsp.utimes(filePath, now, now).catch(() => {});
-            } 
-            else {
-                // Жесткая зачистка мусора (картинки, .DS_Store, вирусы)
+            } else {
                 await fsp.unlink(filePath).catch(() => {});
             }
         }
-        
-        res.json({ success: true, message: 'Сохранения успешно загружены!' });
+        res.json({ success: true, message: 'Сохранения загружены!' });
     } catch (e) {
-        console.error('[Import Saves Error]', e);
         await fsp.unlink(archivePath).catch(() => {});
-        res.status(500).json({ error: 'Ошибка: ' + (e.message || 'Сбой распаковки') });
+        res.status(500).json({ error: 'Ошибка импорта' });
     }
 });
+
+// ============================================================================
+// [9] АУДИО КОНВЕРТЕР И ДЕКРИПТОР
+// ============================================================================
+
+async function decryptRpgmvo(filePath, gamePath) {
+    const fileData = await fsp.readFile(filePath);
+    if (fileData.slice(0, 4).toString('ascii') !== 'RPGM') return fileData;
+
+    let encKey = '';
+    try {
+        let sysPath = path.join(gamePath, 'data', 'System.json');
+        if (!fs.existsSync(sysPath)) sysPath = path.join(gamePath, 'www', 'data', 'System.json');
+        encKey = JSON.parse(await fsp.readFile(sysPath, 'utf8')).encryptionKey || '';
+    } catch(e) {}
+
+    const keyBytes = [];
+    for (let i = 0; i < encKey.length; i += 2) keyBytes.push(parseInt(encKey.substr(i, 2), 16));
+
+    const out = Buffer.from(fileData.subarray(16));
+    if (keyBytes.length === 0) return out;
+
+    for (let i = 0; i < 16 && i < out.length; i++) out[i] ^= keyBytes[i % keyBytes.length];
+    return out;
+}
+
+async function ensureM4aFromSource(sourcePath, gamePath) {
+    const stat = await fsp.stat(sourcePath);
+    const cacheKey = crypto.createHash('sha1').update(sourcePath + '|' + stat.mtimeMs).digest('hex');
+    const outPath = path.join(AUDIOCACHE, cacheKey + '.m4a');
+    
+    try { await fsp.access(outPath); return outPath; } catch {} 
+
+    const ext = path.extname(sourcePath).toLowerCase();
+    if (ext === '.m4a') return sourcePath;
+    if (ext === '.rpgmvm') {
+        await fsp.writeFile(outPath, await decryptRpgmvo(sourcePath, gamePath));
+        return outPath;
+    }
+
+    const tmpIn = path.join(EXTRACT_TMP, cacheKey + (ext === '.rpgmvo' ? '.ogg' : ext));
+    await fsp.writeFile(tmpIn, ext === '.rpgmvo' ? await decryptRpgmvo(sourcePath, gamePath) : await fsp.readFile(sourcePath));
+
+    try {
+        await execFilePromise('ffmpeg', ['-y', '-i', tmpIn, '-vn', '-c:a', 'aac', '-b:a', '128k', outPath]);
+        return outPath;
+    } finally {
+        await fsp.unlink(tmpIn).catch(() => {});
+    }
+}
+
+// ============================================================================
+// [10] ГЛОБАЛЬНЫЙ РОУТИНГ (СТАТИКА И ЗВУК)
+// ============================================================================
 
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -1062,58 +844,72 @@ app.get('*', async (req, res, next) => {
 
     let reqPath = decodeURIComponent(req.path);
     let filePath = path.join(GAMES_DIR, reqPath);
+
     const normalizedGamesDir = path.resolve(GAMES_DIR);
     const normalizedFilePath = path.resolve(filePath);
-
     if (normalizedFilePath !== normalizedGamesDir && !normalizedFilePath.startsWith(normalizedGamesDir + path.sep)) {
         return res.status(403).send('Доступ запрещен');
     }
 
     try {
+        if (!fs.existsSync(filePath)) {
+            const dir = path.dirname(filePath);
+            const baseLow = path.basename(filePath).toLowerCase();
+            try {
+                const match = fs.readdirSync(dir).find(f => f.toLowerCase() === baseLow);
+                if (match) {
+                    filePath = path.join(dir, match);
+                    reqPath = path.relative(GAMES_DIR, filePath);
+                }
+            } catch(e) {}
+        }
+
         let stat;
         try { stat = await fsp.stat(filePath); } catch(e) {}
 
         if (stat && stat.isDirectory()) {
             if (!req.path.endsWith('/')) return res.redirect(req.path + '/');
-            let hasRoot = false, hasWww = false;
-            try { await fsp.access(path.join(filePath, 'index.html')); hasRoot = true; } catch(e) {}
-            if (hasRoot) {
-                reqPath += 'index.html';
+            if (fs.existsSync(path.join(filePath, 'index.html'))) {
                 filePath = path.join(filePath, 'index.html');
+            } else if (fs.existsSync(path.join(filePath, 'www', 'index.html'))) {
+                return res.redirect(req.path + 'www/');
             } else {
-                try { await fsp.access(path.join(filePath, 'www', 'index.html')); hasWww = true; } catch(e) {}
-                if (hasWww) {
-                    return res.redirect(req.path + 'www/');
-                } else {
-                    const deepDir = await findGameFolder(filePath);
-                    if (deepDir) return res.redirect('/' + path.relative(GAMES_DIR, deepDir).replace(/\\/g, '/') + '/');
-                    return res.status(404).send(`<div style="color:red; text-align:center; padding:50px;">index.html не найден.</div>`);
-                }
+                const deepDir = await findGameFolder(filePath);
+                if (deepDir) return res.redirect('/' + path.relative(GAMES_DIR, deepDir).replace(/\\/g, '/') + '/');
+                return res.status(404).send(`<div style="color:red; text-align:center; padding:50px;">index.html не найден.</div>`);
             }
         }
 
-        // ⚡ УМНЫЙ РОУТИНГ АУДИО (Smart Audio Fallback 2026)
-        // Если движок (iOS) просит .m4a, но его нет, сервер сам найдет .ogg или зашифрованный файл
         const ext = path.extname(filePath).toLowerCase();
-        
-        async function tryPath(p) {
-            try { await fsp.access(p); return p; } catch { return null; }
-        }
-
         if (ext === '.m4a' || ext === '.ogg') {
-            const base = filePath.slice(0, -4); // Отрезаем расширение
+            const base = filePath.slice(0, -4);
             
-            // Формируем список приоритетов (что ищем в первую очередь)
+            // Детектор для iPhone и iPadOS Safari
+            const ua = req.headers['user-agent'] || '';
+            const isIOS = /iPad|iPhone|iPod/.test(ua) || (ua.includes('Mac') && ua.includes('Mobile'));
+            
             const pathsToTry = ext === '.m4a' 
-                ? [filePath, base + '.ogg', filePath + '_', base + '.rpgmvo', base + '.rpgmvm'] // iOS Priority
-                : [filePath, base + '.m4a', filePath + '_', base + '.rpgmvm', base + '.rpgmvo']; // PC Priority
+                ? [filePath, base + '.ogg', filePath + '_', base + '.rpgmvo', base + '.rpgmvm'] 
+                : [filePath, base + '.m4a', filePath + '_', base + '.rpgmvm', base + '.rpgmvo']; 
 
-            // Каскадный поиск: отдаем первый найденный файл из списка
+            let sourcePath = null;
             for (const p of pathsToTry) {
-                const found = await tryPath(p);
-                if (found) { 
-                    filePath = found; 
-                    break; 
+                try { await fsp.access(p); sourcePath = p; break; } catch {}
+            }
+
+            if (sourcePath) {
+                const isEncrypted = sourcePath.endsWith('.rpgmvo') || sourcePath.endsWith('.rpgmvm');
+                if (isIOS && (isEncrypted || sourcePath.endsWith('.ogg'))) {
+                    try {
+                        const gameFolder = reqPath.split('/').filter(Boolean)[0];
+                        const readyPath = await ensureM4aFromSource(sourcePath, path.join(GAMES_DIR, gameFolder));
+                        res.type('audio/mp4');
+                        res.setHeader('Cache-Control', 'public, max-age=86400');
+                        res.setHeader('Access-Control-Allow-Origin', '*');
+                        return res.sendFile(readyPath);
+                    } catch (err) { filePath = sourcePath; } 
+                } else {
+                    filePath = sourcePath;
                 }
             }
         }
@@ -1125,10 +921,7 @@ app.get('*', async (req, res, next) => {
             if (filePath.endsWith('index.html')) {
                 let html = await fsp.readFile(filePath, 'utf8');
                 html = html.replace(/<meta[^>]+http-equiv=['"]?Content-Security-Policy['"]?[^>]*>/gi, '');
-                
-                // ⚡ ИСПРАВЛЕННЫЙ ИНЖЕКТ (Сохраняет все атрибуты body разработчика):
                 html = html.replace(/(<body[^>]*>)/i, '$1<script src="/rpg-fixes.js"></script>');
-                
                 res.setHeader('Content-Type', 'text/html');
                 res.setHeader('Access-Control-Allow-Origin', '*');
                 return res.send(html);
@@ -1140,87 +933,50 @@ app.get('*', async (req, res, next) => {
     next();
 });
 
-// ⚡ ЗАПУСК СЕРВЕРА (Только если файл запущен напрямую, а не импортирован тестами)
+// ============================================================================
+// [11] ЗАПУСК СЕРВЕРА И ФОНОВЫХ ПРОЦЕССОВ
+// ============================================================================
+
 if (require.main === module) {
     initDB().then(async () => {
         await syncDatabase();
 
         const srv = server.listen(3000, () => console.log('🚀 RPG API: SQLite и WebSockets подключены, сервер готов!'));
-        srv.timeout = 0;
-        srv.requestTimeout = 0;
-        srv.keepAliveTimeout = 0;
+        srv.timeout = 0; srv.requestTimeout = 0; srv.keepAliveTimeout = 0;
 
-        // ---- Hybrid watcher ----
         let syncTimer = null;
         let syncInProgress = false;
         let pendingSync = false;
-        let lastReadyCount = 0;
-
-        async function getReadyCount() {
-            const row = await db.get('SELECT COUNT(*) as c FROM games WHERE ready = 1');
-            return row?.c || 0;
-        }
-
-        lastReadyCount = await getReadyCount();
+        let lastReadyCount = (await db.get('SELECT COUNT(*) as c FROM games WHERE ready = 1'))?.c || 0;
 
         async function runSyncSafely(reason = 'watcher') {
-            if (syncInProgress) {
-                pendingSync = true;
-                return;
-            }
-
+            if (syncInProgress) { pendingSync = true; return; }
             syncInProgress = true;
             try {
-                console.log(`[Watcher] 🔄 Запуск синхронизации (${reason})...`);
                 await syncDatabase();
-
-                const newReadyCount = await getReadyCount();
+                const newReadyCount = (await db.get('SELECT COUNT(*) as c FROM games WHERE ready = 1'))?.c || 0;
                 if (newReadyCount !== lastReadyCount) {
                     const diff = newReadyCount - lastReadyCount;
                     lastReadyCount = newReadyCount;
-
-                    io.emit('scrape-success', {
-                        message: diff > 0
-                            ? `✅ Добавлено готовых игр: ${diff}`
-                            : '🔄 Библиотек�� обновлена'
-                    });
+                    io.emit('scrape-success', { message: diff > 0 ? `✅ Добавлено готовых игр: ${diff}` : '🔄 Библиотека обновлена' });
                 }
-
                 console.log('[Watcher] ✅ Синхронизация завершена');
-            } catch (e) {
-                console.error('[Watcher] ❌ Ошибка синхронизации:', e);
+            } catch (e) { 
+                console.error('[Watcher] ❌ Ошибка синхронизации:', e); 
             } finally {
                 syncInProgress = false;
-                if (pendingSync) {
-                    pendingSync = false;
-                    setTimeout(() => runSyncSafely('pending'), 300);
-                }
+                if (pendingSync) { pendingSync = false; setTimeout(() => runSyncSafely('pending'), 300); }
             }
         }
 
-        const watcher = fs.watch(GAMES_DIR, { persistent: true }, (eventType, filename) => {
-            if (!filename) return;
-            if (filename === '_tmp_uploads' || filename === '_saves' || filename === 'node_modules') return;
-
+        fs.watch(GAMES_DIR, { persistent: true }, (eventType, filename) => {
+            if (!filename || ['_tmp_uploads', '_saves', 'node_modules', '.audio-cache'].includes(filename)) return;
             clearTimeout(syncTimer);
-            syncTimer = setTimeout(() => {
-                runSyncSafely(`fs.watch:${eventType}:${filename}`);
-            }, 5000);
-        });
-
-        watcher.on('error', (err) => {
-            console.error('[Watcher] ❌ Ошибка watcher:', err.message);
+            syncTimer = setTimeout(() => runSyncSafely(`fs.watch:${eventType}:${filename}`), 5000);
         });
 
         console.log(`[Watcher] 👀 Наблюдение за ${GAMES_DIR} включено`);
     }).catch(console.error);
 }
 
-// ⚡ ЭКСПОРТ ФУНКЦИЙ ДЛЯ UNIT-ТЕСТОВ
-module.exports = {
-    app,
-    requireAuth,
-    processParsedData,
-    findRJCode,
-    translateText // Если будешь тестировать перевод
-};
+module.exports = { app, requireAuth, processParsedData, findRJCode, translateText };

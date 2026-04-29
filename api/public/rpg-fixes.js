@@ -439,6 +439,53 @@
             }
         } 
     });
+
+    // ========================= 
+    // 4b) iOS RPGMVO → MP3/M4A FIX (Anti-Double-Decrypt)
+    // =========================
+    (function forceAppleAudioExt() {
+      const isApple = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+          (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+      if (!isApple) return;
+
+      const timer = setInterval(() => {
+          if (typeof AudioManager === 'undefined') return;
+          clearInterval(timer);
+
+          // 1. Заставляем Айфон просить файлы .m4a (наш сервер их сгенерирует)
+          AudioManager.audioFileExt = function() {
+              return '.m4a';
+          };
+
+          // 2. ⚡ ФИКС ДВОЙНОГО ШИФРОВАНИЯ: Запрещаем клиенту портить чистый аудиофайл!
+          if (typeof Decrypter !== 'undefined') {
+              // Обманываем игру, говоря, что аудио больше не зашифровано (только на iOS)
+              Object.defineProperty(Decrypter, 'hasEncryptedAudio', {
+                  get: () => false,
+                  set: () => {}
+              });
+              
+              // Абсолютная защита ядра: если пришедший файл не имеет заголовка 'RPGM', 
+              // значит это чистый файл от сервера. Блокируем его разрушение!
+              const origDecrypt = Decrypter.decryptArrayBuffer;
+              Decrypter.decryptArrayBuffer = function(buffer) {
+                  if (!buffer || buffer.byteLength < 16) return buffer;
+                  const header = new Uint8Array(buffer, 0, 4);
+                  // Проверяем наличие сигнатуры "RPGM" (0x52, 0x50, 0x47, 0x4D)
+                  const isRPGM = header[0]===0x52 && header[1]===0x50 && header[2]===0x47 && header[3]===0x4D;
+                  if (!isRPGM) {
+                      return buffer; // Спасаем чистый AAC файл от уничтожения!
+                  }
+                  return origDecrypt.call(this, buffer);
+              };
+          }
+
+          console.log('[Audio Fix] iOS Proxy: форсирован .m4a + защита от двойного шифрования!');
+      }, 100);
+
+      setTimeout(() => clearInterval(timer), 15000);
+    })();
   })();
 
   // =========================
@@ -591,25 +638,34 @@
       const el = document.getElementById(id);
       if (!el) return;
 
-      const press = (e) => {
+      const KEY_CODES = { up:38, down:40, left:37, right:39, ok:32, escape:27, control:17, shift:16 };
+
+      const press = e => {
         e.preventDefault(); e.stopPropagation();
         el.classList.add('_on');
-        try { el.setPointerCapture(e.pointerId); } catch (_) {}
-        
-        // Моментальная запись в память движка! 0 спайков процессора.
+        try { el.setPointerCapture(e.pointerId); } catch {}
+        const kn = rpgKeyMap[id];
+        // Прямой Input (оба варианта — с _ и без)
         if (typeof Input !== 'undefined') {
-            Input._currentState[rpgKeyMap[id]] = true;
+          if (Input._currentState) Input._currentState[kn] = true;
+          if (Input.currentState)  Input.currentState[kn]  = true;
         }
+        // KeyboardEvent — работает со всеми плагинами без исключений
+        const kc = KEY_CODES[kn];
+        if (kc) document.dispatchEvent(new KeyboardEvent('keydown', { keyCode: kc, which: kc, bubbles: true, cancelable: true }));
       };
 
-      const release = (e) => {
+      const release = e => {
         e.preventDefault(); e.stopPropagation();
         el.classList.remove('_on');
-        try { if (el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId); } catch (_) {}
-        
+        try { if (el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId); } catch {}
+        const kn = rpgKeyMap[id];
         if (typeof Input !== 'undefined') {
-            Input._currentState[rpgKeyMap[id]] = false;
+          if (Input._currentState) Input._currentState[kn] = false;
+          if (Input.currentState)  Input.currentState[kn]  = false;
         }
+        const kc = KEY_CODES[kn];
+        if (kc) document.dispatchEvent(new KeyboardEvent('keyup', { keyCode: kc, which: kc, bubbles: true, cancelable: true }));
       };
 
       el.addEventListener('pointerdown', press);
@@ -1041,17 +1097,6 @@
               if (SceneManager._scene) SceneManager._scene.pause = false;
           }
       });
-
-      // Снижение нагрузки на шину VRAM при выводе текста
-      if (typeof Window_Message !== 'undefined' && !Window_Message.prototype.__textOptimized) {
-          Window_Message.prototype.__textOptimized = true;
-          const origUpdate = Window_Message.prototype.update;
-          let frameCounter = 0;
-          Window_Message.prototype.update = function() {
-              frameCounter++;
-              if (frameCounter % 2 === 0) origUpdate.call(this);
-          };
-      }
 
       console.log('[RPG Fixes] 🔧 Память оптимизирована (Auto-GC отключен)!');
       clearInterval(initTimer);
