@@ -9,6 +9,27 @@
   window.__RPG_FIXES_ULTIMATE_V34__ = true;
 
   // =========================
+  // 0-A) SAFE JSON.PARSE
+  //  Hshan_MultipleLineProfile и другие плагины
+  //  падают если PluginManager.parameters() возвращает
+  //  пустую строку — перехватываем до загрузки плагинов
+  // =========================
+  (function patchJSONParse() {
+    const _orig = JSON.parse;
+    JSON.parse = function(text, reviver) {
+      // Пустая строка / null / undefined → возвращаем null вместо краша
+      if (text === null || text === undefined) return null;
+      if (typeof text === 'string' && text.trim() === '') return null;
+      try {
+        return _orig.call(JSON, text, reviver);
+      } catch(e) {
+        console.warn('[SafeJSON] Невалидный JSON, возвращаем null:', String(text).slice(0, 80));
+        return null;
+      }
+    };
+  })();
+
+  // =========================
   // 0) DEVICE PIXEL RATIO FIX
   // =========================
   (function fixDevicePixelRatio() {
@@ -31,6 +52,12 @@
       if (typeof PIXI === 'undefined') return;
       clearInterval(pixi_t);
       try { PIXI.settings.RESOLUTION = TARGET; } catch(e) {}
+
+      try {
+        PIXI.settings.GC_MAX_IDLE        = 60;
+        PIXI.settings.GC_MAX_CHECK_COUNT = 20;
+        PIXI.settings.SPRITE_MAX_TEXTURES = 16;
+      } catch(e) {}
 
       // Шаг 3: Патчим уже запущенный рендерер (MV: Graphics._renderer, MZ: Graphics._app.renderer)
       const gfx_t = setInterval(() => {
@@ -1063,4 +1090,54 @@
     setTimeout(() => clearInterval(patchTimer), 10000);
   })();
 
+  // =========================
+  // 0) DEVICE PIXEL RATIO FIX
+  // =========================
+  (function fixDevicePixelRatio() {
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    if (!isIOS) return;
+
+    const TARGET = 1; // 1 = нативные пиксели, без 3x апскейла
+
+    // Шаг 1: Перехватываем DPR до загрузки PIXI
+    try {
+      Object.defineProperty(window, 'devicePixelRatio', {
+        get: () => TARGET,
+        configurable: true
+      });
+    } catch(e) {}
+
+    // Шаг 2: PIXI.settings — страховка если PIXI уже загрузился раньше нас
+    const pixi_t = setInterval(() => {
+      if (typeof PIXI === 'undefined') return;
+      clearInterval(pixi_t);
+      try { PIXI.settings.RESOLUTION = TARGET; } catch(e) {}
+
+      // Шаг 3: Патчим уже запущенный рендерер (MV: Graphics._renderer, MZ: Graphics._app.renderer)
+      const gfx_t = setInterval(() => {
+        if (typeof Graphics === 'undefined') return;
+        // MZ
+        const rMZ = Graphics._app && Graphics._app.renderer;
+        // MV
+        const rMV = Graphics._renderer;
+        const r = rMZ || rMV;
+        if (!r) return;
+        clearInterval(gfx_t);
+        if (r.resolution === TARGET) return; // уже правильно
+        const logW = r.width  / r.resolution;
+        const logH = r.height / r.resolution;
+        r.resolution = TARGET;
+        try { r.resize(logW, logH); } catch(e) {}
+        // MZ: обновляем interaction plugin
+        try { if (r.plugins && r.plugins.interaction) r.plugins.interaction.resolution = TARGET; } catch(e) {}
+        console.log('[DPR Fix] Renderer resolution -> 1x, canvas:', r.width, 'x', r.height);
+      }, 100);
+      setTimeout(() => clearInterval(gfx_t), 15000);
+    }, 50);
+    setTimeout(() => clearInterval(pixi_t), 15000);
+  })();
+
+
+  
 })();
