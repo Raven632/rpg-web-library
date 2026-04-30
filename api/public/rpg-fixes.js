@@ -99,38 +99,47 @@ if (!window.__rpgPluginHookInstalled) {
     window.__RPG_FIXES_ULTIMATE_V34__ = true;
 
     // ============================================================================
-    // [FIX] УСТРАНЕНИЕ ОШИБОК КОНСОЛИ (Canvas & Spine)
+    // [FIX] УСТРАНЕНИЕ ОШИБОК КОНСОЛИ (Canvas, OffscreenCanvas & Spine)
     // ============================================================================
     
-    // 1. Фикс willReadFrequently (ускорение чтения пикселей)
-    const orgGetContext = HTMLCanvasElement.prototype.getContext;
-    HTMLCanvasElement.prototype.getContext = function(type, attributes) {
-        if (type === '2d') {
-            if (!attributes) attributes = {};
-            attributes.willReadFrequently = true;
-        }
-        return orgGetContext.call(this, type, attributes);
-    };
+    // 1. Тотальный фикс willReadFrequently (ускорение чтения пикселей)
+    // Перехватываем и обычные холсты, и скрытые (OffscreenCanvas), которые использует PIXI.js
+    function applyCanvasReadFrequently(proto) {
+        if (!proto || !proto.getContext) return;
+        var originalGetContext = proto.getContext;
+        proto.getContext = function(type, attributes) {
+            if (type === '2d') {
+                // Создаем новый объект атрибутов, чтобы безопасно добавить флаг
+                var newAttributes = Object.assign({}, attributes || {});
+                newAttributes.willReadFrequently = true;
+                return originalGetContext.call(this, type, newAttributes);
+            }
+            return originalGetContext.call(this, type, attributes);
+        };
+    }
 
-    // 2. Фикс CanvasTextAlign (убираем ошибку с undefined)
-    const orgSetTextAlign = Object.getOwnPropertyDescriptor(CanvasRenderingContext2D.prototype, 'textAlign');
+    applyCanvasReadFrequently(HTMLCanvasElement.prototype);
+    if (typeof OffscreenCanvas !== 'undefined') {
+        applyCanvasReadFrequently(OffscreenCanvas.prototype);
+    }
+
+    // 2. Фикс CanvasTextAlign (убираем ошибку с undefined от ядра движка)
+    var orgSetTextAlign = Object.getOwnPropertyDescriptor(CanvasRenderingContext2D.prototype, 'textAlign');
     if (orgSetTextAlign && orgSetTextAlign.set) {
         Object.defineProperty(CanvasRenderingContext2D.prototype, 'textAlign', {
             set: function(value) {
-                // Если MZ пытается пропихнуть undefined, ставим 'left'
-                const safeValue = (value === 'undefined' || !value) ? 'left' : value;
+                var safeValue = (value === 'undefined' || !value) ? 'left' : value;
                 orgSetTextAlign.set.call(this, safeValue);
             }
         });
     }
 
-    // 3. Глушим предупреждения о версии Spine и PIXI
-    const orgWarn = console.warn;
+    // 3. Глушим старые предупреждения о версии Spine
+    var orgWarn = console.warn;
     console.warn = function() {
         if (arguments[0] && typeof arguments[0] === 'string') {
-            if (arguments[0].includes('Unsupported skeleton data') || 
-                arguments[0].includes('willReadFrequently')) {
-                return; // Игнорируем этот спам
+            if (arguments[0].indexOf('Unsupported skeleton data') > -1) {
+                return; // Игнорируем этот конкретный спам
             }
         }
         orgWarn.apply(console, arguments);
