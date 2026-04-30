@@ -988,7 +988,7 @@ app.get('*', async (req, res, next) => {
             if (filePath.endsWith('index.html')) {
                 let html = await fsp.readFile(filePath, 'utf8');
                 html = html.replace(/<meta[^>]+http-equiv=['"]?Content-Security-Policy['"]?[^>]*>/gi, '');
-                html = html.replace(/(<body[^>]*>)/i, '$1<script src="/rpg-fixes.js"></script>');
+                html = html.replace(/(<body[^>]*>)/i, '$1<script src="/rpg-fixes.js?v=' + Date.now() + '"></script>');
                 res.setHeader('Content-Type', 'text/html');
                 res.setHeader('Access-Control-Allow-Origin', '*');
                 return res.send(html);

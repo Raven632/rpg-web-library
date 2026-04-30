@@ -9,22 +9,30 @@
     window.__RPG_FIXES_ULTIMATE_V34__ = true;
 
     // ============================================================================
+    // [ИДЕАЛЬНЫЙ ФИКС ПЛАГИНОВ: БАЛАНС СТРОГОСТИ И ЗАЩИТЫ]
+    // ============================================================================
+    var _origJSONParse = JSON.parse;
+    JSON.parse = function(text, reviver) {
+        // Только защищаем от пустых значений — плагины без try/catch
+        // Всё остальное пускаем через оригинальный парсер как есть
+        // Плагины с try/catch (ARTM, MKR и др.) сами обработают SyntaxError
+        if (text === null || text === undefined || text === '') {
+            return null;
+        }
+        return _origJSONParse.call(this, text, reviver);
+    };
+
+    // Разблокировка звука iOS
+    document.addEventListener('touchstart', function() {
+        if (typeof WebAudio !== 'undefined' && WebAudio._context && WebAudio._context.state === 'suspended') {
+            WebAudio._context.resume();
+        }
+    }, { once: true, passive: true });
+
+   
+    // ============================================================================
     // 1. CORE & ENVIRONMENT PATCHES
     // ============================================================================
-
-    function patchSafeJSON() {
-        const _orig = JSON.parse;
-        JSON.parse = function(text, reviver) {
-            if (text === null || text === undefined) return null;
-            if (typeof text === 'string' && text.trim() === '') return null;
-            try {
-                return _orig.call(JSON, text, reviver);
-            } catch(e) {
-                console.warn('[SafeJSON] Невалидный JSON, возвращаем null:', String(text).slice(0, 80));
-                return null;
-            }
-        };
-    }
 
     function setupBrowserStubs() {
         window.require = function (m) {
@@ -519,14 +527,15 @@
             } 
         });
 
-        // iOS RPGMVO → MP3/M4A FIX (Anti-Double-Decrypt)
+        // iOS RPGMVO/OGG FIX (Принудительно используем ПК-формат)
         const isApple = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
         if (isApple) {
             const timer = setInterval(() => {
                 if (typeof AudioManager === 'undefined') return;
                 clearInterval(timer);
 
-                AudioManager.audioFileExt = function() { return '.m4a'; };
+                // ЗАСТАВЛЯЕМ iOS ИСКАТЬ .ogg ТАК ЖЕ, КАК ЭТО ДЕЛАЕТ ПК
+                AudioManager.audioFileExt = function() { return '.ogg'; };
 
                 if (typeof Decrypter !== 'undefined') {
                     Object.defineProperty(Decrypter, 'hasEncryptedAudio', { get: () => false, set: () => {} });
@@ -540,7 +549,7 @@
                         return origDecrypt.call(this, buffer);
                     };
                 }
-                console.log('[Audio Fix] iOS Proxy: форсирован .m4a + защита от двойного шифрования!');
+                console.log('[Audio Fix] iOS Proxy: форсирован .ogg + защита от двойного шифрования!');
             }, 100);
             setTimeout(() => clearInterval(timer), 15000);
         }
@@ -707,6 +716,31 @@
                 el.addEventListener('pointerdown', press);
                 el.addEventListener('pointerup', release);
                 el.addEventListener('pointercancel', release);
+
+                // Перехватываем потерю WebGL контекста
+                // Без этого iOS убивает вкладку полностью
+                const attachWebGLRecovery = () => {
+                    const c = document.getElementById('GameCanvas') || document.querySelector('canvas');
+                    if (!c) return;
+                    c.addEventListener('webglcontextlost', e => {
+                        e.preventDefault(); // КРИТИЧНО — без этого страница перезагружается
+                        console.warn('[WebGL] Context lost — ждём восстановления GPU...');
+                    }, false);
+                    c.addEventListener('webglcontextrestored', () => {
+                        console.warn('[WebGL] Context restored');
+                        // Мягкий перезапуск сцены
+                        try {
+                            if (typeof SceneManager !== 'undefined' && SceneManager._scene) {
+                                const Scene = SceneManager._scene.constructor;
+                                SceneManager.goto(Scene);
+                            }
+                        } catch(e) {}
+                    }, false);
+                };
+                // Вешаем сразу и повторно после загрузки (canvas может ещё не существовать)
+                document.addEventListener('DOMContentLoaded', attachWebGLRecovery);
+                window.addEventListener('load', attachWebGLRecovery);
+                setTimeout(attachWebGLRecovery, 2000);
             });
         });
     }
@@ -910,6 +944,8 @@
                     panel.appendChild(item);
                     item.addEventListener('pointerdown', (e) => { e.stopPropagation(); window.__toggleRpgTouchMode(); });
                 }
+
+
             }, 150);
         });
     }
@@ -919,7 +955,6 @@
     // ============================================================================
 
     function initUltimateFixes() {
-        patchSafeJSON();
         setupBrowserStubs();
         fixDevicePixelRatio();
         setupModernViewport();
