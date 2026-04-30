@@ -33,15 +33,12 @@ if (!window.__rpgPluginHookInstalled) {
         Object.defineProperty(HTMLScriptElement.prototype, 'src', {
             set: function(val) {
                 if (val && typeof val === 'string') {
-                    // Блокируем вредоносные мобильные плагины
                     if (val.indexOf('auramz/mobile') > -1 || val.indexOf('toggle_save_dir') > -1) {
                         console.log('[RPG Fixes] 🛑 Заблокирован вредный плагин: ' + val);
                         val = 'data:application/javascript,console.log("Blocked by RPG-Fixes!");';
                     }
                     
-                    // При загрузке ЛЮБОГО плагина экстренно чиним ядро
                     if (val.indexOf('js/plugins/') > -1) {
-                        // 1. Лечим Scene_Boot
                         if (window.Scene_Boot && window.Scene_Boot.prototype && !window.__bootPromiseFixed) {
                             window.__bootPromiseFixed = true;
                             var _origBootLoad = window.Scene_Boot.prototype.loadPlayerData;
@@ -51,7 +48,6 @@ if (!window.__rpgPluginHookInstalled) {
                             };
                         }
                         
-                        // 2. Лечим DataManager
                         if (window.DataManager && window.DataManager.savefileExists && !window.__saveFilePromiseFixed) {
                             window.__saveFilePromiseFixed = true;
                             var _origSaveExists = window.DataManager.savefileExists;
@@ -61,7 +57,6 @@ if (!window.__rpgPluginHookInstalled) {
                             };
                         }
 
-                        // 3. Лечим StorageManager
                         if (window.StorageManager && window.StorageManager.exists && !window.__storagePromiseFixed) {
                             window.__storagePromiseFixed = true;
                             var _origStorageExists = window.StorageManager.exists;
@@ -73,7 +68,6 @@ if (!window.__rpgPluginHookInstalled) {
                     }
                 }
                 
-                // ВАЖНО: вызываем только оригинальный нативный сеттер
                 if (_origSrc.set) {
                     return _origSrc.set.call(this, val);
                 } else {
@@ -92,200 +86,121 @@ if (!window.__rpgPluginHookInstalled) {
 }
 
 // ============================================================================
-// 3. ОСНОВНОЙ КОД RPG-FIXES (Enterprise Edition v3.4 - ПОЛНАЯ ВЕРСИЯ)
+// 3. ОСНОВНОЙ КОД RPG-FIXES (Ultimate v3.5 - Без дубликатов)
 // ============================================================================
 (() => {
-    if (window.__RPG_FIXES_ULTIMATE_V34__) return;
-    window.__RPG_FIXES_ULTIMATE_V34__ = true;
+    if (window.__RPG_FIXES_ULTIMATE_V35__) return;
+    window.__RPG_FIXES_ULTIMATE_V35__ = true;
 
-    // ============================================================================
-    // [FIX] УСТРАНЕНИЕ ОШИБОК КОНСОЛИ (Canvas, OffscreenCanvas & Spine)
-    // ============================================================================
-    
-    // 1. Тотальный фикс willReadFrequently (ускорение чтения пикселей)
-    // Перехватываем и обычные холсты, и скрытые (OffscreenCanvas), которые использует PIXI.js
-    function applyCanvasReadFrequently(proto) {
-        if (!proto || !proto.getContext) return;
-        var originalGetContext = proto.getContext;
-        proto.getContext = function(type, attributes) {
-            if (type === '2d') {
-                // Создаем новый объект атрибутов, чтобы безопасно добавить флаг
-                var newAttributes = Object.assign({}, attributes || {});
-                newAttributes.willReadFrequently = true;
-                return originalGetContext.call(this, type, newAttributes);
+    function applyConsoleFixes() {
+        function applyCanvasReadFrequently(proto) {
+            if (!proto || !proto.getContext) return;
+            var originalGetContext = proto.getContext;
+            proto.getContext = function(type, attributes) {
+                if (type === '2d') {
+                    var newAttributes = Object.assign({}, attributes || {});
+                    newAttributes.willReadFrequently = true;
+                    return originalGetContext.call(this, type, newAttributes);
+                }
+                return originalGetContext.call(this, type, attributes);
+            };
+        }
+        applyCanvasReadFrequently(HTMLCanvasElement.prototype);
+        if (typeof OffscreenCanvas !== 'undefined') applyCanvasReadFrequently(OffscreenCanvas.prototype);
+
+        var orgSetTextAlign = Object.getOwnPropertyDescriptor(CanvasRenderingContext2D.prototype, 'textAlign');
+        if (orgSetTextAlign && orgSetTextAlign.set) {
+            Object.defineProperty(CanvasRenderingContext2D.prototype, 'textAlign', {
+                set: function(value) {
+                    var safeValue = (value === 'undefined' || !value) ? 'left' : value;
+                    orgSetTextAlign.set.call(this, safeValue);
+                }
+            });
+        }
+
+        var orgWarn = console.warn;
+        console.warn = function() {
+            if (arguments[0] && typeof arguments[0] === 'string') {
+                if (arguments[0].indexOf('Unsupported skeleton data') > -1) return;
             }
-            return originalGetContext.call(this, type, attributes);
+            orgWarn.apply(console, arguments);
         };
     }
 
-    applyCanvasReadFrequently(HTMLCanvasElement.prototype);
-    if (typeof OffscreenCanvas !== 'undefined') {
-        applyCanvasReadFrequently(OffscreenCanvas.prototype);
-    }
-
-    // 2. Фикс CanvasTextAlign (убираем ошибку с undefined от ядра движка)
-    var orgSetTextAlign = Object.getOwnPropertyDescriptor(CanvasRenderingContext2D.prototype, 'textAlign');
-    if (orgSetTextAlign && orgSetTextAlign.set) {
-        Object.defineProperty(CanvasRenderingContext2D.prototype, 'textAlign', {
-            set: function(value) {
-                var safeValue = (value === 'undefined' || !value) ? 'left' : value;
-                orgSetTextAlign.set.call(this, safeValue);
-            }
-        });
-    }
-
-    // 3. Глушим старые предупреждения о версии Spine
-    var orgWarn = console.warn;
-    console.warn = function() {
-        if (arguments[0] && typeof arguments[0] === 'string') {
-            if (arguments[0].indexOf('Unsupported skeleton data') > -1) {
-                return; // Игнорируем этот конкретный спам
-            }
-        }
-        orgWarn.apply(console, arguments);
-    };
-
-    // ============================================================================
-    // [ИДЕАЛЬНЫЙ ФИКС ПЛАГИНОВ: БАЛАНС СТРОГОСТИ И ЗАЩИТЫ]
-    // ============================================================================
-    var _origJSONParse = JSON.parse;
-    JSON.parse = function(text, reviver) {
-        if (text === null || text === undefined || text === '') {
-            return null;
-        }
-        return _origJSONParse.call(this, text, reviver);
-    };
-
-    // Разблокировка звука iOS
-    document.addEventListener('touchstart', function() {
-        if (typeof WebAudio !== 'undefined' && WebAudio._context && WebAudio._context.state === 'suspended') {
-            WebAudio._context.resume();
-        }
-    }, { once: true, passive: true });
-
-    // Стандартные заглушки для ПК-плагинов (Node.js/NW.js)
-    if (typeof process === 'undefined') {
-        window.process = { env: {}, mainModule: { filename: '' }, platform: 'browser' };
-    }
-
-    if (typeof require === 'undefined') {
-        window.require = function(moduleName) {
-            if (moduleName === 'fs') {
-                return {
-                    existsSync: function() { return false; },
-                    readFileSync: function() { return ''; },
-                    writeFileSync: function() {},
-                    mkdirSync: function() {},
-                    statSync: function() { return { isDirectory: function() { return false; } }; }
-                };
-            }
-            if (moduleName === 'path') {
-                return {
-                    join: function() { return Array.from(arguments).join('/'); },
-                    dirname: function(p) { return p; },
-                    basename: function(p) { return p; }
-                };
-            }
-            if (moduleName === 'nw.gui') {
-                return { Window: { get: function() { return { showDevTools: function() {}, isFullscreen: false }; } } };
-            }
-            return {};
+    function applyCoreEnginePatches() {
+        var _origJSONParse = JSON.parse;
+        JSON.parse = function(text, reviver) {
+            if (text === null || text === undefined || text === '') return null;
+            return _origJSONParse.call(this, text, reviver);
         };
-    }
 
-    // ============================================================================
-    // 1. CORE & ENVIRONMENT PATCHES
-    // ============================================================================
+        document.addEventListener('touchstart', function() {
+            if (typeof WebAudio !== 'undefined' && WebAudio._context && WebAudio._context.state === 'suspended') {
+                WebAudio._context.resume();
+            }
+        }, { once: true, passive: true });
+    }
 
     function setupBrowserStubs() {
-        window.require = function (m) {
-            if (m === 'path') return { 
-                dirname: p => p.replace(/[/\\][^/\\]*$/, '') || '.', 
-                join: (...a) => a.join('/'), 
-                basename: p => p.split(/[/\\]/).pop(), 
-                extname: p => { const b = p.split(/[/\\]/).pop(); const i = b.lastIndexOf('.'); return i > 0 ? b.slice(i) : ''; } 
+        if (typeof process === 'undefined') {
+            window.process = { env: {}, mainModule: { filename: '' }, platform: 'browser' };
+        }
+        if (typeof require === 'undefined') {
+            window.require = function (m) {
+                if (m === 'path') return { 
+                    dirname: p => p.replace(/[/\\][^/\\]*$/, '') || '.', 
+                    join: (...a) => a.join('/'), 
+                    basename: p => p.split(/[/\\]/).pop(), 
+                    extname: p => { const b = p.split(/[/\\]/).pop(); const i = b.lastIndexOf('.'); return i > 0 ? b.slice(i) : ''; } 
+                };
+                if (m === 'fs') return { 
+                    readFileSync: () => '', writeFileSync: () => {}, mkdirSync: () => {}, 
+                    existsSync: () => false, readdirSync: () => [], unlinkSync: () => {}, 
+                    statSync: () => ({ isDirectory: () => false }) 
+                };
+                if (m === 'nw.gui' || m === 'nw') return { 
+                    Window: { get: () => ({ on() {}, maximize() {}, restore() {}, removeAllListeners() {}, close() {} }) }, 
+                    App: { quit() {}, argv: [], manifest: {} }, 
+                    Screen: { Init() {}, on() {} }, 
+                    Shell: { openExternal: url => window.open(url, '_blank') } 
+                };
+                if (m.includes('greenworks')) return {
+                    initAPI: () => false, isSteamRunning: () => false, getAppId: () => 0,
+                    getSteamId: () => ({ accountId: 0, screenName: 'Player' }), activateAchievement: () => {}, on: () => {}
+                };
+                return {};
             };
-            if (m === 'fs') return { 
-                readFileSync: () => '', writeFileSync: () => {}, mkdirSync: () => {}, 
-                existsSync: () => false, readdirSync: () => [], unlinkSync: () => {}, 
-                statSync: () => ({ isDirectory: () => false }) 
-            };
-            if (m === 'nw.gui' || m === 'nw') return { 
-                Window: { get: () => ({ on() {}, maximize() {}, restore() {}, removeAllListeners() {}, close() {} }) }, 
-                App: { quit() {}, argv: [], manifest: {} }, 
-                Screen: { Init() {}, on() {} }, 
-                Shell: { openExternal: url => window.open(url, '_blank') } 
-            };
-
-            if (m.includes('greenworks')) return {
-                initAPI: () => false, 
-                isSteamRunning: () => false,
-                getAppId: () => 0,
-                getSteamId: () => ({ accountId: 0, screenName: 'Player' }),
-                activateAchievement: () => {},
-                on: () => {}
-            };
-            return {};
-        };
-        window.process = { platform: 'browser', env: {}, mainModule: { filename: '' } };
-        window.nw = window.require('nw');
+            window.nw = window.require('nw');
+        }
     }
-
-    // ============================================================================
-    // 2. DISPLAY & VIEWPORT CONFIGURATION
-    // ============================================================================
 
     function fixDevicePixelRatio() {
         const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
         if (!isIOS) return;
-
         const TARGET = 1;
-
-        try {
-            Object.defineProperty(window, 'devicePixelRatio', { get: () => TARGET, configurable: true });
-        } catch(e) {}
-
+        try { Object.defineProperty(window, 'devicePixelRatio', { get: () => TARGET, configurable: true }); } catch(e) {}
         const pixi_t = setInterval(() => {
             if (typeof PIXI === 'undefined') return;
             clearInterval(pixi_t);
-            
-            try { 
-                PIXI.settings.RESOLUTION = TARGET; 
-                PIXI.settings.GC_MAX_IDLE = 60;
-                PIXI.settings.GC_MAX_CHECK_COUNT = 20;
-                PIXI.settings.SPRITE_MAX_TEXTURES = 16;
-            } catch(e) {}
-
+            try { PIXI.settings.RESOLUTION = TARGET; PIXI.settings.GC_MAX_IDLE = 60; PIXI.settings.GC_MAX_CHECK_COUNT = 20; PIXI.settings.SPRITE_MAX_TEXTURES = 16; } catch(e) {}
             const gfx_t = setInterval(() => {
                 if (typeof Graphics === 'undefined') return;
                 const r = (Graphics._app && Graphics._app.renderer) || Graphics._renderer;
                 if (!r) return;
-                
                 clearInterval(gfx_t);
                 if (r.resolution === TARGET) return; 
-
-                const logW = r.width  / r.resolution;
-                const logH = r.height / r.resolution;
-                r.resolution = TARGET;
-                
+                const logW = r.width  / r.resolution; const logH = r.height / r.resolution; r.resolution = TARGET;
                 try { r.resize(logW, logH); } catch(e) {}
                 try { if (r.plugins && r.plugins.interaction) r.plugins.interaction.resolution = TARGET; } catch(e) {}
-                
             }, 100);
-            
             setTimeout(() => clearInterval(gfx_t), 15000);
         }, 50);
-        
         setTimeout(() => clearInterval(pixi_t), 15000);
     }
 
     function setupModernViewport() {
         let meta = document.querySelector('meta[name="viewport"]');
-        if (!meta) { 
-            meta = document.createElement('meta'); 
-            meta.name = 'viewport'; 
-            document.head.appendChild(meta); 
-        }
+        if (!meta) { meta = document.createElement('meta'); meta.name = 'viewport'; document.head.appendChild(meta); }
         meta.content = 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover';
 
         const style = document.createElement('style');
@@ -295,39 +210,26 @@ if (!window.__rpgPluginHookInstalled) {
         `;
         document.head.appendChild(style);
 
-        let isStretched = false; 
-        let targetCanvas = null;
-        
+        let isStretched = false; let targetCanvas = null;
         window.__toggleRpgStretch = () => { isStretched = !isStretched; forceScaleUpdate(); };
 
         const resizeObserver = new ResizeObserver(() => { if (targetCanvas) requestAnimationFrame(applyScale); });
-
         function applyScale() {
             if (!targetCanvas || !targetCanvas.width) return;
             targetCanvas.style.setProperty('width', targetCanvas.width + 'px', 'important');
             targetCanvas.style.setProperty('height', targetCanvas.height + 'px', 'important');
-            
-            let scaleX = window.innerWidth / targetCanvas.width;
-            let scaleY = window.innerHeight / targetCanvas.height;
-            if (!isStretched) { 
-                const scale = Math.min(scaleX, scaleY); 
-                scaleX = scaleY = scale; 
-            }
+            let scaleX = window.innerWidth / targetCanvas.width; let scaleY = window.innerHeight / targetCanvas.height;
+            if (!isStretched) { const scale = Math.min(scaleX, scaleY); scaleX = scaleY = scale; }
             targetCanvas.style.setProperty('transform', `translate(-50%, -50%) scale(${scaleX}, ${scaleY})`, 'important');
         }
-
         function forceScaleUpdate() { if (targetCanvas) requestAnimationFrame(applyScale); }
 
         const domObserver = new MutationObserver((mutations, obs) => {
             const c = document.getElementById('GameCanvas') || document.querySelector('canvas');
             if (c) {
-                targetCanvas = c;
-                resizeObserver.observe(document.body);
-                window.addEventListener('resize', forceScaleUpdate);
-
+                targetCanvas = c; resizeObserver.observe(document.body); window.addEventListener('resize', forceScaleUpdate);
                 const canvasObserver = new MutationObserver(() => forceScaleUpdate());
                 canvasObserver.observe(targetCanvas, { attributes: true, attributeFilter: ['width', 'height'] });
-
                 const hookTimer = setInterval(() => {
                     if (typeof Graphics !== 'undefined') {
                         Graphics.pageToCanvasX = function (x) { if (!this._canvas) return 0; const rect = this._canvas.getBoundingClientRect(); return Math.round((x - rect.left) * (this._canvas.width / rect.width)); };
@@ -337,52 +239,34 @@ if (!window.__rpgPluginHookInstalled) {
                     }
                 }, 100);
                 setTimeout(() => clearInterval(hookTimer), 5000);
-
                 let bootTicks = 0;
-                const bootTimer = setInterval(() => {
-                    forceScaleUpdate();
-                    if (++bootTicks > 20) clearInterval(bootTimer);
-                }, 100);
-
+                const bootTimer = setInterval(() => { forceScaleUpdate(); if (++bootTicks > 20) clearInterval(bootTimer); }, 100);
                 obs.disconnect();
             }
         });
         domObserver.observe(document.body, { childList: true, subtree: true });
-
-        const forceModeTimer = setInterval(() => {
-            if (typeof Utils !== 'undefined') { Utils.isNwjs = () => false; Utils.isLocal = () => false; clearInterval(forceModeTimer); }
-        }, 50);
+        const forceModeTimer = setInterval(() => { if (typeof Utils !== 'undefined') { Utils.isNwjs = () => false; Utils.isLocal = () => false; clearInterval(forceModeTimer); } }, 50);
         setTimeout(() => clearInterval(forceModeTimer), 10000);
     }
-
-    // ============================================================================
-    // 3. PERFORMANCE & MEMORY OPTIMIZATIONS
-    // ============================================================================
 
     function applyPerformanceOptimizations() {
         const initTimer = setInterval(() => {
             if (typeof PIXI === 'undefined' || typeof ImageManager === 'undefined' || typeof SceneManager === 'undefined') return;
-
             if (ImageManager && ImageManager.cache) ImageManager.cache.limit = 20 * 1000 * 1000;
             if (PIXI.settings) PIXI.settings.GC_MODE = PIXI.GC_MODES.MANUAL; 
-
             if (!SceneManager.__gcPatched) {
                 SceneManager.__gcPatched = true;
                 const origChangeScene = SceneManager.changeScene;
                 SceneManager.changeScene = function() {
                     origChangeScene.call(this);
-                    if (Graphics && Graphics._renderer && Graphics._renderer.textureGC) {
-                        Graphics._renderer.textureGC.run();
-                    }
+                    if (Graphics && Graphics._renderer && Graphics._renderer.textureGC) Graphics._renderer.textureGC.run();
                 };
             }
-
             document.addEventListener('visibilitychange', () => {
                 if (typeof AudioManager === 'undefined') return;
                 if (document.hidden && SceneManager._scene) SceneManager._scene.pause = true;
                 else if (!document.hidden && SceneManager._scene) SceneManager._scene.pause = false;
             });
-
             clearInterval(initTimer);
         }, 200);
         setTimeout(() => clearInterval(initTimer), 10000);
@@ -390,19 +274,9 @@ if (!window.__rpgPluginHookInstalled) {
         const patchTimer = setInterval(() => {
             if (typeof Tilemap !== 'undefined' && typeof Sprite_Character !== 'undefined') {
                 const origTilemapUpdate = Tilemap.prototype.updateTransform;
-                Tilemap.prototype.updateTransform = function() {
-                    this.x = Math.round(this.x);
-                    this.y = Math.round(this.y);
-                    origTilemapUpdate.call(this);
-                };
-
+                Tilemap.prototype.updateTransform = function() { this.x = Math.round(this.x); this.y = Math.round(this.y); origTilemapUpdate.call(this); };
                 const origSpriteUpdate = Sprite_Character.prototype.updatePosition;
-                Sprite_Character.prototype.updatePosition = function() {
-                    origSpriteUpdate.call(this);
-                    this.x = Math.round(this.x);
-                    this.y = Math.round(this.y);
-                };
-
+                Sprite_Character.prototype.updatePosition = function() { origSpriteUpdate.call(this); this.x = Math.round(this.x); this.y = Math.round(this.y); };
                 clearInterval(patchTimer);
             }
         }, 200);
@@ -411,32 +285,16 @@ if (!window.__rpgPluginHookInstalled) {
         const attachWebGLRecovery = () => {
             const canvas = document.getElementById('GameCanvas') || document.querySelector('canvas');
             if (!canvas) return;
-            
-            canvas.addEventListener('webglcontextlost', (e) => {
-                e.preventDefault(); 
-                console.warn('🔴 [WebGL] Контекст потерян! ОС очистила видеопамять. Ждем возврата...');
-            }, false);
-            
+            canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); console.warn('🔴 [WebGL] Контекст потерян!'); }, false);
             canvas.addEventListener('webglcontextrestored', () => {
-                console.warn('🟢 [WebGL] Контекст восстановлен! Перезапуск рендера...');
-                try {
-                    if (typeof SceneManager !== 'undefined' && SceneManager._scene) {
-                        SceneManager.goto(SceneManager._scene.constructor);
-                    }
-                } catch(err) {
-                    console.error('Ошибка восстановления WebGL:', err);
-                }
+                console.warn('🟢 [WebGL] Контекст восстановлен!');
+                try { if (typeof SceneManager !== 'undefined' && SceneManager._scene) SceneManager.goto(SceneManager._scene.constructor); } catch(err) {}
             }, false);
         };
-
         document.addEventListener('DOMContentLoaded', attachWebGLRecovery);
         window.addEventListener('load', attachWebGLRecovery);
         setTimeout(attachWebGLRecovery, 3000);
     }
-
-    // ============================================================================
-    // 4. CLOUD SAVES SYNC (FULL VERSION)
-    // ============================================================================
 
     function setupCloudSaves() {
         const CLOUD_BASE = '/api/saves';
@@ -502,9 +360,7 @@ if (!window.__rpgPluginHookInstalled) {
             if (!raw || typeof raw !== 'object') return out;
             for (const k of Object.keys(raw)) {
                 const v = raw[k];
-                out[k] = (v && typeof v === 'object' && 'value' in v) 
-                    ? { value: String(v.value ?? ''), updatedAt: Number(v.updatedAt || 0) } 
-                    : { value: String(v ?? ''), updatedAt: 0 };
+                out[k] = (v && typeof v === 'object' && 'value' in v) ? { value: String(v.value ?? ''), updatedAt: Number(v.updatedAt || 0) } : { value: String(v ?? ''), updatedAt: 0 };
             }
             return out;
         }
@@ -527,8 +383,7 @@ if (!window.__rpgPluginHookInstalled) {
                     const res = await retryFetch(`${CLOUD_BASE}/${encodeURIComponent(gameId)}/${encodeURIComponent(key)}`, { 
                         method: 'POST', credentials: 'same-origin', cache: 'no-store', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(q[key]) 
                     });
-                    if (res.ok) delete q[key]; 
-                    else allOk = false;
+                    if (res.ok) delete q[key]; else allOk = false;
                 } catch(e) { allOk = false; }
             }
             saveQueue(q);
@@ -539,9 +394,7 @@ if (!window.__rpgPluginHookInstalled) {
 
         async function fetchCloudSaves() {
             try {
-                const res = await retryFetch(`${CLOUD_BASE}/${encodeURIComponent(gameId)}?_t=${Date.now()}`, { 
-                    method: 'GET', credentials: 'same-origin', cache: 'no-store'
-                });
+                const res = await retryFetch(`${CLOUD_BASE}/${encodeURIComponent(gameId)}?_t=${Date.now()}`, { method: 'GET', credentials: 'same-origin', cache: 'no-store' });
                 if (!res.ok) throw new Error('HTTP ' + res.status);
                 
                 const cloudData = normalizeCloudPayload(await res.json());
@@ -550,10 +403,8 @@ if (!window.__rpgPluginHookInstalled) {
                 for (const k of Object.keys(cloudData)) pulledSaves[k] = chooseNewer(pulledSaves[k], cloudData[k]);
                 for (const k of Object.keys(localQueue)) pulledSaves[k] = chooseNewer(pulledSaves[k], localQueue[k]);
 
-                cloudReady = true; 
-                cloudFetchFailed = false;
+                cloudReady = true; cloudFetchFailed = false;
                 try { const sc = (typeof SceneManager !== 'undefined' && SceneManager._scene) ? SceneManager._scene : null; if (sc?.refresh) sc.refresh(); if (sc?._listWindow?.refresh) sc._listWindow.refresh(); } catch (_) {}
-                
                 processOfflineQueue();
             } catch (e) { 
                 cloudFetchFailed = true; cloudReady = true; 
@@ -565,32 +416,25 @@ if (!window.__rpgPluginHookInstalled) {
         function uploadToCloud(key, value) {
             const payload = { value: String(value), updatedAt: Date.now() };
             pulledSaves[key] = chooseNewer(pulledSaves[key], payload); 
-
-            const q = getQueue();
-            q[key] = payload;
-            saveQueue(q);
-
+            const q = getQueue(); q[key] = payload; saveQueue(q);
             showSync(true);
             if (!navigator.onLine) { showSync(false, 'offline'); return; }
 
             retryFetch(`${CLOUD_BASE}/${encodeURIComponent(gameId)}/${encodeURIComponent(key)}`, { 
                 method: 'POST', credentials: 'same-origin', cache: 'no-store', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) 
             }).then(r => {
-                if (r.ok) { const qNew = getQueue(); delete qNew[key]; saveQueue(qNew); showSync(false, 'ok'); } 
-                else showSync(false, 'error');
+                if (r.ok) { const qNew = getQueue(); delete qNew[key]; saveQueue(qNew); showSync(false, 'ok'); } else showSync(false, 'error');
             }).catch(() => showSync(false, 'offline'));
         }
 
         function deleteFromCloud(key) {
             delete pulledSaves[key]; 
             const q = getQueue(); delete q[key]; saveQueue(q);
-            
             showSync(true);
             if (!navigator.onLine) { showSync(false, 'offline'); return; }
 
-            retryFetch(`${CLOUD_BASE}/${encodeURIComponent(gameId)}/${encodeURIComponent(key)}`, { 
-                method: 'DELETE', credentials: 'same-origin', cache: 'no-store'
-            }).then(r => showSync(false, r.ok ? 'ok' : 'error')).catch(() => showSync(false, 'offline'));
+            retryFetch(`${CLOUD_BASE}/${encodeURIComponent(gameId)}/${encodeURIComponent(key)}`, { method: 'DELETE', credentials: 'same-origin', cache: 'no-store' })
+                .then(r => showSync(false, r.ok ? 'ok' : 'error')).catch(() => showSync(false, 'offline'));
         }
 
         function canOptimisticallyShowExists(localExists) {
@@ -601,13 +445,10 @@ if (!window.__rpgPluginHookInstalled) {
         function injectMZEngine() {
             const _saveToForage = StorageManager.saveToForage; 
             StorageManager.saveToForage = function(saveName, zip) { uploadToCloud(`MZ_${saveName}`, zip); return _saveToForage.apply(this, arguments); };
-            
             const _loadFromForage = StorageManager.loadFromForage; 
             StorageManager.loadFromForage = function(saveName) { const key = `MZ_${saveName}`; if (cloudReady && hasEntry(key)) return Promise.resolve(getEntry(key).value); return _loadFromForage.apply(this, arguments); };
-            
             const _removeForage = StorageManager.removeForage; 
             StorageManager.removeForage = function(saveName) { deleteFromCloud(`MZ_${saveName}`); return _removeForage.apply(this, arguments); };
-            
             const _forageExists = StorageManager.forageExists; 
             StorageManager.forageExists = function(saveName) { const local = _forageExists.apply(this, arguments); if (!cloudReady) return canOptimisticallyShowExists(local); return hasEntry(`MZ_${saveName}`) || local; };
         }
@@ -619,8 +460,7 @@ if (!window.__rpgPluginHookInstalled) {
                 if (cloudReady && hasEntry(key)) {
                     let val = getEntry(key).value;
                     if (val && typeof val === 'string' && !val.trim().startsWith('{') && !val.trim().startsWith('[')) {
-                        try { if (typeof LZString !== 'undefined') { const decompressed = LZString.decompressFromBase64(val); if (decompressed) val = decompressed; } } 
-                        catch(e) {}
+                        try { if (typeof LZString !== 'undefined') { const decompressed = LZString.decompressFromBase64(val); if (decompressed) val = decompressed; } } catch(e) {}
                     }
                     return val;
                 }
@@ -632,7 +472,6 @@ if (!window.__rpgPluginHookInstalled) {
             }
             const _saveToWebStorage = StorageManager.saveToWebStorage; 
             StorageManager.saveToWebStorage = function(saveFileId, json) { uploadToCloud(this.webStorageKey(saveFileId), json); return _saveToWebStorage.apply(this, arguments); };
-            
             const _removeWebStorage = StorageManager.removeWebStorage; 
             StorageManager.removeWebStorage = function(saveFileId) { deleteFromCloud(this.webStorageKey(saveFileId)); return _removeWebStorage.apply(this, arguments); };
         }
@@ -646,10 +485,6 @@ if (!window.__rpgPluginHookInstalled) {
         setTimeout(() => clearInterval(hookTimer), 15000);
         window.addEventListener('pageshow', () => { if (cloudFetchFailed) fetchCloudSaves(); });
     }
-
-    // ============================================================================
-    // 5. AUDIO SYSTEM FIXES
-    // ============================================================================
 
     function setupSecureAudio() {
         if (typeof AudioManager !== 'undefined' && !AudioManager.__PatchedCheck) {
@@ -676,28 +511,19 @@ if (!window.__rpgPluginHookInstalled) {
         function syncUnlockAudio() {
             if (unlocked) return;
             const contexts = [];
-            
-            if (typeof WebAudio !== 'undefined' && WebAudio._context) {
-                contexts.push(WebAudio._context);
-            } else {
-                if (!window.__globalIOSAudioContext) {
-                    const AC = window.AudioContext || window.webkitAudioContext;
-                    if (AC) window.__globalIOSAudioContext = new AC();
-                }
+            if (typeof WebAudio !== 'undefined' && WebAudio._context) contexts.push(WebAudio._context);
+            else {
+                if (!window.__globalIOSAudioContext) { const AC = window.AudioContext || window.webkitAudioContext; if (AC) window.__globalIOSAudioContext = new AC(); }
                 if (window.__globalIOSAudioContext) contexts.push(window.__globalIOSAudioContext);
             }
-
             let anyResumed = false;
             contexts.forEach(ctx => {
                 if (ctx && ctx.state === 'suspended') { try { ctx.resume(); } catch (e) {} }
                 try {
-                    const buffer = ctx.createBuffer(1, 1, 22050);
-                    const source = ctx.createBufferSource();
-                    source.buffer = buffer; source.connect(ctx.destination); source.start(0);
-                    anyResumed = true;
+                    const buffer = ctx.createBuffer(1, 1, 22050); const source = ctx.createBufferSource();
+                    source.buffer = buffer; source.connect(ctx.destination); source.start(0); anyResumed = true;
                 } catch (e) {}
             });
-
             if (anyResumed) {
                 unlocked = true;
                 ['pointerdown', 'touchstart', 'touchend', 'click', 'keydown'].forEach(e => window.removeEventListener(e, syncUnlockAudio, true));
@@ -705,35 +531,26 @@ if (!window.__rpgPluginHookInstalled) {
         }
         
         ['pointerdown', 'touchstart', 'touchend', 'click', 'keydown'].forEach(e => window.addEventListener(e, syncUnlockAudio, { passive: true, capture: true }));
-        
         document.addEventListener('visibilitychange', () => { 
             if (!document.hidden) { 
-                unlocked = false; 
-                syncUnlockAudio(); 
-                if (typeof WebAudio !== 'undefined' && WebAudio._context && WebAudio._context.state === 'suspended') {
-                    try { WebAudio._context.resume(); } catch(e) {}
-                }
+                unlocked = false; syncUnlockAudio(); 
+                if (typeof WebAudio !== 'undefined' && WebAudio._context && WebAudio._context.state === 'suspended') { try { WebAudio._context.resume(); } catch(e) {} }
             } 
         });
 
-        // iOS RPGMVO/OGG FIX
         const isApple = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
         if (isApple) {
             const timer = setInterval(() => {
                 if (typeof AudioManager === 'undefined') return;
                 clearInterval(timer);
-
                 AudioManager.audioFileExt = function() { return '.ogg'; };
-
                 if (typeof Decrypter !== 'undefined') {
                     Object.defineProperty(Decrypter, 'hasEncryptedAudio', { get: () => false, set: () => {} });
-                    
                     const origDecrypt = Decrypter.decryptArrayBuffer;
                     Decrypter.decryptArrayBuffer = function(buffer) {
                         if (!buffer || buffer.byteLength < 16) return buffer;
                         const header = new Uint8Array(buffer, 0, 4);
-                        const isRPGM = header[0]===0x52 && header[1]===0x50 && header[2]===0x47 && header[3]===0x4D;
-                        if (!isRPGM) return buffer; 
+                        if (!(header[0]===0x52 && header[1]===0x50 && header[2]===0x47 && header[3]===0x4D)) return buffer; 
                         return origDecrypt.call(this, buffer);
                     };
                 }
@@ -742,10 +559,7 @@ if (!window.__rpgPluginHookInstalled) {
         }
     }
 
-    // ============================================================================
-    // 6. UI & VIRTUAL CONTROLS
-    // ============================================================================
-
+    // --- 8. UI & VIRTUAL CONTROLS ---
     function setupUIAndGamepad() {
         document.addEventListener('DOMContentLoaded', () => {
             if (document.getElementById('_sys_menu_container')) return;
@@ -809,14 +623,11 @@ if (!window.__rpgPluginHookInstalled) {
             ui.innerHTML = sysMenuHtml + mobCtrlHtml;
             document.body.appendChild(ui);
 
-            // Menu Handlers
             const sysBtn = document.getElementById('_sys_btn');
             const sysPanel = document.getElementById('_sys_panel');
 
             sysBtn.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); sysPanel.classList.toggle('_open'); }, { passive: false });
-            
             document.getElementById('_sys_home').addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); window.location.href = '/'; }, { passive: false });
-            
             document.getElementById('_sys_stretch').addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); window.__toggleRpgStretch(); sysPanel.classList.remove('_open'); }, { passive: false });
 
             if (!isIOS) {
@@ -827,7 +638,6 @@ if (!window.__rpgPluginHookInstalled) {
                 }, { passive: false });
             }
 
-            // Turbo Mode
             window.__rpgTurbo = false;
             document.getElementById('_sys_turbo').addEventListener('pointerdown', (e) => {
                 e.preventDefault(); e.stopPropagation();
@@ -860,13 +670,11 @@ if (!window.__rpgPluginHookInstalled) {
             document.addEventListener('pointerdown', (e) => {
                 if (!sysPanel.contains(e.target) && e.target !== sysBtn) sysPanel.classList.remove('_open');
             });
-
             document.addEventListener('contextmenu', e => {
                 if (e.target.closest('#_mob_ctrl') || e.target.closest('#_sys_menu_container')) e.preventDefault();
             });
             document.getElementById('_mob_ctrl').addEventListener('pointerdown', e => e.stopPropagation(), { passive: false });
 
-            // Virtual Gamepad Handlers
             const rpgKeyMap = { _d_up: 'up', _d_down: 'down', _d_left: 'left', _d_right: 'right', _a_ok: 'ok', _a_esc: 'escape', _a_menu: 'control', _a_shift: 'shift' };
             const KEY_CODES = { up:38, down:40, left:37, right:39, ok:32, escape:27, control:17, shift:16 };
 
@@ -903,32 +711,11 @@ if (!window.__rpgPluginHookInstalled) {
                 el.addEventListener('pointerdown', press);
                 el.addEventListener('pointerup', release);
                 el.addEventListener('pointercancel', release);
-
-                const attachWebGLRecovery = () => {
-                    const c = document.getElementById('GameCanvas') || document.querySelector('canvas');
-                    if (!c) return;
-                    c.addEventListener('webglcontextlost', e => {
-                        e.preventDefault(); 
-                    }, false);
-                    c.addEventListener('webglcontextrestored', () => {
-                        try {
-                            if (typeof SceneManager !== 'undefined' && SceneManager._scene) {
-                                SceneManager.goto(SceneManager._scene.constructor);
-                            }
-                        } catch(e) {}
-                    }, false);
-                };
-                document.addEventListener('DOMContentLoaded', attachWebGLRecovery);
-                window.addEventListener('load', attachWebGLRecovery);
-                setTimeout(attachWebGLRecovery, 2000);
             });
         });
     }
 
-    // ============================================================================
-    // 7. DIAGNOSTICS & DEBUGGING
-    // ============================================================================
-
+    // --- 9. DIAGNOSTICS & DEBUGGING ---
     function setupFpsMonitor() {
         const showByDefault = location.search.includes('fps') || location.search.includes('dev');
         window.__fpsMonitorVisible = showByDefault;
@@ -1130,10 +917,12 @@ if (!window.__rpgPluginHookInstalled) {
     }
 
     // ============================================================================
-    // 8. INITIALIZATION
+    // ИНИЦИАЛИЗАЦИЯ
     // ============================================================================
 
     function initUltimateFixes() {
+        applyConsoleFixes();
+        applyCoreEnginePatches();
         setupBrowserStubs();
         fixDevicePixelRatio();
         setupModernViewport();
@@ -1145,7 +934,7 @@ if (!window.__rpgPluginHookInstalled) {
         setupSpikeDiagnostics();
         setupTouchModeToggle();
         
-        console.log('✅ RPG-Fixes Ultimate v3.4 (Clean Code + All Features) успешно загружен!');
+        console.log('✅ RPG-Fixes Ultimate v3.5 (Structured & Audited) успешно загружен!');
     }
 
     // Запускаем всё
