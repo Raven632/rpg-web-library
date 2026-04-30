@@ -34,7 +34,6 @@
     // 1. CORE & ENVIRONMENT PATCHES
     // ============================================================================
 
-
     function setupBrowserStubs() {
         window.require = function (m) {
             if (m === 'path') return { 
@@ -251,6 +250,36 @@
             }
         }, 200);
         setTimeout(() => clearInterval(patchTimer), 10000);
+
+        // [WebGL Recovery] Защита от крашей видеопамяти (VRAM)
+        const attachWebGLRecovery = () => {
+            const canvas = document.getElementById('GameCanvas') || document.querySelector('canvas');
+            if (!canvas) return;
+            
+            // Предотвращаем дефолтное действие браузера (убийство вкладки)
+            canvas.addEventListener('webglcontextlost', (e) => {
+                e.preventDefault(); 
+                console.warn('🔴 [WebGL] Контекст потерян! ОС очистила видеопамять. Ждем возврата...');
+            }, false);
+            
+            // Заставляем движок перерисовать всё при возврате памяти
+            canvas.addEventListener('webglcontextrestored', () => {
+                console.warn('🟢 [WebGL] Контекст восстановлен! Перезапуск рендера...');
+                try {
+                    if (typeof SceneManager !== 'undefined' && SceneManager._scene) {
+                        // Перезапускаем текущую сцену (карту/меню), чтобы заново загрузить текстуры
+                        SceneManager.goto(SceneManager._scene.constructor);
+                    }
+                } catch(err) {
+                    console.error('Ошибка восстановления WebGL:', err);
+                }
+            }, false);
+        };
+
+        // Пытаемся повесить защиту сразу и повторяем, если canvas ещё не создан движком
+        document.addEventListener('DOMContentLoaded', attachWebGLRecovery);
+        window.addEventListener('load', attachWebGLRecovery);
+        setTimeout(attachWebGLRecovery, 3000);
     }
 
     // ============================================================================

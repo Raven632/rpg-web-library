@@ -20,33 +20,22 @@ const cookieParser = require('cookie-parser');
 const crypto = require('crypto');
 const bcrypt = require('bcrypt');
 
+const dbService = require('./src/db/database.js');
+const scraperService = require('./src/services/scraper.js');
+const { authRouter, requireAuth } = require('./src/routes/auth.js');
+const { GAMES_DIR, EXTRACT_TMP, UPLOAD_TMP, SAVES_DIR, AUDIOCACHE } = require('./src/config/index.js');
+const { spawnExtract, findGameFolder } = require('./src/utils/archive.js');
+const { upload, uploadLimiter } = require('./src/utils/upload.js');
+const createGamesRouter = require('./src/routes/games.js');
+const createSavesRouter = require('./src/routes/saves.js');
+const audioService = require('./src/services/audio.js');
+
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: '*' } });
 
 app.use(compression());
 
-// ============================================================================
-// [1] КОНФИГУРАЦИЯ СЕРВЕРА
-// ============================================================================
-
-const GAMES_DIR = process.env.GAMES_DIR || path.join(__dirname, '..', 'games');
-const EXTRACT_TMP = path.join(GAMES_DIR, '_tmp_uploads'); 
-const UPLOAD_TMP = EXTRACT_TMP; 
-const SAVES_DIR = path.join(GAMES_DIR, '_saves');
-const AUDIOCACHE = path.join(GAMES_DIR, '.audio-cache');
-
-// ⚡ Уникальный токен сессии (Генерируется при первом запуске и хранится в БД)
-let SESSION_TOKEN = '';
-
-const TAGS_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
-const dlsiteTagCache = new Map();
-let db; 
-
-// ⚡ Очередь фонового скрейпинга с дедупликацией
-const backgroundScrapeQueue = [];
-const queuedScrapes = new Set(); // Защита от дублирования
-let isBackgroundScraping = false;
 
 // ============================================================================
 // [2] ИНИЦИАЛИЗАЦИЯ И MIDDLEWARE
@@ -57,7 +46,6 @@ app.use(express.json({ limit: '50mb' }));
 app.use(cookieParser());
 
 const apiLimiter = rateLimit({ windowMs: 60 * 1000, max: 200, message: { error: 'Слишком много запросов' } });
-const uploadLimiter = rateLimit({ windowMs: 60 * 1000, max: 5, message: { error: 'Слишком много загрузок' } });
 app.use('/api/', apiLimiter);
 
 Promise.all([
@@ -65,23 +53,6 @@ Promise.all([
     fsp.mkdir(SAVES_DIR, { recursive: true }),
     fsp.mkdir(AUDIOCACHE, { recursive: true })
 ]).catch(err => console.error('[Init] Ошибка создания системных папок:', err));
-
-const storage = multer.diskStorage({
-    destination: (req, file, cb) => cb(null, UPLOAD_TMP),
-    filename: (req, file, cb) => {
-        const ext = path.extname(file.originalname) || '';
-        cb(null, `archive_${Date.now()}${ext}`);
-    }
-});
-
-const upload = multer({
-    storage,
-    limits: { fileSize: 10 * 1024 * 1024 * 1024 }, 
-    fileFilter: (req, file, cb) => {
-        if (file.originalname.match(/\.(zip|7z|rar)$/i)) cb(null, true);
-        else cb(new Error('Поддерживаются только ZIP, 7z и RAR!'));
-    }
-});
 
 // ============================================================================
 // [3] СИСТЕМНЫЕ УТИЛИТЫ И ФОНОВАЯ ОЧЕРЕДЬ
@@ -100,7 +71,7 @@ async function processBackgroundScrape() {
             const gamePath = path.join(GAMES_DIR, folder);
             
             // 1. Сначала глубоко ищем RJ-код внутри текстовых файлов игры
-            const rjCode = await findRJCode(folder, gamePath);
+            const rjCode = await scraperService.findRJCode(folder, gamePath);
             
             // 2. Получаем чистое название для резервного поиска (VNDB/Steam)
             let title = folder.replace(/\[?RJ\d{6,8}\]?/gi, '').replace(/[-_]/g, ' ').replace(/\s+/g, ' ').trim() || folder;
@@ -110,21 +81,21 @@ async function processBackgroundScrape() {
             } catch(e) {}
 
             // 3. Каскадный поиск: Если есть RJ -> DLsite. Иначе -> VNDB -> Steam
-            const scrapedData = await fetchUniversalMetadata(title, rjCode);
+            const scrapedData = await scraperService.fetchUniversalMetadata(title, rjCode);
             
             if (scrapedData && (scrapedData.tags?.length > 0 || scrapedData.description)) {
                 const tagsJson = JSON.stringify(scrapedData.tags || []);
                 const desc = scrapedData.description || '';
 
-                await db.run('UPDATE games SET tags = ?, description = ?, scraped = 1 WHERE id = ?',
+                await dbService.get().run('UPDATE games SET tags = ?, description = ?, scraped = 1 WHERE id = ?',
                     [tagsJson, desc, folder]);
                 
                 // Если парсер нашел обложку (например в Steam/VNDB), а у нас её нет - скачиваем
                 if (scrapedData.coverUrl) {
-                    const current = await db.get('SELECT cover FROM games WHERE id = ?', [folder]);
+                    const current = await dbService.get().get('SELECT cover FROM games WHERE id = ?', [folder]);
                     if (!current?.cover) {
-                        if (await downloadRemoteCover(scrapedData.coverUrl, path.join(gamePath, 'cover.jpg'))) {
-                            await db.run('UPDATE games SET cover = ? WHERE id = ?', [`${folder}/cover.jpg`, folder]);
+                        if (await scraperService.downloadRemoteCover(scrapedData.coverUrl, path.join(gamePath, 'cover.jpg'))) {
+                            await dbService.get().run('UPDATE games SET cover = ? WHERE id = ?', [`${folder}/cover.jpg`, folder]);
                         }
                     }
                 }
@@ -133,7 +104,7 @@ async function processBackgroundScrape() {
                 console.log(`[Queue] ✅ Успешно обновлено: ${folder}`);
             } else {
                 // Помечаем как scraped=1, чтобы больше не пытаться парсить пустые игры при каждом перезапуске
-                await db.run('UPDATE games SET scraped = 1 WHERE id = ?', [folder]);
+                await dbService.get().run('UPDATE games SET scraped = 1 WHERE id = ?', [folder]);
                 console.log(`[Queue] ⚠️ Данные не найдены для: ${folder}`);
             }
         } catch (e) {
@@ -148,338 +119,9 @@ async function processBackgroundScrape() {
     isBackgroundScraping = false;
 }
 
-function spawnExtract(cmd, args) {
-    return new Promise((resolve, reject) => {
-        const proc = spawn(cmd, args, { stdio: ['pipe', 'ignore', 'pipe'] });
-        let stderr = '';
-        proc.stderr.on('data', d => { if (stderr.length < 50000) stderr += d.toString(); });
-        proc.on('close', code => code === 0 ? resolve() : reject(new Error(`Exit code ${code}. Stderr: ${stderr.slice(0, 2000)}`)));
-        proc.on('error', err => reject(new Error(`Запуск ${cmd} не удался: ${err.message}`)));
-    });
-}
-
-async function findGameFolder(dir, depth = 0) {
-    if (depth > 10) return null;
-    const items = await fsp.readdir(dir, { withFileTypes: true });
-    
-    if (items.some(i => i.isDirectory() && i.name.toLowerCase() === 'www')) {
-        return path.join(dir, items.find(i => i.name.toLowerCase() === 'www').name);
-    }
-    if (items.some(i => i.isFile() && i.name.toLowerCase() === 'index.html')) return dir;
-    
-    for (const item of items) {
-        if (item.isDirectory()) {
-            const found = await findGameFolder(path.join(dir, item.name), depth + 1);
-            if (found) return found;
-        }
-    }
-    return null;
-}
-
-async function findRJCode(folderName, gamePath) {
-    const rjRegex = /RJ\d{6,8}/i;
-    let match = folderName.match(rjRegex);
-    if (match) return match[0].toUpperCase();
-
-    try {
-        const files = await fsp.readdir(gamePath);
-        const textFiles = files.filter(f => f.match(/\.(txt|md|html|json)$/i));
-        for (const file of textFiles) {
-            const filePath = path.join(gamePath, file);
-            const stats = await fsp.stat(filePath);
-            if (stats.size < 500000) {
-                const content = await fsp.readFile(filePath, 'utf8');
-                match = content.match(rjRegex);
-                if (match) return match[0].toUpperCase();
-            }
-        }
-    } catch (e) {}
-    return null;
-}
-
-// ============================================================================
-// [4] КАСКАДНЫЙ ПАРСЕР МЕТАДАННЫХ
-// ============================================================================
-
-async function fetchDLsiteCover(rjCode, destPath) {
-    const numStr = rjCode.replace(/RJ/i, '');
-    const dirStr = 'RJ' + String(Math.ceil(parseInt(numStr, 10) / 1000) * 1000).padStart(numStr.length, '0');
-    const urls = [
-        `https://img.dlsite.jp/modpub/images2/work/doujin/${dirStr}/${rjCode}_img_main.jpg`,
-        `https://img.dlsite.jp/modpub/images2/work/professional/${dirStr}/${rjCode}_img_main.jpg`
-    ];
-    for (const url of urls) {
-        try {
-            const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
-            if (res.ok) {
-                await fsp.writeFile(destPath, Buffer.from(await res.arrayBuffer()));
-                return true;
-            }
-        } catch (e) {}
-    }
-    return false;
-}
-
-async function downloadRemoteCover(url, destPath) {
-    try {
-        const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
-        if (res.ok) {
-            await fsp.writeFile(destPath, Buffer.from(await res.arrayBuffer()));
-            return true;
-        }
-    } catch (e) {}
-    return false;
-}
-
-async function translateText(text, targetLang = 'en') {
-    if (!text) return '';
-    try {
-        const res = await fetch(`https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${targetLang}&dt=t&q=${encodeURIComponent(text)}`);
-        const data = await res.json();
-        return data[0].map(item => item[0]).join('');
-    } catch (e) { return text; }
-}
-
-async function fetchViaJapanProxy(url) {
-    // ========================================================================
-    // ПЛАН А: BYOK через ScraperAPI (Если есть ключ - работает надежно и быстро, без заморочек)
-    // ========================================================================
-    if (process.env.SCRAPER_API_KEY) {
-        try {
-            console.log('[Scraper] 🔑 Используем премиум ScraperAPI (BYOK)...');
-            const scraperUrl = `http://api.scraperapi.com?api_key=${process.env.SCRAPER_API_KEY}&url=${encodeURIComponent(url)}&country_code=jp`;
-            
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 15000); 
-            
-            const res = await fetch(scraperUrl, { signal: controller.signal });
-            clearTimeout(timeoutId);
-            
-            const data = await res.json();
-            if (data?.[0]?.work_name) {
-                console.log('[Scraper] ✅ Данные успешно получены через ScraperAPI!');
-                return data;
-            }
-        } catch (e) {
-            console.error('[Scraper] ❌ Ошибка ScraperAPI. Переход к Плану Б...', e.message);
-        }
-    } else {
-        console.log('[Scraper] ⚠️ SCRAPER_API_KEY не найден в .env. Запускаем План Б (публичные прокси)...');
-    }
-
-    // ========================================================================
-    // ПЛАН Б: Монстр-агрегатор бесплатных прокси (Работает "из коробки")
-    // ========================================================================
-    try {
-        console.log('[Scraper] 📡 Собираем бесплатные JP-прокси со всего интернета...');
-        let proxies = [];
-
-        // Собираем списки параллельно
-        const sources = [
-            fetch('https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=10000&country=JP'),
-            fetch('https://www.proxy-list.download/api/v1/get?type=http&country=JP'),
-            fetch('https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/protocols/http/data.txt'),
-            fetch('https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt')
-        ];
-
-        const results = await Promise.allSettled(sources);
-
-        for (const res of results) {
-            if (res.status === 'fulfilled' && res.value.ok) {
-                const text = await res.value.text();
-                const matches = text.match(/\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}:[0-9]+\b/g);
-                if (matches) proxies.push(...matches);
-            }
-        }
-
-        try {
-            const geoRes = await fetch('https://proxylist.geonode.com/api/proxy-list?country=JP&protocols=http&limit=100');
-            if (geoRes.ok) {
-                const geoJson = await geoRes.json();
-                if (geoJson.data) proxies.push(...geoJson.data.map(p => `${p.ip}:${p.port}`));
-            }
-        } catch (e) {}
-
-        proxies = [...new Set(proxies)].sort(() => Math.random() - 0.5);
-
-        if (proxies.length === 0) {
-            console.log('[Scraper] ❌ Японские прокси не найдены в открытых источниках.');
-            return null;
-        }
-
-        const maxConcurrent = Math.min(30, proxies.length);
-        console.log(`[Scraper] 🚀 ЗАПУСК АТАКИ через ${maxConcurrent} бесплатных прокси...`);
-
-        const promises = proxies.slice(0, maxConcurrent).map((proxy) => {
-            return new Promise(async (resolve, reject) => {
-                try {
-                    const { stdout } = await execFilePromise('curl', [
-                        '-sS', '-L', '-m', '10', 
-                        '-x', `http://${proxy}`, 
-                        '-H', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-                        url
-                    ]);
-                    
-                    const data = JSON.parse(stdout); 
-                    if (data?.[0]?.work_name) {
-                        console.log(`[Scraper] 🎯 Пробито через бесплатный прокси: ${proxy}`);
-                        resolve(data);
-                    } else {
-                        reject(new Error('Пустой ответ'));
-                    }
-                } catch (e) { 
-                    reject(e); 
-                }
-            });
-        });
-
-        return await Promise.any(promises);
-
-    } catch (e) {
-        console.error('[Scraper] ❌ Все прокси из пула провалились.');
-    }
-    return null;
-}
-
-async function processParsedData(gameData, rjCode) {
-    const tags = gameData.genres ? gameData.genres.map(g => g.name) : [];
-    let description = (gameData.intro_s || gameData.intro || '').replace(/<[^>]*>?/gm, '').trim();
-
-    if (tags.length > 0) {
-        const translatedDesc = await translateText(description, 'en');
-        const finalData = { tags: [...new Set(tags)], description: translatedDesc };
-        dlsiteTagCache.set(rjCode, { data: finalData, expiresAt: Date.now() + TAGS_CACHE_TTL_MS }); 
-        return finalData;
-    }
-    return null;
-}
-
-async function executeFetchDLsiteTags(rjCode) {
-    const cached = dlsiteTagCache.get(rjCode);
-    if (cached && cached.expiresAt > Date.now()) return cached.data;
-
-    const locales = ['en_US', 'ja_JP'];
-    for (const loc of locales) {
-        const targetUrl = `https://www.dlsite.com/maniax/api/=/product.json?workno=${rjCode}&locale=${loc}`;
-        const gateways = [
-            `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`,
-            `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetUrl)}`,
-            `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`
-        ];
-
-        for (const gateway of gateways) {
-            try {
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 8000); 
-                const res = await fetch(gateway, { signal: controller.signal });
-                clearTimeout(timeoutId);
-                
-                const data = await res.json();
-                if (data?.[0]?.work_name) return await processParsedData(data[0], rjCode);
-            } catch (e) {}
-        }
-    }
-
-    const jpUrl = `https://www.dlsite.com/maniax/api/=/product.json?workno=${rjCode}&locale=en_US`;
-    const jpData = await fetchViaJapanProxy(jpUrl);
-    if (jpData?.[0]?.work_name) return await processParsedData(jpData[0], rjCode);
-
-    return null;
-}
-
-async function fetchVNDBMetadata(title) {
-    try {
-        console.log(`[Scraper] 🌸 Ищем на VNDB: "${title}"...`);
-        const res = await fetch('https://api.vndb.org/kana/vn', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ filters: ["search", "=", title], fields: "title, description, image.url, tags.name" })
-        });
-        const data = await res.json();
-        if (data.results && data.results.length > 0) {
-            const vn = data.results[0];
-            let desc = (vn.description || '').replace(/\[\/?(b|i|u|url|spoiler|quote)[^\]]*\]/gi, '').trim();
-            return { coverUrl: vn.image ? vn.image.url : null, description: desc, tags: vn.tags ? vn.tags.map(t => t.name) : [] };
-        }
-    } catch (e) {}
-    return null;
-}
-
-async function fetchSteamMetadata(title) {
-    try {
-        console.log(`[Scraper] 🚂 Ищем в Steam: "${title}"...`);
-        const searchRes = await fetch(`https://store.steampowered.com/api/storesearch/?term=${encodeURIComponent(title)}&l=english&cc=US`);
-        const searchData = await searchRes.json();
-
-        if (searchData.total > 0 && searchData.items?.length > 0) {
-            const appId = searchData.items[0].id;
-            const detailRes = await fetch(`https://store.steampowered.com/api/appdetails?appids=${appId}`);
-            const detailData = await detailRes.json();
-
-            if (detailData[appId]?.success) {
-                const game = detailData[appId].data;
-                const desc = (game.short_description || game.about_the_game || '').replace(/<[^>]*>?/gm, '').trim();
-                return { coverUrl: game.header_image, description: desc, tags: game.genres ? game.genres.map(g => g.description) : [] };
-            }
-        }
-    } catch (e) {}
-    return null;
-}
-
-async function fetchUniversalMetadata(title, rjCode) {
-    if (rjCode) {
-        const dlsiteData = await executeFetchDLsiteTags(rjCode);
-        if (dlsiteData?.tags?.length > 0) return dlsiteData;
-    }
-
-    const cleanTitle = title.replace(/v\d+\.\d+/gi, '').replace(/\[.*?\]/g, '').replace(/\(.*?\)/g, '').trim();
-    if (!cleanTitle || cleanTitle.length < 3) return null;
-
-    const vndbData = await fetchVNDBMetadata(cleanTitle);
-    if (vndbData) return vndbData;
-
-    const steamData = await fetchSteamMetadata(cleanTitle);
-    if (steamData) return steamData;
-
-    return null;
-}
-
 // ============================================================================
 // [5] БАЗА ДАННЫХ
 // ============================================================================
-
-async function initDB() {
-    db = await open({ filename: path.join(GAMES_DIR, 'library.db'), driver: sqlite3.Database });
-    
-    // 1. Создаем таблицы
-    await db.exec(`
-        CREATE TABLE IF NOT EXISTS games (
-            id TEXT PRIMARY KEY, title TEXT, cover TEXT, tags TEXT, description TEXT,
-            rating INTEGER DEFAULT 0, lastPlayed INTEGER DEFAULT 0, addedAt INTEGER DEFAULT 0, scraped INTEGER DEFAULT 0,
-            ready INTEGER DEFAULT 0
-        )
-    `);
-    await db.exec('CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)');
-
-    // ⚡ 2. БЛОК БЕЗОПАСНОСТИ ZERO-CONFIG (То, что потерялось)
-    let tokenRow = await db.get('SELECT value FROM settings WHERE key = "session_secret"');
-    if (!tokenRow) {
-        // Если сервер запускается ВПЕРВЫЕ - создаем сверхнадежный пароль
-        SESSION_TOKEN = crypto.randomBytes(64).toString('hex');
-        await db.run('INSERT INTO settings (key, value) VALUES (?, ?)', ['session_secret', SESSION_TOKEN]);
-        console.log('🛡️ [Security] Сгенерирован уникальный и безопасный ключ сессии для этой установки.');
-    } else {
-        // Сервер уже запускался - берем существующий пароль из базы
-        SESSION_TOKEN = tokenRow.value;
-    }
-
-    // 3. Миграции старых данных
-    try { await db.exec('ALTER TABLE games ADD COLUMN ready INTEGER DEFAULT 0'); } catch (_) {}
-    try { 
-        console.log('[DB] Проверка миграций...');
-        await db.run('UPDATE games SET ready = 1 WHERE ready = 0 AND (title IS NOT NULL OR cover IS NOT NULL)'); 
-    } catch (e) {}
-}
 
 async function addGameToDB(folder, gamePath) {
     let title = folder.replace(/\[?RJ\d{6,8}\]?/gi, '').replace(/[-_]/g, ' ').replace(/\s+/g, ' ').trim() || folder;
@@ -497,9 +139,9 @@ async function addGameToDB(folder, gamePath) {
     else if (await checkExists(path.join(gamePath, 'cover.png'))) cover = `${folder}/cover.png`;
 
     // Вытаскиваем RJ-код только для того, чтобы скачать обложку напрямую (если её нет)
-    const rjCode = await findRJCode(folder, gamePath);
+    const rjCode = await scraperService.findRJCode(folder, gamePath);
     if (rjCode && !cover) {
-        if (await fetchDLsiteCover(rjCode, path.join(gamePath, 'cover.jpg'))) cover = `${folder}/cover.jpg`;
+        if (await scraperService.fetchDLsiteCover(rjCode, path.join(gamePath, 'cover.jpg'))) cover = `${folder}/cover.jpg`;
     }
 
     if (!cover) {
@@ -514,7 +156,7 @@ async function addGameToDB(folder, gamePath) {
     const stat = await fsp.stat(gamePath);
 
     // Добавляем игру в БД. ready = 1 (чтобы сразу отображалась в интерфейсе), scraped = 0
-    await db.run(
+    await dbService.get().run(
         `INSERT OR REPLACE INTO games (id, title, cover, tags, description, rating, lastPlayed, addedAt, scraped, ready)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [folder, title, cover, '[]', '', 0, 0, stat.birthtimeMs || stat.mtimeMs || Date.now(), 0, 1]
@@ -533,7 +175,7 @@ async function addGameToDB(folder, gamePath) {
 
 async function syncDatabase() {
     const entries = await fsp.readdir(GAMES_DIR);
-    const existingGames = await db.all('SELECT id FROM games');
+    const existingGames = await dbService.get().all('SELECT id FROM games');
     const dbIds = existingGames.map(g => g.id);
 
     for (const folder of entries) {
@@ -547,7 +189,7 @@ async function syncDatabase() {
 
     for (const id of dbIds) {
         if (!entries.includes(id) || ['_saves', '_tmp_uploads', 'node_modules', '.audio-cache'].includes(id)) {
-            await db.run('DELETE FROM games WHERE id = ?', [id]);
+            await dbService.get().run('DELETE FROM games WHERE id = ?', [id]);
         }
     }
 }
@@ -556,352 +198,18 @@ async function syncDatabase() {
 // [6] МАРШРУТЫ АВТОРИЗАЦИИ
 // ============================================================================
 
-app.get('/api/setup/status', async (req, res) => {
-    const adminSet = await db.get('SELECT value FROM settings WHERE key = "admin_user"');
-    res.json({ initialized: !!adminSet });
-});
-
-app.post('/api/setup/init', apiLimiter, async (req, res) => {
-    const adminSet = await db.get('SELECT value FROM settings WHERE key = "admin_user"');
-    if (adminSet) return res.status(403).json({ error: 'Сервер уже настроен!' });
-
-    const { username, password } = req.body;
-    if (!username || !password || username.length < 3 || password.length < 4) {
-        return res.status(400).json({ error: 'Слишком короткий логин или пароль' });
-    }
-
-    const hashedPass = await bcrypt.hash(password, 10);
-    await db.run('INSERT INTO settings (key, value) VALUES (?, ?)', ['admin_user', username]);
-    await db.run('INSERT INTO settings (key, value) VALUES (?, ?)', ['admin_pass', hashedPass]);
-    res.json({ success: true });
-});
-
-app.post('/api/login', apiLimiter, async (req, res) => {
-    const { username, password } = req.body;
-    const dbUser = await db.get('SELECT value FROM settings WHERE key = "admin_user"');
-    const dbPass = await db.get('SELECT value FROM settings WHERE key = "admin_pass"');
-
-    if (dbUser && dbPass && username === dbUser.value) {
-        if (await bcrypt.compare(password, dbPass.value)) {
-            res.cookie('auth_token', SESSION_TOKEN, { httpOnly: true, sameSite: 'lax', maxAge: 30 * 24 * 60 * 60 * 1000 });
-            return res.json({ success: true });
-        }
-    }
-    res.status(401).json({ error: 'Неверный логин или пароль' });
-});
-
-app.post('/api/logout', (req, res) => {
-    res.clearCookie('auth_token');
-    res.json({ success: true });
-});
-
-function requireAuth(req, res, next) {
-    if (req.cookies.auth_token !== SESSION_TOKEN) return res.status(401).json({ error: 'Требуется авторизация' });
-    next();
-}
-app.use('/api/', requireAuth);
+app.use('/api', authRouter); // Подключаем роуты логина
+app.use('/api', requireAuth); // Ставим "замок": все роуты, написанные ниже, будут требовать авторизацию!
 
 // ============================================================================
-// [7] ОСНОВНЫЕ API МАРШРУТЫ
+// [7,8] ОСНОВНЫЕ API МАРШРУТЫ И СОХРАНЕНИЯ
 // ============================================================================
 
-app.get('/api/games', async (req, res) => {
-    try {
-        const rows = await db.all('SELECT * FROM games WHERE ready = 1');
-        const games = rows.map(row => ({
-            id: row.id, title: row.title, cover: row.cover,
-            tags: row.tags ? JSON.parse(row.tags) : [],
-            description: row.description, url: `/${row.id}/`, number: 0,
-            addedAt: row.addedAt, lastPlayed: row.lastPlayed, rating: row.rating
-        })).sort((a, b) => a.addedAt - b.addedAt);
-        games.forEach((g, i) => g.number = i + 1);
-        res.json(games);
-    } catch (e) { res.status(500).json({ error: 'DB Error' }); }
-});
-
-app.post('/api/games/:id/edit', async (req, res) => {
-    const folder = path.basename(req.params.id);
-    const { title, rjCode } = req.body;
-    const gamePath = path.join(GAMES_DIR, folder);
-
-    try {
-        let scrapeWarning = null;
-        if (title) await db.run('UPDATE games SET title = ? WHERE id = ?', [title, folder]);
-
-        const gameObj = await db.get('SELECT title FROM games WHERE id = ?', [folder]);
-        const searchTitle = title || gameObj.title; 
-        const searchRj = (rjCode && rjCode.match(/RJ\d+/i)) ? rjCode.match(/RJ\d+/i)[0].toUpperCase() : null;
-        let coverUpdated = false;
-
-        if (searchRj && await fetchDLsiteCover(searchRj, path.join(gamePath, 'cover.jpg'))) {
-            await db.run('UPDATE games SET cover = ? WHERE id = ?', [`${folder}/cover.jpg`, folder]);
-            coverUpdated = true;
-        }
-
-        const scrapedData = await fetchUniversalMetadata(searchTitle, searchRj);
-        if (scrapedData) {
-            if (scrapedData.coverUrl && !coverUpdated && await downloadRemoteCover(scrapedData.coverUrl, path.join(gamePath, 'cover.jpg'))) {
-                await db.run('UPDATE games SET cover = ? WHERE id = ?', [`${folder}/cover.jpg`, folder]);
-                coverUpdated = true;
-            }
-            if (scrapedData.tags?.length > 0) {
-                await db.run('UPDATE games SET tags = ?, description = ?, scraped = 1 WHERE id = ?', [JSON.stringify(scrapedData.tags), scrapedData.description, folder]);
-            } else if (coverUpdated) {
-                scrapeWarning = 'Обложка обновлена, но теги не найдены.';
-            }
-        } else if (searchRj || title) {
-            scrapeWarning = 'Данные не найдены (DLsite/VNDB/Steam).';
-        }
-
-        const updatedGame = await db.get('SELECT * FROM games WHERE id = ?', [folder]);
-        res.json({
-            success: true, warning: scrapeWarning, title: updatedGame.title, cover: updatedGame.cover,
-            tags: updatedGame.tags ? JSON.parse(updatedGame.tags) : [], description: updatedGame.description
-        });
-    } catch (e) { res.status(500).json({ error: 'Сбой сервера при обновлении' }); }
-});
-
-app.post('/api/games/:id/meta', async (req, res) => {
-    const folder = path.basename(req.params.id);
-    const { rating, lastPlayed } = req.body;
-
-    try {
-        const game = await db.get('SELECT id FROM games WHERE id = ?', [folder]);
-        if (!game) return res.status(404).json({ error: 'Игра не найдена' });
-
-        const updates = [], params = [];
-        if (rating !== undefined) { updates.push('rating = ?'); params.push(rating); }
-        if (lastPlayed !== undefined) { updates.push('lastPlayed = ?'); params.push(lastPlayed); }
-
-        if (updates.length > 0) {
-            params.push(folder);
-            await db.run(`UPDATE games SET ${updates.join(', ')} WHERE id = ?`, params);
-        }
-        res.json({ success: true });
-    } catch (e) { res.status(500).json({ error: 'Ошибка сохранения метаданных' }); }
-});
-
-app.post('/api/upload', uploadLimiter, upload.single('game'), async (req, res) => {
-    if (!req.file) return res.status(400).json({ error: 'Файл не получен' });
-
-    const archivePath = req.file.path;
-    let originalName = req.file.originalname.replace(/\.(zip|7z|rar)$/i, '').replace(/[^\w\s\-\.а-яА-Я\[\]]/g, '_').trim() || 'game_archive';
-    
-    if (['_saves', '_tmp_uploads', 'api', 'socket.io', 'public', 'node_modules', '.audio-cache'].includes(originalName.toLowerCase())) {
-        originalName = 'game_' + Date.now();
-    }    
-
-    const tmpExtractDir = path.join(EXTRACT_TMP, 'ext_' + Date.now());
-
-   try {
-        await fsp.mkdir(tmpExtractDir, { recursive: true });
-        io.emit('upload-status', { message: '🛡️ Проверка безопасности архива...' });
-
-        const { stdout } = await execFilePromise('7zz', ['l', '-ba', '-slt', archivePath], { maxBuffer: 200 * 1024 * 1024 });
-        const lines = stdout.split('\n').filter(l => l.startsWith('Path = '));
-        const baseTarget = path.resolve(tmpExtractDir) + path.sep;
-
-        for (const line of lines) {
-            const internalPath = line.replace('Path = ', '').trim();
-            if (!path.resolve(tmpExtractDir, internalPath).startsWith(baseTarget)) throw new Error(`Опасный путь (Zip Slip): ${internalPath}`);
-        }
-
-        io.emit('upload-status', { message: '🗜️ Распаковка архива...' });
-        await spawnExtract('7zz', ['x', archivePath, `-o${tmpExtractDir}`, '-y']);
-
-        io.emit('upload-status', { message: '🔍 Поиск файлов игры...' });
-        const sourceDir = await findGameFolder(tmpExtractDir);            
-        if (!sourceDir) throw new Error("Не найдена папка 'www' или 'index.html'");
-        
-        let finalDestFolder = originalName;
-        let counter = 1;
-        while (fs.existsSync(path.join(GAMES_DIR, finalDestFolder))) finalDestFolder = `${originalName}_${counter++}`;
-        const finalPath = path.join(GAMES_DIR, finalDestFolder);
-
-        io.emit('upload-status', { message: '📦 Сохранение в библиотеку...' });
-        await execFilePromise('mv', [sourceDir, finalPath]);
-
-        await fsp.rm(tmpExtractDir, { recursive: true, force: true }).catch(() => {});
-        await fsp.unlink(archivePath).catch(() => {});
-
-        await addGameToDB(finalDestFolder, finalPath);
-
-        io.emit('upload-status', { message: '✨ Готово!' });
-        res.json({ success: true, folder: finalDestFolder, message: `Игра добавлена!` });
-    } catch (e) {
-        await fsp.rm(tmpExtractDir, { recursive: true, force: true }).catch(() => {});
-        await fsp.unlink(archivePath).catch(() => {});
-        io.emit('upload-status', { message: '❌ Ошибка: ' + e.message });
-        res.status(500).json({ error: 'Сбой: ' + e.message });
-    }
-});
-
-app.delete('/api/games/:id', async (req, res) => {
-    const id = path.basename(req.params.id);
-    const gamePath = path.join(GAMES_DIR, id);
-    
-    try {
-        // ⚡ ИСПРАВЛЕНИЕ: Проверяем физическое существование папки перед удалением
-        await fsp.access(gamePath);
-        
-        await fsp.rm(gamePath, { recursive: true, force: true });
-        await db.run('DELETE FROM games WHERE id = ?', [id]);
-        res.json({ success: true });
-    } catch(e) { 
-        res.status(404).json({ error: 'Игра не найдена' }); 
-    }
-});
+app.use('/api/games', createGamesRouter(io, addGameToDB, EXTRACT_TMP));
+app.use('/api/saves', createSavesRouter(EXTRACT_TMP));
 
 // ============================================================================
-// [8] СОХРАНЕНИЯ (СИНХРОНИЗАЦИЯ, ИМПОРТ, ЭКСПОРТ)
-// ============================================================================
-
-app.get('/api/saves/:gameId', async (req, res) => {
-    const gameSavesDir = path.join(SAVES_DIR, path.basename(req.params.gameId));
-    try {
-        const files = await fsp.readdir(gameSavesDir);
-        const saves = {};
-        for (const file of files.filter(f => f.endsWith('.json'))) {
-            const filePath = path.join(gameSavesDir, file);
-            const stats = await fsp.stat(filePath);
-            saves[decodeURIComponent(file.replace('.json', ''))] = {
-                value: await fsp.readFile(filePath, 'utf8'), updatedAt: stats.mtimeMs 
-            };
-        }
-        res.json(saves);
-    } catch(e) { res.json({}); }
-});
-
-app.post('/api/saves/:gameId/:key', async (req, res) => {
-    if (typeof req.body.value !== 'string') return res.status(400).json({ error: 'Bad data' });
-    try {
-        const dir = path.join(SAVES_DIR, path.basename(req.params.gameId));
-        await fsp.mkdir(dir, { recursive: true });
-        await fsp.writeFile(path.join(dir, encodeURIComponent(path.basename(req.params.key)) + '.json'), req.body.value, 'utf8');
-        res.json({ success: true });
-    } catch(e) { res.status(500).json({ error: 'Server error' }); }
-});
-
-app.delete('/api/saves/:gameId/:key', async (req, res) => {
-    try { await fsp.unlink(path.join(SAVES_DIR, path.basename(req.params.gameId), encodeURIComponent(path.basename(req.params.key)) + '.json')); } catch(e) {}
-    res.json({ success: true });
-});
-
-app.get('/api/games/:id/saves/export', async (req, res) => {
-    const gameId = path.basename(req.params.id);
-    const gameSavesDir = path.join(SAVES_DIR, gameId);
-
-    try {
-        const files = await fsp.readdir(gameSavesDir);
-        if (files.filter(f => f.endsWith('.json')).length === 0) throw new Error();
-        
-        const tmpZip = path.join(EXTRACT_TMP, `saves_${gameId}_${crypto.randomBytes(4).toString('hex')}.zip`);
-        await execFilePromise('7zz', ['a', '-tzip', tmpZip, path.join(gameSavesDir, '*.json')]);
-        
-        res.download(tmpZip, `${gameId}_saves.zip`, () => fsp.unlink(tmpZip).catch(() => {}));
-    } catch (e) { res.status(404).json({ error: 'У этой игры еще нет сохранений' }); }
-});
-
-app.post('/api/games/:id/saves/import', uploadLimiter, upload.single('saves'), async (req, res) => {
-    if (!req.file) return res.status(400).json({ error: 'Файл не получен' });
-    if (req.file.size > 50 * 1024 * 1024) {
-        await fsp.unlink(req.file.path).catch(() => {});
-        return res.status(400).json({ error: 'Архив слишком большой' });
-    }
-
-    const gameSavesDir = path.join(SAVES_DIR, path.basename(req.params.id));
-    const archivePath = req.file.path;
-
-    try {
-        await fsp.mkdir(gameSavesDir, { recursive: true });
-        const { stdout } = await execFilePromise('7zz', ['l', '-ba', '-slt', archivePath], { maxBuffer: 50 * 1024 * 1024 });
-        const baseTarget = path.resolve(gameSavesDir) + path.sep;
-
-        for (const line of stdout.split('\n').filter(l => l.startsWith('Path = '))) {
-            const internalPath = line.replace('Path = ', '').trim();
-            if (!path.resolve(gameSavesDir, internalPath).startsWith(baseTarget)) throw new Error('Zip Slip Attack!');
-        }
-        
-        await spawnExtract('7zz', ['e', archivePath, `-o${gameSavesDir}`, '-y']);
-        await fsp.unlink(archivePath).catch(() => {});
-        
-        const now = new Date();
-        for (const file of await fsp.readdir(gameSavesDir)) {
-            const filePath = path.join(gameSavesDir, file);
-            if ((await fsp.stat(filePath)).isDirectory()) {
-                await fsp.rm(filePath, { recursive: true, force: true }).catch(() => {});
-                continue;
-            }
-
-            if (file.toLowerCase().endsWith('.rpgsave')) {
-                const newPath = path.join(gameSavesDir, file.replace(/\.rpgsave$/i, '.json'));
-                await fsp.rename(filePath, newPath);
-                await fsp.utimes(newPath, now, now).catch(() => {});
-            } else if (file.toLowerCase().endsWith('.json')) {
-                await fsp.utimes(filePath, now, now).catch(() => {});
-            } else {
-                await fsp.unlink(filePath).catch(() => {});
-            }
-        }
-        res.json({ success: true, message: 'Сохранения загружены!' });
-    } catch (e) {
-        await fsp.unlink(archivePath).catch(() => {});
-        res.status(500).json({ error: 'Ошибка импорта' });
-    }
-});
-
-// ============================================================================
-// [9] АУДИО КОНВЕРТЕР И ДЕКРИПТОР
-// ============================================================================
-
-async function decryptRpgmvo(filePath, gamePath) {
-    const fileData = await fsp.readFile(filePath);
-    if (fileData.slice(0, 4).toString('ascii') !== 'RPGM') return fileData;
-
-    let encKey = '';
-    try {
-        let sysPath = path.join(gamePath, 'data', 'System.json');
-        if (!fs.existsSync(sysPath)) sysPath = path.join(gamePath, 'www', 'data', 'System.json');
-        encKey = JSON.parse(await fsp.readFile(sysPath, 'utf8')).encryptionKey || '';
-    } catch(e) {}
-
-    const keyBytes = [];
-    for (let i = 0; i < encKey.length; i += 2) keyBytes.push(parseInt(encKey.substr(i, 2), 16));
-
-    const out = Buffer.from(fileData.subarray(16));
-    if (keyBytes.length === 0) return out;
-
-    for (let i = 0; i < 16 && i < out.length; i++) out[i] ^= keyBytes[i % keyBytes.length];
-    return out;
-}
-
-async function ensureM4aFromSource(sourcePath, gamePath) {
-    const stat = await fsp.stat(sourcePath);
-    const cacheKey = crypto.createHash('sha1').update(sourcePath + '|' + stat.mtimeMs).digest('hex');
-    const outPath = path.join(AUDIOCACHE, cacheKey + '.m4a');
-    
-    try { await fsp.access(outPath); return outPath; } catch {} 
-
-    const ext = path.extname(sourcePath).toLowerCase();
-    if (ext === '.m4a') return sourcePath;
-    if (ext === '.rpgmvm') {
-        await fsp.writeFile(outPath, await decryptRpgmvo(sourcePath, gamePath));
-        return outPath;
-    }
-
-    const tmpIn = path.join(EXTRACT_TMP, cacheKey + (ext === '.rpgmvo' ? '.ogg' : ext));
-    await fsp.writeFile(tmpIn, ext === '.rpgmvo' ? await decryptRpgmvo(sourcePath, gamePath) : await fsp.readFile(sourcePath));
-
-    try {
-        await execFilePromise('ffmpeg', ['-y', '-i', tmpIn, '-vn', '-c:a', 'aac', '-b:a', '128k', outPath]);
-        return outPath;
-    } finally {
-        await fsp.unlink(tmpIn).catch(() => {});
-    }
-}
-
-// ============================================================================
-// [10] ГЛОБАЛЬНЫЙ РОУТИНГ (СТАТИКА И ЗВУК)
+// [7] ГЛОБАЛЬНЫЙ РОУТИНГ (СТАТИКА И ЗВУК)
 // ============================================================================
 
 app.use(express.static(path.join(__dirname, 'public')));
@@ -969,7 +277,7 @@ app.get('*', async (req, res, next) => {
                 if (isIOS && (isEncrypted || sourcePath.endsWith('.ogg'))) {
                     try {
                         const gameFolder = reqPath.split('/').filter(Boolean)[0];
-                        const readyPath = await ensureM4aFromSource(sourcePath, path.join(GAMES_DIR, gameFolder));
+                        const readyPath = await audioService.ensureM4aFromSource(sourcePath, path.join(GAMES_DIR, gameFolder));
                         res.type('audio/mp4');
                         res.setHeader('Cache-Control', 'public, max-age=86400');
                         res.setHeader('Access-Control-Allow-Origin', '*');
@@ -1005,7 +313,7 @@ app.get('*', async (req, res, next) => {
 // ============================================================================
 
 if (require.main === module) {
-    initDB().then(async () => {
+    dbService.init(GAMES_DIR).then(async () => {
         await syncDatabase();
 
         const srv = server.listen(3000, () => console.log('🚀 RPG API: SQLite и WebSockets подключены, сервер готов!'));
@@ -1014,14 +322,14 @@ if (require.main === module) {
         let syncTimer = null;
         let syncInProgress = false;
         let pendingSync = false;
-        let lastReadyCount = (await db.get('SELECT COUNT(*) as c FROM games WHERE ready = 1'))?.c || 0;
+        let lastReadyCount = (await dbService.get().get('SELECT COUNT(*) as c FROM games WHERE ready = 1'))?.c || 0;
 
         async function runSyncSafely(reason = 'watcher') {
             if (syncInProgress) { pendingSync = true; return; }
             syncInProgress = true;
             try {
                 await syncDatabase();
-                const newReadyCount = (await db.get('SELECT COUNT(*) as c FROM games WHERE ready = 1'))?.c || 0;
+                const newReadyCount = (await dbService.get().get('SELECT COUNT(*) as c FROM games WHERE ready = 1'))?.c || 0;
                 if (newReadyCount !== lastReadyCount) {
                     const diff = newReadyCount - lastReadyCount;
                     lastReadyCount = newReadyCount;
@@ -1046,4 +354,4 @@ if (require.main === module) {
     }).catch(console.error);
 }
 
-module.exports = { app, requireAuth, processParsedData, findRJCode, translateText };
+module.exports = { app };
