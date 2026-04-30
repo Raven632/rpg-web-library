@@ -99,6 +99,44 @@ if (!window.__rpgPluginHookInstalled) {
     window.__RPG_FIXES_ULTIMATE_V34__ = true;
 
     // ============================================================================
+    // [FIX] УСТРАНЕНИЕ ОШИБОК КОНСОЛИ (Canvas & Spine)
+    // ============================================================================
+    
+    // 1. Фикс willReadFrequently (ускорение чтения пикселей)
+    const orgGetContext = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = function(type, attributes) {
+        if (type === '2d') {
+            if (!attributes) attributes = {};
+            attributes.willReadFrequently = true;
+        }
+        return orgGetContext.call(this, type, attributes);
+    };
+
+    // 2. Фикс CanvasTextAlign (убираем ошибку с undefined)
+    const orgSetTextAlign = Object.getOwnPropertyDescriptor(CanvasRenderingContext2D.prototype, 'textAlign');
+    if (orgSetTextAlign && orgSetTextAlign.set) {
+        Object.defineProperty(CanvasRenderingContext2D.prototype, 'textAlign', {
+            set: function(value) {
+                // Если MZ пытается пропихнуть undefined, ставим 'left'
+                const safeValue = (value === 'undefined' || !value) ? 'left' : value;
+                orgSetTextAlign.set.call(this, safeValue);
+            }
+        });
+    }
+
+    // 3. Глушим предупреждения о версии Spine и PIXI
+    const orgWarn = console.warn;
+    console.warn = function() {
+        if (arguments[0] && typeof arguments[0] === 'string') {
+            if (arguments[0].includes('Unsupported skeleton data') || 
+                arguments[0].includes('willReadFrequently')) {
+                return; // Игнорируем этот спам
+            }
+        }
+        orgWarn.apply(console, arguments);
+    };
+
+    // ============================================================================
     // [ИДЕАЛЬНЫЙ ФИКС ПЛАГИНОВ: БАЛАНС СТРОГОСТИ И ЗАЩИТЫ]
     // ============================================================================
     var _origJSONParse = JSON.parse;

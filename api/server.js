@@ -45,7 +45,7 @@ app.use(compression());
 // [2] ИНИЦИАЛИЗАЦИЯ И MIDDLEWARE
 // ============================================================================
 
-app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
+app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false, crossOriginOpenerPolicy: false, originAgentCluster: false }));
 app.use(express.json({ limit: '50mb' }));
 app.use(cookieParser());
 
