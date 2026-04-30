@@ -1,14 +1,99 @@
-/**
- * rpg-fixes.js — Ultimate Enterprise Edition v3.4 (Clean Code Version)
- * ... (дальше идет твой обычный код с (() => { и так далее) ...
- */
+// ============================================================================
+// 1. АБСОЛЮТНАЯ ИМИТАЦИЯ ANDROID API (УБИЙЦА ОШИБОК AURAMZ)
+// ============================================================================
+window.ExternalStorage = {
+    _reply: function(cbId, res) {
+        setTimeout(function() {
+            if (window.AuraMZ && window.AuraMZ.Mobile && window.AuraMZ.Mobile.callbacks && window.AuraMZ.Mobile.callbacks[cbId]) {
+                window.AuraMZ.Mobile.callbacks[cbId](res);
+            }
+        }, 10);
+    },
+    existsFile: function(id) { this._reply(id, "false"); return false; },
+    saveFile: function(id) { this._reply(id, "true"); return false; },
+    loadFile: function(id) { this._reply(id, ""); return false; },
+    readFile: function(id) { this._reply(id, ""); return false; },
+    removeFile: function(id) { this._reply(id, "true"); return false; },
+    listFiles: function(id) { this._reply(id, "[]"); return false; },
+    makeDir: function(id) { this._reply(id, "true"); return false; },
+    selectExternalStorageDirectory: function(id) { this._reply(id, "null"); return false; },
+    removeExternalStorageDirectory: function(id) { this._reply(id, "true"); return false; },
+    writeFile: function(id) { this._reply(id, "true"); return false; }
+};
+window.Android = { showToast: function(){}, getVersion: function(){return "1.0";} };
 
-/**
- * rpg-fixes.js — Ultimate Enterprise Edition v3.4 (Clean Code Version)
- * [NEW] Unified System Menu (FAB)
- * [NEW] Return to Library Button
- * [NEW] Turbo Mode (3x Speedhack) Integration
- */
+// ============================================================================
+// 2. БЛОКИРОВЩИК ПЛАГИНОВ И ЛЕКАРЬ ПРОМИСОВ (Перехватчик)
+// ============================================================================
+if (!window.__rpgPluginHookInstalled) {
+    window.__rpgPluginHookInstalled = true;
+    
+    var _origSrc = Object.getOwnPropertyDescriptor(HTMLScriptElement.prototype, 'src');
+    if (_origSrc) {
+        Object.defineProperty(HTMLScriptElement.prototype, 'src', {
+            set: function(val) {
+                if (val && typeof val === 'string') {
+                    // Блокируем вредоносные мобильные плагины
+                    if (val.indexOf('auramz/mobile') > -1 || val.indexOf('toggle_save_dir') > -1) {
+                        console.log('[RPG Fixes] 🛑 Заблокирован вредный плагин: ' + val);
+                        val = 'data:application/javascript,console.log("Blocked by RPG-Fixes!");';
+                    }
+                    
+                    // При загрузке ЛЮБОГО плагина экстренно чиним ядро
+                    if (val.indexOf('js/plugins/') > -1) {
+                        // 1. Лечим Scene_Boot
+                        if (window.Scene_Boot && window.Scene_Boot.prototype && !window.__bootPromiseFixed) {
+                            window.__bootPromiseFixed = true;
+                            var _origBootLoad = window.Scene_Boot.prototype.loadPlayerData;
+                            window.Scene_Boot.prototype.loadPlayerData = function() {
+                                var res = _origBootLoad ? _origBootLoad.apply(this, arguments) : undefined;
+                                return (res && typeof res.then === 'function') ? res : Promise.resolve(res);
+                            };
+                        }
+                        
+                        // 2. Лечим DataManager
+                        if (window.DataManager && window.DataManager.savefileExists && !window.__saveFilePromiseFixed) {
+                            window.__saveFilePromiseFixed = true;
+                            var _origSaveExists = window.DataManager.savefileExists;
+                            window.DataManager.savefileExists = function() {
+                                var res = _origSaveExists.apply(this, arguments);
+                                return (res && typeof res.then === 'function') ? res : Promise.resolve(res);
+                            };
+                        }
+
+                        // 3. Лечим StorageManager
+                        if (window.StorageManager && window.StorageManager.exists && !window.__storagePromiseFixed) {
+                            window.__storagePromiseFixed = true;
+                            var _origStorageExists = window.StorageManager.exists;
+                            window.StorageManager.exists = function() {
+                                var res = _origStorageExists.apply(this, arguments);
+                                return (res && typeof res.then === 'function') ? res : Promise.resolve(res || false);
+                            };
+                        }
+                    }
+                }
+                
+                // ВАЖНО: вызываем только оригинальный нативный сеттер
+                if (_origSrc.set) {
+                    return _origSrc.set.call(this, val);
+                } else {
+                    return this.setAttribute('src', val);
+                }
+            },
+            get: function() { 
+                if (_origSrc.get) {
+                    return _origSrc.get.call(this); 
+                } else {
+                    return this.getAttribute('src');
+                }
+            }
+        });
+    }
+}
+
+// ============================================================================
+// 3. ОСНОВНОЙ КОД RPG-FIXES (Enterprise Edition v3.4 - ПОЛНАЯ ВЕРСИЯ)
+// ============================================================================
 (() => {
     if (window.__RPG_FIXES_ULTIMATE_V34__) return;
     window.__RPG_FIXES_ULTIMATE_V34__ = true;
@@ -18,9 +103,6 @@
     // ============================================================================
     var _origJSONParse = JSON.parse;
     JSON.parse = function(text, reviver) {
-        // Только защищаем от пустых значений — плагины без try/catch
-        // Всё остальное пускаем через оригинальный парсер как есть
-        // Плагины с try/catch (ARTM, MKR и др.) сами обработают SyntaxError
         if (text === null || text === undefined || text === '') {
             return null;
         }
@@ -34,27 +116,13 @@
         }
     }, { once: true, passive: true });
 
-    // --- RPG Maker Web Browser Fixes ---
-
-    // 1. Фикс для Star Knightess Aura и других игр с Android-плагинами
-    if (typeof window.ExternalStorage === 'undefined') {
-        console.log('[RPG Fixes] Добавлена заглушка для ExternalStorage');
-        window.ExternalStorage = {
-            save: function() { return false; },
-            load: function() { return null; },
-            exists: function() { return false; }
-        };
-    }
-
-    // 2. Стандартные заглушки для ПК-плагинов (Node.js/NW.js), 
-    // чтобы они не крашились в мобильном браузере
+    // Стандартные заглушки для ПК-плагинов (Node.js/NW.js)
     if (typeof process === 'undefined') {
         window.process = { env: {}, mainModule: { filename: '' }, platform: 'browser' };
     }
 
     if (typeof require === 'undefined') {
         window.require = function(moduleName) {
-            // Подделываем файловую систему (чтобы игра не искала жесткий диск)
             if (moduleName === 'fs') {
                 return {
                     existsSync: function() { return false; },
@@ -64,7 +132,6 @@
                     statSync: function() { return { isDirectory: function() { return false; } }; }
                 };
             }
-            // Подделываем пути
             if (moduleName === 'path') {
                 return {
                     join: function() { return Array.from(arguments).join('/'); },
@@ -72,7 +139,6 @@
                     basename: function(p) { return p; }
                 };
             }
-            // Подделываем окно программы
             if (moduleName === 'nw.gui') {
                 return { Window: { get: function() { return { showDevTools: function() {}, isFullscreen: false }; } } };
             }
@@ -80,7 +146,6 @@
         };
     }
 
-   
     // ============================================================================
     // 1. CORE & ENVIRONMENT PATCHES
     // ============================================================================
@@ -105,9 +170,8 @@
                 Shell: { openExternal: url => window.open(url, '_blank') } 
             };
 
-            // [НОВЫЙ БЛОК] Заглушка для Steam API (Greenworks)
             if (m.includes('greenworks')) return {
-                initAPI: () => false, // false скажет плагину, что Steam выключен
+                initAPI: () => false, 
                 isSteamRunning: () => false,
                 getAppId: () => 0,
                 getSteamId: () => ({ accountId: 0, screenName: 'Player' }),
@@ -128,7 +192,7 @@
         const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
         if (!isIOS) return;
 
-        const TARGET = 1; // 1 = нативные пиксели, без 3x апскейла
+        const TARGET = 1;
 
         try {
             Object.defineProperty(window, 'devicePixelRatio', { get: () => TARGET, configurable: true });
@@ -160,7 +224,6 @@
                 try { r.resize(logW, logH); } catch(e) {}
                 try { if (r.plugins && r.plugins.interaction) r.plugins.interaction.resolution = TARGET; } catch(e) {}
                 
-                console.log('[DPR Fix] Renderer resolution -> 1x, canvas:', r.width, 'x', r.height);
             }, 100);
             
             setTimeout(() => clearInterval(gfx_t), 15000);
@@ -250,7 +313,6 @@
     // ============================================================================
 
     function applyPerformanceOptimizations() {
-        // Native Memory & GC Fix
         const initTimer = setInterval(() => {
             if (typeof PIXI === 'undefined' || typeof ImageManager === 'undefined' || typeof SceneManager === 'undefined') return;
 
@@ -274,12 +336,10 @@
                 else if (!document.hidden && SceneManager._scene) SceneManager._scene.pause = false;
             });
 
-            console.log('[RPG Fixes] 🔧 Память оптимизирована (Auto-GC отключен)!');
             clearInterval(initTimer);
         }, 200);
         setTimeout(() => clearInterval(initTimer), 10000);
 
-        // Anti-Lag: Subpixel Scroll & Dash Fix
         const patchTimer = setInterval(() => {
             if (typeof Tilemap !== 'undefined' && typeof Sprite_Character !== 'undefined') {
                 const origTilemapUpdate = Tilemap.prototype.updateTransform;
@@ -296,29 +356,24 @@
                     this.y = Math.round(this.y);
                 };
 
-                console.log('[RPG Fixes] 🏃‍♂️ Субпиксельный рендер и бег оптимизированы!');
                 clearInterval(patchTimer);
             }
         }, 200);
         setTimeout(() => clearInterval(patchTimer), 10000);
 
-        // [WebGL Recovery] Защита от крашей видеопамяти (VRAM)
         const attachWebGLRecovery = () => {
             const canvas = document.getElementById('GameCanvas') || document.querySelector('canvas');
             if (!canvas) return;
             
-            // Предотвращаем дефолтное действие браузера (убийство вкладки)
             canvas.addEventListener('webglcontextlost', (e) => {
                 e.preventDefault(); 
                 console.warn('🔴 [WebGL] Контекст потерян! ОС очистила видеопамять. Ждем возврата...');
             }, false);
             
-            // Заставляем движок перерисовать всё при возврате памяти
             canvas.addEventListener('webglcontextrestored', () => {
                 console.warn('🟢 [WebGL] Контекст восстановлен! Перезапуск рендера...');
                 try {
                     if (typeof SceneManager !== 'undefined' && SceneManager._scene) {
-                        // Перезапускаем текущую сцену (карту/меню), чтобы заново загрузить текстуры
                         SceneManager.goto(SceneManager._scene.constructor);
                     }
                 } catch(err) {
@@ -327,14 +382,13 @@
             }, false);
         };
 
-        // Пытаемся повесить защиту сразу и повторяем, если canvas ещё не создан движком
         document.addEventListener('DOMContentLoaded', attachWebGLRecovery);
         window.addEventListener('load', attachWebGLRecovery);
         setTimeout(attachWebGLRecovery, 3000);
     }
 
     // ============================================================================
-    // 4. CLOUD SAVES SYNC
+    // 4. CLOUD SAVES SYNC (FULL VERSION)
     // ============================================================================
 
     function setupCloudSaves() {
@@ -418,7 +472,6 @@
             const keys = Object.keys(q);
             if (keys.length === 0) return;
 
-            console.log(`[CloudSave] 🚀 Сеть найдена! Выгружаем ${keys.length} сохранений из очереди...`);
             showSync(true);
             let allOk = true;
 
@@ -457,7 +510,6 @@
                 processOfflineQueue();
             } catch (e) { 
                 cloudFetchFailed = true; cloudReady = true; 
-                console.warn('[CloudSave] Fallback to local:', e); 
                 const localQueue = getQueue();
                 for (const k of Object.keys(localQueue)) pulledSaves[k] = chooseNewer(pulledSaves[k], localQueue[k]);
             }
@@ -521,7 +573,7 @@
                     let val = getEntry(key).value;
                     if (val && typeof val === 'string' && !val.trim().startsWith('{') && !val.trim().startsWith('[')) {
                         try { if (typeof LZString !== 'undefined') { const decompressed = LZString.decompressFromBase64(val); if (decompressed) val = decompressed; } } 
-                        catch(e) { console.warn('[CloudSave] Ошибка распаковки LZString', e); }
+                        catch(e) {}
                     }
                     return val;
                 }
@@ -602,7 +654,6 @@
             if (anyResumed) {
                 unlocked = true;
                 ['pointerdown', 'touchstart', 'touchend', 'click', 'keydown'].forEach(e => window.removeEventListener(e, syncUnlockAudio, true));
-                console.log('[Audio Engine] 🎵 Universal WebAudio API аппаратно разблокирован!');
             }
         }
         
@@ -618,14 +669,13 @@
             } 
         });
 
-        // iOS RPGMVO/OGG FIX (Принудительно используем ПК-формат)
+        // iOS RPGMVO/OGG FIX
         const isApple = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
         if (isApple) {
             const timer = setInterval(() => {
                 if (typeof AudioManager === 'undefined') return;
                 clearInterval(timer);
 
-                // ЗАСТАВЛЯЕМ iOS ИСКАТЬ .ogg ТАК ЖЕ, КАК ЭТО ДЕЛАЕТ ПК
                 AudioManager.audioFileExt = function() { return '.ogg'; };
 
                 if (typeof Decrypter !== 'undefined') {
@@ -636,11 +686,10 @@
                         if (!buffer || buffer.byteLength < 16) return buffer;
                         const header = new Uint8Array(buffer, 0, 4);
                         const isRPGM = header[0]===0x52 && header[1]===0x50 && header[2]===0x47 && header[3]===0x4D;
-                        if (!isRPGM) return buffer; // Спасаем чистый файл
+                        if (!isRPGM) return buffer; 
                         return origDecrypt.call(this, buffer);
                     };
                 }
-                console.log('[Audio Fix] iOS Proxy: форсирован .ogg + защита от двойного шифрования!');
             }, 100);
             setTimeout(() => clearInterval(timer), 15000);
         }
@@ -808,27 +857,20 @@
                 el.addEventListener('pointerup', release);
                 el.addEventListener('pointercancel', release);
 
-                // Перехватываем потерю WebGL контекста
-                // Без этого iOS убивает вкладку полностью
                 const attachWebGLRecovery = () => {
                     const c = document.getElementById('GameCanvas') || document.querySelector('canvas');
                     if (!c) return;
                     c.addEventListener('webglcontextlost', e => {
-                        e.preventDefault(); // КРИТИЧНО — без этого страница перезагружается
-                        console.warn('[WebGL] Context lost — ждём восстановления GPU...');
+                        e.preventDefault(); 
                     }, false);
                     c.addEventListener('webglcontextrestored', () => {
-                        console.warn('[WebGL] Context restored');
-                        // Мягкий перезапуск сцены
                         try {
                             if (typeof SceneManager !== 'undefined' && SceneManager._scene) {
-                                const Scene = SceneManager._scene.constructor;
-                                SceneManager.goto(Scene);
+                                SceneManager.goto(SceneManager._scene.constructor);
                             }
                         } catch(e) {}
                     }, false);
                 };
-                // Вешаем сразу и повторно после загрузки (canvas может ещё не существовать)
                 document.addEventListener('DOMContentLoaded', attachWebGLRecovery);
                 window.addEventListener('load', attachWebGLRecovery);
                 setTimeout(attachWebGLRecovery, 2000);
@@ -1036,7 +1078,6 @@
                     item.addEventListener('pointerdown', (e) => { e.stopPropagation(); window.__toggleRpgTouchMode(); });
                 }
 
-
             }, 150);
         });
     }
@@ -1057,7 +1098,7 @@
         setupSpikeDiagnostics();
         setupTouchModeToggle();
         
-        console.log('✅ RPG-Fixes Ultimate v3.4 (Clean Code) успешно загружен!');
+        console.log('✅ RPG-Fixes Ultimate v3.4 (Clean Code + All Features) успешно загружен!');
     }
 
     // Запускаем всё
