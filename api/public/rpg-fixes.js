@@ -34,6 +34,7 @@
     // 1. CORE & ENVIRONMENT PATCHES
     // ============================================================================
 
+
     function setupBrowserStubs() {
         window.require = function (m) {
             if (m === 'path') return { 
@@ -52,6 +53,16 @@
                 App: { quit() {}, argv: [], manifest: {} }, 
                 Screen: { Init() {}, on() {} }, 
                 Shell: { openExternal: url => window.open(url, '_blank') } 
+            };
+
+            // [НОВЫЙ БЛОК] Заглушка для Steam API (Greenworks)
+            if (m.includes('greenworks')) return {
+                initAPI: () => false, // false скажет плагину, что Steam выключен
+                isSteamRunning: () => false,
+                getAppId: () => 0,
+                getSteamId: () => ({ accountId: 0, screenName: 'Player' }),
+                activateAchievement: () => {},
+                on: () => {}
             };
             return {};
         };
