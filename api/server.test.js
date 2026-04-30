@@ -1,19 +1,17 @@
 const test = require('node:test');
 const assert = require('node:assert');
 
-const {
-  processParsedData,
-  requireAuth,
-  findRJCode,
-  translateText
-} = require('./server.js');
+// 1. Правильный импорт мидлвары (она обычная функция)
+const { requireAuth } = require('./src/routes/auth.js'); 
+
+// 2. Правильный импорт скрапера (это ЭКЗЕМПЛЯР КЛАССА, импортируем целиком)
+const scraperService = require('./src/services/scraper.js');
 
 // ============================================================================
 // requireAuth tests (Проверка авторизации)
 // ============================================================================
 
 test('requireAuth: GET/POST без куки возвращает 401', () => {
-  // Добавляем пустой объект cookies, чтобы избежать TypeError
   const req = { method: 'GET', cookies: {} };
   let statusCode;
   let payload;
@@ -52,7 +50,6 @@ test('requireAuth: запрос с неверным токеном возвра�
 });
 
 test('requireAuth: запрос с правильным токеном пропускается', () => {
-  // В тестах initDB() не вызывается, поэтому SESSION_TOKEN в server.js равен ''
   const req = { method: 'POST', cookies: { auth_token: '' } };
   const res = {};
   let nextCalled = false;
@@ -80,7 +77,8 @@ test('processParsedData: извлекает теги и очищает HTML', as
     intro_s: '<p>Epic <b>game</b>!</p>'
   };
 
-  const result = await processParsedData(mockGameData, 'RJ111111');
+  // 3. Вызываем через объект скрапера и используем правильное имя переменной
+  const result = await scraperService.processParsedData(mockGameData, 'RJ123456');
 
   assert.ok(result, 'Результат не должен быть null');
   assert.deepStrictEqual(result.tags, ['RPG', 'Fantasy'], 'Теги должны совпадать');
@@ -88,7 +86,8 @@ test('processParsedData: извлекает теги и очищает HTML', as
 });
 
 test('processParsedData: если genres пустой — возвращает null', async () => {
-  const result = await processParsedData({ genres: [], intro_s: 'Empty genres' }, 'RJ555555');
+  // Вызываем через объект скрапера
+  const result = await scraperService.processParsedData({ genres: [], intro_s: 'Empty genres' }, 'RJ555555');
   assert.strictEqual(result, null, 'При пустом genres функция должна вернуть null');
 });
 
@@ -114,7 +113,8 @@ test('findRJCode: находит RJ внутри текстового файла
     fsp.readFile = originalReadFile;
   });
 
-  const code = await findRJCode('UnknownFolder', '/fake/path');
+  // Вызываем через объект скрапера
+  const code = await scraperService.findRJCode('UnknownFolder', '/fake/path');
   assert.strictEqual(code, 'RJ999999', 'Должен найти RJ-код внутри readme.txt');
 });
 
@@ -123,7 +123,8 @@ test('findRJCode: находит RJ внутри текстового файла
 // ============================================================================
 
 test('translateText: корректно обрабатывает пустой текст', async () => {
-  const result = await translateText('');
+  // Вызываем через объект скрапера
+  const result = await scraperService.translateText('');
   assert.strictEqual(result, '');
 });
 
@@ -133,6 +134,7 @@ test('translateText: возвращает оригинальный текст п
 
   t.after(() => { global.fetch = originalFetch; });
 
-  const result = await translateText('Original text');
+  // Вызываем через объект скрапера
+  const result = await scraperService.translateText('Original text');
   assert.strictEqual(result, 'Original text', 'При сбое сети должен вернуться оригинал');
 });
