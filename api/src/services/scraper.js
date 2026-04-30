@@ -5,15 +5,84 @@ const { execFile } = require('child_process');
 const execFilePromise = util.promisify(execFile);
 const dbService = require('../db/database.js');
 
-// ============================================================================
-// МОДУЛЬ СКРЕЙПЕРА (scraper.js)
-// ============================================================================
-
 const TAGS_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const dlsiteTagCache = new Map();
 
 class ScraperService {
-    
+    constructor() {
+        this.backgroundScrapeQueue = [];
+        this.queuedScrapes = new Set();
+        this.isBackgroundScraping = false;
+        this.io = null;
+        this.GAMES_DIR = '';
+    }
+
+    setDependencies(io, gamesDir) {
+        this.io = io;
+        this.GAMES_DIR = gamesDir;
+    }
+
+    queueScrape(folder) {
+        if (!this.queuedScrapes.has(folder)) {
+            this.queuedScrapes.add(folder);
+            this.backgroundScrapeQueue.push(folder);
+            this.processBackgroundScrape();
+        }
+    }
+
+    async processBackgroundScrape() {
+        if (this.isBackgroundScraping || this.backgroundScrapeQueue.length === 0) return;
+        this.isBackgroundScraping = true;
+        
+        while (this.backgroundScrapeQueue.length > 0) {
+            const folder = this.backgroundScrapeQueue.shift();
+            
+            try {
+                console.log(`[Queue] ⏳ Фоновый парсинг для: ${folder}`);
+                const gamePath = path.join(this.GAMES_DIR, folder);
+                
+                const rjCode = await this.findRJCode(folder, gamePath);
+                
+                let title = folder.replace(/\[?RJ\d{6,8}\]?/gi, '').replace(/[-_]/g, ' ').replace(/\s+/g, ' ').trim() || folder;
+                try {
+                    const sys = JSON.parse(await fsp.readFile(path.join(gamePath, 'data', 'System.json'), 'utf8'));
+                    if (sys.gameTitle && !sys.gameTitle.toLowerCase().includes('rmmz')) title = sys.gameTitle;
+                } catch(e) {}
+
+                const scrapedData = await this.fetchUniversalMetadata(title, rjCode);
+                
+                if (scrapedData && (scrapedData.tags?.length > 0 || scrapedData.description)) {
+                    const tagsJson = JSON.stringify(scrapedData.tags || []);
+                    const desc = scrapedData.description || '';
+
+                    await dbService.get().run('UPDATE games SET tags = ?, description = ?, scraped = 1 WHERE id = ?', [tagsJson, desc, folder]);
+                    
+                    if (scrapedData.coverUrl) {
+                        const current = await dbService.get().get('SELECT cover FROM games WHERE id = ?', [folder]);
+                        if (!current?.cover) {
+                            if (await this.downloadRemoteCover(scrapedData.coverUrl, path.join(gamePath, 'cover.jpg'))) {
+                                await dbService.get().run('UPDATE games SET cover = ? WHERE id = ?', [`${folder}/cover.jpg`, folder]);
+                            }
+                        }
+                    }
+
+                    if (this.io) this.io.emit('scrape-success', { message: `✅ Данные для "${title}" успешно загружены!` });
+                    console.log(`[Queue] ✅ Успешно обновлено: ${folder}`);
+                } else {
+                    await dbService.get().run('UPDATE games SET scraped = 1 WHERE id = ?', [folder]);
+                    console.log(`[Queue] ⚠️ Данные не найдены для: ${folder}`);
+                }
+            } catch (e) {
+                console.error(`[Queue] ❌ Ошибка для ${folder}:`, e.message);
+            } finally {
+                this.queuedScrapes.delete(folder); 
+            }
+            
+            await new Promise(r => setTimeout(r, 4000));
+        }
+        this.isBackgroundScraping = false;
+    }
+
     async findRJCode(folderName, gamePath) {
         const rjRegex = /RJ\d{6,8}/i;
         let match = folderName.match(rjRegex);
@@ -77,26 +146,17 @@ class ScraperService {
     async fetchViaJapanProxy(url) {
         if (process.env.SCRAPER_API_KEY) {
             try {
-                console.log('[Scraper] 🔑 Используем премиум ScraperAPI (BYOK)...');
                 const scraperUrl = `http://api.scraperapi.com?api_key=${process.env.SCRAPER_API_KEY}&url=${encodeURIComponent(url)}&country_code=jp`;
                 const controller = new AbortController();
                 const timeoutId = setTimeout(() => controller.abort(), 15000); 
                 const res = await fetch(scraperUrl, { signal: controller.signal });
                 clearTimeout(timeoutId);
                 const data = await res.json();
-                if (data?.[0]?.work_name) {
-                    console.log('[Scraper] ✅ Данные успешно получены через ScraperAPI!');
-                    return data;
-                }
-            } catch (e) {
-                console.error('[Scraper] ❌ Ошибка ScraperAPI. Переход к Плану Б...', e.message);
-            }
-        } else {
-            console.log('[Scraper] ⚠️ SCRAPER_API_KEY не найден в .env. Запускаем План Б (публичные прокси)...');
+                if (data?.[0]?.work_name) return data;
+            } catch (e) {}
         }
 
         try {
-            console.log('[Scraper] 📡 Собираем бесплатные JP-прокси со всего интернета...');
             let proxies = [];
             const sources = [
                 fetch('https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=10000&country=JP'),
@@ -121,36 +181,22 @@ class ScraperService {
             } catch (e) {}
 
             proxies = [...new Set(proxies)].sort(() => Math.random() - 0.5);
-            if (proxies.length === 0) {
-                console.log('[Scraper] ❌ Японские прокси не найдены в открытых источниках.');
-                return null;
-            }
+            if (proxies.length === 0) return null;
 
             const maxConcurrent = Math.min(30, proxies.length);
-            console.log(`[Scraper] 🚀 ЗАПУСК АТАКИ через ${maxConcurrent} бесплатных прокси...`);
-
             const promises = proxies.slice(0, maxConcurrent).map((proxy) => {
                 return new Promise(async (resolve, reject) => {
                     try {
-                        const { stdout } = await execFilePromise('curl', [
-                            '-sS', '-L', '-m', '10', '-x', `http://${proxy}`, 
-                            '-H', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)', url
-                        ]);
+                        const { stdout } = await execFilePromise('curl', ['-sS', '-L', '-m', '10', '-x', `http://${proxy}`, '-H', 'User-Agent: Mozilla/5.0', url]);
                         const data = JSON.parse(stdout); 
-                        if (data?.[0]?.work_name) {
-                            console.log(`[Scraper] 🎯 Пробито через бесплатный прокси: ${proxy}`);
-                            resolve(data);
-                        } else {
-                            reject(new Error('Пустой ответ'));
-                        }
+                        if (data?.[0]?.work_name) resolve(data);
+                        else reject(new Error('Пустой ответ'));
                     } catch (e) { reject(e); }
                 });
             });
 
             return await Promise.any(promises);
-        } catch (e) {
-            console.error('[Scraper] ❌ Все прокси из пула провалились.');
-        }
+        } catch (e) {}
         return null;
     }
 
@@ -198,7 +244,6 @@ class ScraperService {
 
     async fetchVNDBMetadata(title) {
         try {
-            console.log(`[Scraper] 🌸 Ищем на VNDB: "${title}"...`);
             const res = await fetch('https://api.vndb.org/kana/vn', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -216,7 +261,6 @@ class ScraperService {
 
     async fetchSteamMetadata(title) {
         try {
-            console.log(`[Scraper] 🚂 Ищем в Steam: "${title}"...`);
             const searchRes = await fetch(`https://store.steampowered.com/api/storesearch/?term=${encodeURIComponent(title)}&l=english&cc=US`);
             const searchData = await searchRes.json();
             if (searchData.total > 0 && searchData.items?.length > 0) {
