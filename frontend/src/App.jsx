@@ -1,10 +1,12 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { io } from 'socket.io-client'
 import Header from './components/Header'
 import Toolbar from './components/Toolbar'
 import GameCard from './components/GameCard'
 import GameModal from './components/GameModal'
 import LoginModal from './components/LoginModal'
+import Toast from './components/Toast'
+import { locales } from './components/locales'
 
 const socket = io();
 
@@ -13,7 +15,12 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [lang, setLang] = useState(localStorage.getItem('rpg_lang') || 'ru');
   
-  // Состояния для фильтров и поиска
+  useEffect(() => {
+    localStorage.setItem('rpg_lang', lang);
+  }, [lang]);
+
+  const t = locales[lang] || locales['ru'];
+
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedTag, setSelectedTag] = useState('all');
   const [currentSort, setCurrentSort] = useState('newest');
@@ -21,33 +28,49 @@ function App() {
   const [selectedGame, setSelectedGame] = useState(null);
   const [authMode, setAuthMode] = useState(null);
 
-  // Загрузка игр
+  // --- ЛЕНИВАЯ ЗАГРУЗКА (PAGINATION) ---
+  const [page, setPage] = useState(1);
+  const itemsPerPage = 24;
+  const loaderRef = useRef(null);
+
+  // Сбрасываем страницу на первую при любом изменении фильтров
+  useEffect(() => {
+    setPage(1);
+  }, [searchQuery, selectedTag, currentSort]);
+
+  const [toast, setToast] = useState({ message: '', type: 'success', visible: false });
+  const toastTimerRef = useRef(null);
+
+  const showToast = (message, type = 'success') => {
+    setToast({ message, type, visible: true });
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = setTimeout(() => {
+      setToast(prev => ({ ...prev, visible: false }));
+    }, 4000);
+  };
+
   const fetchGames = async () => {
     setLoading(true);
     try {
-      // 1. Сначала проверяем статус (пустая база или нет)
       const statusRes = await fetch('/api/setup/status');
       const statusData = await statusRes.json();
 
       if (!statusData.initialized) {
-        setAuthMode('setup'); // Показываем окно "Создать Мастера"
+        setAuthMode('setup');
         setLoading(false);
         return;
       }
 
-      // 2. Если база готова, пробуем получить игры
       const response = await fetch('/api/games');
-      
       if (response.status === 401) {
-        setAuthMode('login'); // Нет токена -> Показываем окно "Хранилище"
+        setAuthMode('login');
         setLoading(false);
         return;
       }
 
-      // 3. Токен есть, всё ок!
       const data = await response.json();
       setGames(data);
-      setAuthMode(null); // Прячем модалку авторизации
+      setAuthMode(null);
     } catch (error) {
       console.error("Ошибка загрузки игр:", error);
     } finally {
@@ -57,91 +80,78 @@ function App() {
 
   useEffect(() => {
     fetchGames();
-
-    // Слушаем WebSockets
-    socket.on('upload-status', (data) => {
-      setSocketMessage(data.message);
-    });
-
+    socket.on('upload-status', (data) => setSocketMessage(data.message));
     socket.on('scrape-success', (data) => {
-      console.log('Скрейпинг успешен:', data.message);
-      fetchGames(); // Автоматически обновляем библиотеку, когда парсер нашел обложку!
+      showToast(data.message, 'success');
+      fetchGames(); 
     });
 
-    // Очистка при размонтировании
+    const handleVisibilityChange = () => {
+      if (!document.hidden) fetchGames();
+    };
+    const handlePageShow = (event) => {
+      if (event.persisted) fetchGames();
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('pageshow', handlePageShow);
+
     return () => {
       socket.off('upload-status');
       socket.off('scrape-success');
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('pageshow', handlePageShow);
     };
   }, []);
 
-  // --- ЛОГИКА ДЛЯ БЭКЕНДА ---
-
-  // Удаление игры
   const handleDeleteGame = async (game) => {
-    // Вызываем стандартное окно браузера, как в оригинале
-    if (!window.confirm(`Сжечь том "${game.title}"?\nЭто заклинание необратимо!`)) return;
+    if (!window.confirm(t.burn_confirm(game.title))) return;
 
     try {
       const res = await fetch(`/api/games/${encodeURIComponent(game.id)}`, { method: 'DELETE' });
       const data = await res.json();
       
       if (data.success) {
-        // Мгновенно удаляем игру из React-состояния без перезагрузки страницы!
         setGames(prevGames => prevGames.filter(g => g.id !== game.id));
+        showToast(lang === 'ru' ? 'Том обратился в пепел' : 'Scroll turned to ashes', 'success');
       } else {
-        alert(`Ошибка: ${data.error}`);
+        showToast(`Ошибка: ${data.error}`, 'error');
       }
     } catch (err) {
-      alert('Магия дала сбой (Ошибка сети)');
+      showToast(t.burn_err, 'error');
     }
   };
 
-  // Выставление рейтинга
   const handleRateGame = async (id, ratingValue) => {
-    // "Оптимистичное обновление": мы сразу меняем звезды на экране, не дожидаясь ответа сервера
     setGames(prevGames => prevGames.map(g => g.id === id ? { ...g, rating: ratingValue } : g));
-  
     try {
       await fetch(`/api/games/${encodeURIComponent(id)}/meta`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ rating: ratingValue })
       });
-    } catch (err) {
-      console.error("Ошибка сохранения рейтинга:", err);
-    }
+    } catch (err) {}
   };
 
   const handleUpdateGame = (updatedGame) => {
     setGames(prevGames => prevGames.map(g => g.id === updatedGame.id ? updatedGame : g));
-    
     setSelectedGame(prev => ({ ...prev, game: updatedGame })); 
   };
 
-  // --- ЛОГИКА ФИЛЬТРАЦИИ И СОРТИРОВКИ ---
-
-  // 1. Собираем уникальные теги из всех игр (React будет пересчитывать это сам!)
   const availableTags = useMemo(() => {
     const tagCounts = {};
     games.forEach(g => {
       if (g.tags && g.tags.length > 0) {
-        g.tags.forEach(t => {
-          tagCounts[t] = (tagCounts[t] || 0) + 1;
-        });
+        g.tags.forEach(tg => { tagCounts[tg] = (tagCounts[tg] || 0) + 1; });
       }
     });
-    // Сортируем по алфавиту и возвращаем массив объектов {name: 'Fantasy', count: 5}
     return Object.keys(tagCounts)
       .sort((a, b) => a.localeCompare(b))
       .map(tag => ({ name: tag, count: tagCounts[tag] }));
   }, [games]);
 
-  // 2. Применяем поиск, фильтр по тегам и сортировку
   const processedGames = useMemo(() => {
     let result = games;
-
-    // Поиск по тексту
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
       result = result.filter(game => {
@@ -150,13 +160,9 @@ function App() {
         return matchTitle || matchTags;
       });
     }
-
-    // Фильтр по жанру
     if (selectedTag !== 'all') {
       result = result.filter(g => g.tags && g.tags.includes(selectedTag));
     }
-
-    // Сортировка
     result = [...result].sort((a, b) => {
       if (currentSort === 'newest') return b.addedAt - a.addedAt;
       if (currentSort === 'recent') return b.lastPlayed - a.lastPlayed;
@@ -164,88 +170,94 @@ function App() {
       if (currentSort === 'name') return a.title.localeCompare(b.title);
       return 0;
     });
-
     return result;
   }, [games, searchQuery, selectedTag, currentSort]);
 
+  // Высчитываем, какие игры показывать на текущей странице
+  const visibleGames = processedGames.slice(0, page * itemsPerPage);
+
+  // Настройка IntersectionObserver
+  useEffect(() => {
+    const observer = new IntersectionObserver((entries) => {
+      const target = entries[0];
+      // Подгружаем следующую страницу, если элемент пересек границу видимости
+      if (target.isIntersecting && processedGames.length > page * itemsPerPage) {
+        setPage(p => p + 1);
+      }
+    }, { rootMargin: '400px' });
+
+    if (loaderRef.current) observer.observe(loaderRef.current);
+    return () => { if (loaderRef.current) observer.unobserve(loaderRef.current); };
+  }, [processedGames.length, page, itemsPerPage]);
+
   return (
     <div className="app-container">
-      <Header currentLang={lang} onLangChange={setLang} />
+      <Header currentLang={lang} onLangChange={setLang} t={t} />
       
-      {/* Передаем новые пропсы в Toolbar */}
       <Toolbar 
-        searchQuery={searchQuery} 
-        setSearchQuery={setSearchQuery} 
-        availableTags={availableTags}
-        selectedTag={selectedTag}
-        setSelectedTag={setSelectedTag}
-        currentSort={currentSort}
-        setCurrentSort={setCurrentSort}
-        onUploadSuccess={() => {
-          setSocketMessage(''); // Очищаем текст
-          fetchGames();         // Обновляем игры
-        }}
+        searchQuery={searchQuery} setSearchQuery={setSearchQuery} 
+        availableTags={availableTags} selectedTag={selectedTag} setSelectedTag={setSelectedTag}
+        currentSort={currentSort} setCurrentSort={setCurrentSort}
+        onUploadSuccess={() => { setSocketMessage(''); fetchGames(); }}
         socketMessage={socketMessage}
+        t={t}
+        showToast={showToast}
       />
       
       <main className="content">
         {loading ? (
           <div className="loading">
             <div className="loading-dots">
-               Загрузка<span>.</span><span>.</span><span>.</span>
+               {t.loading}<span>.</span><span>.</span><span>.</span>
             </div>
           </div>
         ) : (
           <>
             <div className="library">
-              {processedGames.map((game, index) => (
+              {visibleGames.map((game, index) => (
                 <GameCard 
-                  key={game.id} 
-                  game={game} 
-                  index={index}
+                  key={game.id} game={game} index={index}
                   onClick={() => setSelectedGame({ game, index })} 
-                  onDelete={handleDeleteGame}
-                  onRate={handleRateGame}
+                  onDelete={handleDeleteGame} onRate={handleRateGame}
+                  t={t}
                 />
               ))}
-              
               {processedGames.length === 0 && (
-                <div className="empty-state">
-                  По вашему запросу ничего не найдено...
-                </div>
+                <div className="empty-state">{t.not_found}</div>
               )}
             </div>
             
-            {/* Информация о количестве игр */}
+            {/* Невидимый блок-якорь для Observer'а */}
+            <div ref={loaderRef} style={{ height: '20px' }}></div>
+
             {processedGames.length > 0 && (
               <div className="library-info">
-                Показано {processedGames.length} из {games.length} свитков
+                {t.shown(Math.min(page * itemsPerPage, processedGames.length), games.length)}
               </div>
             )}
           </>
         )}
       </main>
       
-      {/* Модалка логина / первой настройки */}
       {authMode && (
         <LoginModal 
           mode={authMode} 
-          onSuccess={() => {
-            setAuthMode(null); // Прячем логин
-            fetchGames();      // И заново грузим игры (теперь куки установлены!)
-          }} 
+          onSuccess={() => { setAuthMode(null); fetchGames(); }} 
+          t={t}
+          showToast={showToast}
         />
       )}
 
-      {/* Рендерим модалку, только если выбрана игра */}
       {selectedGame && (
         <GameModal 
-          game={selectedGame.game} 
-          index={selectedGame.index} 
-          onClose={() => setSelectedGame(null)} 
-          onUpdateGame={handleUpdateGame}
+          game={selectedGame.game} index={selectedGame.index} 
+          onClose={() => setSelectedGame(null)} onUpdateGame={handleUpdateGame}
+          t={t} lang={lang}
+          showToast={showToast}
         />
       )}
+
+      <Toast message={toast.message} type={toast.type} visible={toast.visible} />
     </div>
   )
 }

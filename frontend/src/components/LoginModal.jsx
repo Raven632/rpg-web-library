@@ -1,20 +1,19 @@
 import React, { useState } from 'react';
 
-const LoginModal = ({ mode, onSuccess }) => {
+const LoginModal = ({ mode, onSuccess, t, showToast }) => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
-  // Определяем, мы создаем первого Мастера или просто логинимся
   const isSetup = mode === 'setup';
-  const headerText = isSetup ? 'Первая Настройка' : 'Хранилище';
-  const btnText = isSetup ? 'Создать Мастера' : 'Открыть Врата';
+  const headerText = isSetup ? t.setup_h : t.vault_h;
+  const btnText = isSetup ? t.create_m : t.open_g;
   const endpoint = isSetup ? '/api/setup/init' : '/api/login';
 
   const handleSubmit = async () => {
     if (!username || !password) {
-      setError('Заполните все поля');
+      setError(t.fill_all);
       return;
     }
 
@@ -31,23 +30,22 @@ const LoginModal = ({ mode, onSuccess }) => {
 
       if (data.success) {
         if (isSetup) {
-          alert('Мастер успешно создан! Теперь введите эти данные для входа.');
-          window.location.reload(); // Перезагружаем страницу для нормального входа
+          showToast(t.success_reg, 'success');
+          setTimeout(() => window.location.reload(), 3000); 
         } else {
-          onSuccess(); // Командуем App.jsx, что мы вошли, грузи игры!
+          onSuccess(); 
         }
       } else {
-        setError(data.error || 'Магия отвергла вас');
+        setError(data.error || t.err_net);
       }
     } catch (err) {
-      setError('Связь с сервером потеряна');
+      setError(t.srv_lost);
     } finally {
       setIsLoading(false);
     }
   };
 
   return (
-    // z-index: 9999 чтобы перекрыть вообще всё
     <div className="modal-overlay active" style={{ zIndex: 9999, background: 'rgba(0,0,0,0.95)' }}>
       <div className="modal-content" style={{ maxWidth: '350px', padding: '40px', textAlign: 'center', margin: 'auto' }}>
         <h2 style={{ fontFamily: "'Cinzel', serif", color: 'var(--gold)', marginBottom: '25px' }}>
@@ -56,7 +54,7 @@ const LoginModal = ({ mode, onSuccess }) => {
         
         <input
           type="text"
-          placeholder="Имя мастера..."
+          placeholder={t.m_name}
           value={username}
           onChange={e => setUsername(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && handleSubmit()}
@@ -65,7 +63,7 @@ const LoginModal = ({ mode, onSuccess }) => {
         
         <input
           type="password"
-          placeholder="Тайное слово..."
+          placeholder={t.s_word}
           value={password}
           onChange={e => setPassword(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && handleSubmit()}
@@ -77,7 +75,7 @@ const LoginModal = ({ mode, onSuccess }) => {
           disabled={isLoading}
           style={{ width: '100%', padding: '15px', background: 'var(--gold-dim)', color: '#000', border: 'none', borderRadius: '4px', cursor: 'pointer', fontFamily: "'Cinzel', serif", fontWeight: 'bold', fontSize: '1.1rem', transition: 'background 0.3s', opacity: isLoading ? 0.7 : 1 }}
         >
-          {isLoading ? 'Проверка...' : btnText}
+          {isLoading ? t.checking : btnText}
         </button>
         
         {error && (
