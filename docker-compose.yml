@@ -1,26 +1,14 @@
 services:
   rpg-library:
-    build: ./api
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: rpg-library-v2
     ports:
       - "80:3000"
     volumes:
       - ./games:/games
-      - ./api:/app
-      - /app/node_modules
-    command: npx nodemon --ignore 'games/' --ignore 'library.db' server.js
-    restart: unless-stopped #
-
-  frontend:
-    image: node:20-alpine
-    container_name: rpg-frontend
-    user: "${USER_ID}:${GROUP_ID}" # <--- ВОТ ОНО!
-    working_dir: /app
-    ports:
-      - "5173:5173"
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules 
-    command: sh -c "npm install && npm run dev -- --host"
-    depends_on:
-      - rpg-library
+    environment:
+      - GAMES_DIR=/games
+      - NODE_ENV=production
+    restart: unless-stopped
