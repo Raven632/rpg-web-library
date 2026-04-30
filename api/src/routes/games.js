@@ -4,8 +4,8 @@ const path = require('path');
 const dbService = require('../db/database.js');
 const scraperService = require('../services/scraper.js');
 const { GAMES_DIR } = require('../config/index.js');
-const { spawnExtract } = require('../utils/archive.js');
 const { upload, uploadLimiter } = require('../utils/upload.js');
+const { spawnExtract, findGameFolder } = require('../utils/archive.js');
 
 const router = express.Router();
 
@@ -133,21 +133,6 @@ module.exports = function(io, addGameToDB, EXTRACT_TMP) {
 
             io.emit('upload-status', { message: '🔍 Поиск файлов игры...' });
             
-            // Вспомогательная функция, скопированная из server.js
-            async function findGameFolder(dir, depth = 0) {
-                if (depth > 10) return null;
-                const items = await fsp.readdir(dir, { withFileTypes: true });
-                if (items.some(i => i.isDirectory() && i.name.toLowerCase() === 'www')) return path.join(dir, items.find(i => i.name.toLowerCase() === 'www').name);
-                if (items.some(i => i.isFile() && i.name.toLowerCase() === 'index.html')) return dir;
-                for (const item of items) {
-                    if (item.isDirectory()) {
-                        const found = await findGameFolder(path.join(dir, item.name), depth + 1);
-                        if (found) return found;
-                    }
-                }
-                return null;
-            }
-
             const sourceDir = await findGameFolder(tmpExtractDir);            
             if (!sourceDir) throw new Error("Не найдена папка 'www' или 'index.html'");
             

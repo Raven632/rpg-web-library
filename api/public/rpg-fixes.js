@@ -1,5 +1,10 @@
 /**
  * rpg-fixes.js — Ultimate Enterprise Edition v3.4 (Clean Code Version)
+ * ... (дальше идет твой обычный код с (() => { и так далее) ...
+ */
+
+/**
+ * rpg-fixes.js — Ultimate Enterprise Edition v3.4 (Clean Code Version)
  * [NEW] Unified System Menu (FAB)
  * [NEW] Return to Library Button
  * [NEW] Turbo Mode (3x Speedhack) Integration
@@ -28,6 +33,52 @@
             WebAudio._context.resume();
         }
     }, { once: true, passive: true });
+
+    // --- RPG Maker Web Browser Fixes ---
+
+    // 1. Фикс для Star Knightess Aura и других игр с Android-плагинами
+    if (typeof window.ExternalStorage === 'undefined') {
+        console.log('[RPG Fixes] Добавлена заглушка для ExternalStorage');
+        window.ExternalStorage = {
+            save: function() { return false; },
+            load: function() { return null; },
+            exists: function() { return false; }
+        };
+    }
+
+    // 2. Стандартные заглушки для ПК-плагинов (Node.js/NW.js), 
+    // чтобы они не крашились в мобильном браузере
+    if (typeof process === 'undefined') {
+        window.process = { env: {}, mainModule: { filename: '' }, platform: 'browser' };
+    }
+
+    if (typeof require === 'undefined') {
+        window.require = function(moduleName) {
+            // Подделываем файловую систему (чтобы игра не искала жесткий диск)
+            if (moduleName === 'fs') {
+                return {
+                    existsSync: function() { return false; },
+                    readFileSync: function() { return ''; },
+                    writeFileSync: function() {},
+                    mkdirSync: function() {},
+                    statSync: function() { return { isDirectory: function() { return false; } }; }
+                };
+            }
+            // Подделываем пути
+            if (moduleName === 'path') {
+                return {
+                    join: function() { return Array.from(arguments).join('/'); },
+                    dirname: function(p) { return p; },
+                    basename: function(p) { return p; }
+                };
+            }
+            // Подделываем окно программы
+            if (moduleName === 'nw.gui') {
+                return { Window: { get: function() { return { showDevTools: function() {}, isFullscreen: false }; } } };
+            }
+            return {};
+        };
+    }
 
    
     // ============================================================================

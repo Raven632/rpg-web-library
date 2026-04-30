@@ -34,6 +34,10 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: '*' } });
 
+const backgroundScrapeQueue = [];
+const queuedScrapes = new Set();
+let isBackgroundScraping = false;
+
 app.use(compression());
 
 
@@ -214,7 +218,7 @@ app.use('/api/saves', createSavesRouter(EXTRACT_TMP));
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-app.get('*', async (req, res, next) => {
+app.get('*', requireAuth, async (req, res, next) => {
     if (req.path.startsWith('/api/') || req.path === '/') return next();
 
     let reqPath = decodeURIComponent(req.path);
