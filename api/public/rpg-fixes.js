@@ -33,8 +33,9 @@ if (!window.__rpgPluginHookInstalled) {
         Object.defineProperty(HTMLScriptElement.prototype, 'src', {
             set: function(val) {
                 if (val && typeof val === 'string') {
-                    if (val.indexOf('auramz/mobile') > -1 || val.indexOf('toggle_save_dir') > -1) {
-                        console.log('[RPG Fixes] 🛑 Заблокирован вредный плагин: ' + val);
+                    var lowerVal = val.toLowerCase();
+                    if (lowerVal.indexOf('auramz/mobile') > -1 || lowerVal.indexOf('toggle_save_dir') > -1 || lowerVal.indexOf('elimz_mobilecontrols') > -1) {
+                        console.log('[RPG Fixes] 🛑 Заблокирован конфликтный плагин: ' + val);
                         val = 'data:application/javascript,console.log("Blocked by RPG-Fixes!");';
                     }
                     
@@ -86,11 +87,11 @@ if (!window.__rpgPluginHookInstalled) {
 }
 
 // ============================================================================
-// 3. ОСНОВНОЙ КОД RPG-FIXES (Ultimate v3.5 - Без дубликатов)
+// 3. ОСНОВНОЙ КОД RPG-FIXES (Ultimate v3.7 - Dynamic Layouts)
 // ============================================================================
 (() => {
-    if (window.__RPG_FIXES_ULTIMATE_V35__) return;
-    window.__RPG_FIXES_ULTIMATE_V35__ = true;
+    if (window.__RPG_FIXES_ULTIMATE_V37__) return;
+    window.__RPG_FIXES_ULTIMATE_V37__ = true;
 
     function applyConsoleFixes() {
         function applyCanvasReadFrequently(proto) {
@@ -139,6 +140,20 @@ if (!window.__rpgPluginHookInstalled) {
                 WebAudio._context.resume();
             }
         }, { once: true, passive: true });
+
+        const pmTimer = setInterval(() => {
+            if (window.PluginManager && typeof PluginManager.setup === 'function' && !window.__pmHooked) {
+                window.__pmHooked = true;
+                const origSetup = PluginManager.setup;
+                PluginManager.setup = function(plugins) {
+                    if (Array.isArray(plugins)) {
+                        plugins = plugins.filter(p => !['EliMZ_MobileControls', 'ToggleSaveDirectory', 'Mobile'].includes(p.name));
+                    }
+                    origSetup.call(this, plugins);
+                };
+                clearInterval(pmTimer);
+            }
+        }, 10);
     }
 
     function setupBrowserStubs() {
@@ -326,7 +341,7 @@ if (!window.__rpgPluginHookInstalled) {
 
         const syncDiv = document.createElement('div');
         syncDiv.id = '_cloud_sync_ui';
-        syncDiv.style.cssText = 'display:none; position:fixed; top:15px; left:50%; transform:translateX(-50%); background:rgba(0,0,0,0.85); color:#fff; padding:6px 20px; border-radius:20px; z-index:999999; font-size:13px; font-family:sans-serif; font-weight:bold; border:1px solid rgba(255,255,255,0.2); pointer-events:none; box-shadow:0 4px 10px rgba(0,0,0,0.5); transition:background 0.3s;';
+        syncDiv.style.cssText = 'display:none; position:fixed; top:15px; left:50%; transform:translateX(-50%); background:rgba(0,0,0,0.85); color:#fff; padding:6px 20px; border-radius:20px; z-index:2147483647; font-size:13px; font-family:sans-serif; font-weight:bold; border:1px solid rgba(255,255,255,0.2); pointer-events:none; box-shadow:0 4px 10px rgba(0,0,0,0.5); transition:background 0.3s;';
         document.body.appendChild(syncDiv);
 
         let syncCount = 0;
@@ -559,7 +574,7 @@ if (!window.__rpgPluginHookInstalled) {
         }
     }
 
-    // --- 8. UI & VIRTUAL CONTROLS ---
+    // --- 8. UI & VIRTUAL CONTROLS (BULLETPROOF & DYNAMIC LAYOUTS) ---
     function setupUIAndGamepad() {
         document.addEventListener('DOMContentLoaded', () => {
             if (document.getElementById('_sys_menu_container')) return;
@@ -567,7 +582,7 @@ if (!window.__rpgPluginHookInstalled) {
             
             const style = document.createElement('style');
             style.textContent = `
-                #_sys_menu_container { position: fixed; top: max(16px, env(safe-area-inset-top));  right: max(16px, env(safe-area-inset-right)); z-index: 9999; display: flex; flex-direction: column; align-items: flex-end; touch-action: none; -webkit-touch-callout: none; -webkit-user-select: none; }
+                #_sys_menu_container { position: fixed; top: max(16px, env(safe-area-inset-top)); right: max(16px, env(safe-area-inset-right)); z-index: 2147483647; display: flex; flex-direction: column; align-items: flex-end; touch-action: none; -webkit-touch-callout: none; -webkit-user-select: none; }
                 #_sys_btn { width: 44px; height: 44px; background: rgba(0,0,0,0.6); border: 1px solid rgba(255,255,255,0.25); border-radius: 50%; display: flex; justify-content: center; align-items: center; font-size: 24px; color: white; cursor: pointer; transition: background 0.2s; }
                 #_sys_btn:active { background: rgba(255,255,255,0.2); }
                 #_sys_panel { display: none; background: rgba(0,0,0,0.85); border: 1px solid rgba(255,255,255,0.15); border-radius: 12px; margin-top: 8px; padding: 6px; flex-direction: column; gap: 4px; box-shadow: 0 8px 16px rgba(0,0,0,0.5); backdrop-filter: blur(4px); }
@@ -576,7 +591,10 @@ if (!window.__rpgPluginHookInstalled) {
                 ._sys_item:active { background: rgba(255,255,255,0.2); }
                 ._sys_item._active { background: rgba(200, 150, 40, 0.4); border: 1px solid rgba(200, 150, 40, 0.8); }
 
-                #_mob_ctrl { position:fixed; bottom:0; left:0; right:0; z-index:9998; pointer-events:none; padding:16px; height:220px; touch-action:none; -webkit-touch-callout:none; -webkit-user-select:none; user-select:none; }
+                #_layout_toggle { position: fixed; top: max(16px, env(safe-area-inset-top)); left: max(16px, env(safe-area-inset-left)); z-index: 2147483647; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.6); border: 1px solid rgba(255,255,255,0.25); border-radius: 8px; color: white; padding: 8px 12px; font-family: sans-serif; font-size: 14px; font-weight: bold; cursor: pointer; touch-action: none; user-select: none; transition: background 0.2s; }
+                #_layout_toggle:active { background: rgba(255,255,255,0.2); }
+
+                #_mob_ctrl { position:fixed; bottom:0; left:0; right:0; z-index:2147483646; pointer-events:none; padding:16px; height:220px; touch-action:none; -webkit-touch-callout:none; -webkit-user-select:none; user-select:none; }
                 #_dpad { position:absolute; bottom:20px; left:20px; width:190px; height:190px; pointer-events:auto; touch-action:none; }
                 ._dpad_btn { position:absolute; width:58px; height:58px; background:rgba(0,0,0,0.4); border:1px solid rgba(255,255,255,0.3); border-radius:10px; display:flex; align-items:center; justify-content:center; }
                 ._dpad_btn._on { background:rgba(255,255,255,0.6); }
@@ -619,10 +637,13 @@ if (!window.__rpgPluginHookInstalled) {
                 </div>
             `;
 
+            const layoutToggleHtml = `<div id="_layout_toggle">🔄 Раскладка: Стандарт</div>`;
+
             const ui = document.createElement('div');
-            ui.innerHTML = sysMenuHtml + mobCtrlHtml;
+            ui.innerHTML = layoutToggleHtml + sysMenuHtml + mobCtrlHtml;
             document.body.appendChild(ui);
 
+            // Menu Handlers
             const sysBtn = document.getElementById('_sys_btn');
             const sysPanel = document.getElementById('_sys_panel');
 
@@ -675,39 +696,101 @@ if (!window.__rpgPluginHookInstalled) {
             });
             document.getElementById('_mob_ctrl').addEventListener('pointerdown', e => e.stopPropagation(), { passive: false });
 
-            const rpgKeyMap = { _d_up: 'up', _d_down: 'down', _d_left: 'left', _d_right: 'right', _a_ok: 'ok', _a_esc: 'escape', _a_menu: 'control', _a_shift: 'shift' };
-            const KEY_CODES = { up:38, down:40, left:37, right:39, ok:32, escape:27, control:17, shift:16 };
+            // 🛡️ Динамические раскладки геймпада
+            let currentLayout = 0;
+            const layouts = [
+                {
+                    name: 'Стандарт',
+                    keys: {
+                        _a_ok: { kn: 'ok', kc: 32, key: ' ', code: 'Space', label: 'OK' },
+                        _a_esc: { kn: 'escape', kc: 27, key: 'Escape', code: 'Escape', label: 'ESC' },
+                        _a_menu: { kn: 'control', kc: 17, key: 'Control', code: 'ControlLeft', label: 'MENU' },
+                        _a_shift: { kn: 'shift', kc: 16, key: 'Shift', code: 'ShiftLeft', label: 'SHIFT' }
+                    }
+                },
+                {
+                    name: 'Z/X/Q/W',
+                    keys: {
+                        _a_ok: { kn: 'ok', kc: 90, key: 'z', code: 'KeyZ', label: 'Z' },
+                        _a_esc: { kn: 'escape', kc: 88, key: 'x', code: 'KeyX', label: 'X' },
+                        _a_menu: { kn: 'pageup', kc: 81, key: 'q', code: 'KeyQ', label: 'Q' },
+                        _a_shift: { kn: 'pagedown', kc: 87, key: 'w', code: 'KeyW', label: 'W' }
+                    }
+                }
+            ];
 
-            Object.keys(rpgKeyMap).forEach(id => {
+            const updateLabels = () => {
+                document.getElementById('_a_ok').innerText = layouts[currentLayout].keys._a_ok.label;
+                document.getElementById('_a_esc').innerText = layouts[currentLayout].keys._a_esc.label;
+                document.getElementById('_a_menu').innerText = layouts[currentLayout].keys._a_menu.label;
+                document.getElementById('_a_shift').innerText = layouts[currentLayout].keys._a_shift.label;
+                document.getElementById('_layout_toggle').innerText = `🔄 Раскладка: ${layouts[currentLayout].name}`;
+            };
+
+            document.getElementById('_layout_toggle').addEventListener('pointerdown', (e) => {
+                e.preventDefault(); e.stopPropagation();
+                currentLayout = currentLayout === 0 ? 1 : 0;
+                updateLabels();
+            }, { passive: false });
+
+            updateLabels();
+
+            const dpadMap = { 
+                _d_up: {kn:'up',kc:38,key:'ArrowUp'}, 
+                _d_down: {kn:'down',kc:40,key:'ArrowDown'}, 
+                _d_left: {kn:'left',kc:37,key:'ArrowLeft'}, 
+                _d_right: {kn:'right',kc:39,key:'ArrowRight'} 
+            };
+
+            const triggerKey = (id, isDown) => {
+                const type = isDown ? 'keydown' : 'keyup';
+                let config;
+                
+                if (id.startsWith('_d_')) {
+                    config = dpadMap[id];
+                    config.code = config.key;
+                } else {
+                    config = layouts[currentLayout].keys[id];
+                }
+
+                if (!config) return;
+
+                if (typeof Input !== 'undefined') {
+                    if (Input._currentState) Input._currentState[config.kn] = isDown;
+                    if (Input.currentState)  Input.currentState[config.kn]  = isDown;
+                }
+
+                const ev = new KeyboardEvent(type, { bubbles: true, cancelable: true, key: config.key, code: config.code, keyCode: config.kc, which: config.kc });
+                Object.defineProperty(ev, 'keyCode', { get: () => config.kc });
+                Object.defineProperty(ev, 'which', { get: () => config.kc });
+                document.dispatchEvent(ev);
+            };
+
+            const allBtnIds = ['_d_up', '_d_down', '_d_left', '_d_right', '_a_ok', '_a_esc', '_a_menu', '_a_shift'];
+
+            allBtnIds.forEach(id => {
                 const el = document.getElementById(id);
                 if (!el) return;
 
                 const press = e => {
                     e.preventDefault(); e.stopPropagation();
+                    if (el.dataset.active) return;
+                    el.dataset.active = "true";
                     el.classList.add('_on');
-                    try { el.setPointerCapture(e.pointerId); } catch {}
-                    const kn = rpgKeyMap[id];
-                    if (typeof Input !== 'undefined') {
-                        if (Input._currentState) Input._currentState[kn] = true;
-                        if (Input.currentState)  Input.currentState[kn]  = true;
-                    }
-                    const kc = KEY_CODES[kn];
-                    if (kc) document.dispatchEvent(new KeyboardEvent('keydown', { keyCode: kc, which: kc, bubbles: true, cancelable: true }));
+                    triggerKey(id, true);
                 };
 
                 const release = e => {
                     e.preventDefault(); e.stopPropagation();
+                    if (!el.dataset.active) return;
+                    el.dataset.active = "";
                     el.classList.remove('_on');
-                    try { if (el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId); } catch {}
-                    const kn = rpgKeyMap[id];
-                    if (typeof Input !== 'undefined') {
-                        if (Input._currentState) Input._currentState[kn] = false;
-                        if (Input.currentState)  Input.currentState[kn]  = false;
-                    }
-                    const kc = KEY_CODES[kn];
-                    if (kc) document.dispatchEvent(new KeyboardEvent('keyup', { keyCode: kc, which: kc, bubbles: true, cancelable: true }));
+                    triggerKey(id, false);
                 };
 
+                el.addEventListener('touchstart', press, { passive: false });
+                el.addEventListener('touchend', release, { passive: false });
+                el.addEventListener('touchcancel', release, { passive: false });
                 el.addEventListener('pointerdown', press);
                 el.addEventListener('pointerup', release);
                 el.addEventListener('pointercancel', release);
@@ -722,7 +805,7 @@ if (!window.__rpgPluginHookInstalled) {
         
         const monitor = document.createElement('div');
         monitor.id = '_fps_monitor';
-        monitor.style.cssText = `display: ${showByDefault ? 'block' : 'none'}; position: fixed; top: max(64px, env(safe-area-inset-top) + 48px); right: max(16px, env(safe-area-inset-right)); z-index: 9998; background: rgba(0,0,0,0.75); color: #0f0; font-family: 'Courier New', monospace; font-size: 11px; line-height: 1.5; padding: 8px 10px; border-radius: 8px; min-width: 130px; pointer-events: none; border: 1px solid rgba(255,255,255,0.1); backdrop-filter: blur(4px);`;
+        monitor.style.cssText = `display: ${showByDefault ? 'block' : 'none'}; position: fixed; top: max(64px, env(safe-area-inset-top) + 48px); right: max(16px, env(safe-area-inset-right)); z-index: 2147483647; background: rgba(0,0,0,0.75); color: #0f0; font-family: 'Courier New', monospace; font-size: 11px; line-height: 1.5; padding: 8px 10px; border-radius: 8px; min-width: 130px; pointer-events: none; border: 1px solid rgba(255,255,255,0.1); backdrop-filter: blur(4px);`;
         document.body.appendChild(monitor);
 
         window.__toggleFpsMonitor = function() {
@@ -801,7 +884,7 @@ if (!window.__rpgPluginHookInstalled) {
         window.__spikeLog = log;
 
         const panel = document.createElement('div');
-        panel.style.cssText = `display: none; position: fixed; bottom: 10px; left: 10px; right: 10px; max-height: 45vh; background: rgba(0,0,0,0.92); border: 1px solid rgba(255,100,0,0.4); border-radius: 10px; z-index: 9997; font-family: 'Courier New', monospace; font-size: 10px; color: #ddd; overflow-y: auto; -webkit-overflow-scrolling: touch; pointer-events: auto;`;
+        panel.style.cssText = `display: none; position: fixed; bottom: 10px; left: 10px; right: 10px; max-height: 45vh; background: rgba(0,0,0,0.92); border: 1px solid rgba(255,100,0,0.4); border-radius: 10px; z-index: 2147483647; font-family: 'Courier New', monospace; font-size: 10px; color: #ddd; overflow-y: auto; -webkit-overflow-scrolling: touch; pointer-events: auto;`;
         panel.innerHTML = `<div style="position:sticky;top:0;background:rgba(0,0,0,0.95);padding:6px 10px;border-bottom:1px solid rgba(255,100,0,0.3);display:flex;justify-content:space-between;align-items:center;"><span style="color:#f80;font-weight:bold">⚡ Spike Log</span><span id="_spike_count" style="color:#f44">0 спайков</span><button id="_spike_clear" style="background:rgba(255,80,0,0.3);border:1px solid rgba(255,80,0,0.5);border-radius:4px;color:#fff;padding:2px 8px;font-size:10px;">Очистить</button></div><div id="_spike_log_body" style="padding:6px 10px;"></div>`;
         document.body.appendChild(panel);
 
@@ -876,7 +959,8 @@ if (!window.__rpgPluginHookInstalled) {
                 e.target.closest('#_sys_menu_container') || 
                 e.target.closest('#_mob_ctrl') || 
                 e.target.closest('#_fps_monitor') || 
-                e.target.closest('#_spike_panel')
+                e.target.closest('#_spike_panel') ||
+                e.target.closest('#_layout_toggle') // Защита новой кнопки
             )) return;
             e.stopPropagation();
             e.stopImmediatePropagation();
@@ -934,10 +1018,9 @@ if (!window.__rpgPluginHookInstalled) {
         setupSpikeDiagnostics();
         setupTouchModeToggle();
         
-        console.log('✅ RPG-Fixes Ultimate v3.5 (Structured & Audited) успешно загружен!');
+        console.log('✅ RPG-Fixes Ultimate v3.7 (Dynamic Layouts) успешно загружен!');
     }
 
-    // Запускаем всё
     initUltimateFixes();
 
 })();
