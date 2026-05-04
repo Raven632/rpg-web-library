@@ -1,0 +1,15 @@
+# docker-compose.dev.yml (Локальная разработка)
+services:
+  rpg-library:
+    volumes:
+      # Ювелирно прокидываем только исходный код бэкенда:
+      - ./api/src:/app/api/src
+      - ./api/server.js:/app/api/server.js
+      # Ювелирно прокидываем только один скрипт из папки public:
+      - ./api/public/rpg-fixes.js:/app/api/public/rpg-fixes.js
+      
+      # (Трюк с /app/api/node_modules больше не нужен, 
+      # так как мы больше не перезаписываем корень папки api)
+    restart: "no"
+    environment:
+      - NODE_ENV=development

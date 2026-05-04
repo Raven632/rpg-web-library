@@ -579,6 +579,7 @@ if (!window.__rpgPluginHookInstalled) {
         document.addEventListener('DOMContentLoaded', () => {
             if (document.getElementById('_sys_menu_container')) return;
             const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+            const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || isIOS;
             
             const style = document.createElement('style');
             style.textContent = `
@@ -607,7 +608,9 @@ if (!window.__rpgPluginHookInstalled) {
                 #_a_ok { background:rgba(40,160,40,0.6); } #_a_esc { background:rgba(200,40,40,0.6); }
                 #_a_menu { background:rgba(40,100,200,0.6); } #_a_shift { background:rgba(180,140,20,0.6); }
                 
-                @media (pointer: fine) { #_mob_ctrl { display: none; } }
+                @media (pointer: fine) { 
+                    #_mob_ctrl, #_layout_toggle, #_touch_mode_item { display: none !important; } 
+                }
             `;
             document.head.appendChild(style);
 
@@ -638,10 +641,10 @@ if (!window.__rpgPluginHookInstalled) {
                 </div>
             `;
 
-            const layoutToggleHtml = `<div id="_layout_toggle">🔄 Раскладка: Стандарт</div>`;
+            const layoutToggleHtml = isMobile ? `<div id="_layout_toggle">🔄 Раскладка: Стандарт</div>` : '';
 
             const ui = document.createElement('div');
-            ui.innerHTML = layoutToggleHtml + sysMenuHtml + mobCtrlHtml;
+            ui.innerHTML = layoutToggleHtml + sysMenuHtml + (isMobile ? mobCtrlHtml : '');
             document.body.appendChild(ui);
 
             // Menu Handlers
@@ -695,11 +698,13 @@ if (!window.__rpgPluginHookInstalled) {
             document.addEventListener('contextmenu', e => {
                 if (e.target.closest('#_mob_ctrl') || e.target.closest('#_sys_menu_container')) e.preventDefault();
             });
-            document.getElementById('_mob_ctrl').addEventListener('pointerdown', e => e.stopPropagation(), { passive: false });
+            if (isMobile) {
+                document.getElementById('_mob_ctrl').addEventListener('pointerdown', e => e.stopPropagation(), { passive: false });
 
-            ['touchstart', 'touchmove', 'touchend', 'pointerdown', 'pointermove', 'pointerup', 'mousedown', 'mousemove', 'mouseup'].forEach(ev => {
-                document.getElementById('_mob_ctrl').addEventListener(ev, e => e.stopPropagation(), { passive: false });
-            });
+                ['touchstart', 'touchmove', 'touchend', 'pointerdown', 'pointermove', 'pointerup', 'mousedown', 'mousemove', 'mouseup'].forEach(ev => {
+                    document.getElementById('_mob_ctrl').addEventListener(ev, e => e.stopPropagation(), { passive: false });
+                });
+            }
 
             // 🛡️ Динамические раскладки геймпада
             let currentLayout = 0;
@@ -725,6 +730,7 @@ if (!window.__rpgPluginHookInstalled) {
             ];
 
             const updateLabels = () => {
+                if (!isMobile) return;
                 document.getElementById('_a_ok').innerText = layouts[currentLayout].keys._a_ok.label;
                 document.getElementById('_a_esc').innerText = layouts[currentLayout].keys._a_esc.label;
                 document.getElementById('_a_menu').innerText = layouts[currentLayout].keys._a_menu.label;
@@ -732,11 +738,13 @@ if (!window.__rpgPluginHookInstalled) {
                 document.getElementById('_layout_toggle').innerText = `🔄 Раскладка: ${layouts[currentLayout].name}`;
             };
 
-            document.getElementById('_layout_toggle').addEventListener('pointerdown', (e) => {
-                e.preventDefault(); e.stopPropagation();
-                currentLayout = currentLayout === 0 ? 1 : 0;
-                updateLabels();
-            }, { passive: false });
+            if (isMobile) {
+                document.getElementById('_layout_toggle').addEventListener('pointerdown', (e) => {
+                    e.preventDefault(); e.stopPropagation();
+                    currentLayout = currentLayout === 0 ? 1 : 0;
+                    updateLabels();
+                }, { passive: false });
+            }
 
             updateLabels();
 
@@ -956,6 +964,11 @@ if (!window.__rpgPluginHookInstalled) {
     }
 
     function setupTouchModeToggle() {
+        const _isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+            (/iPad|iPhone|iPod/.test(navigator.userAgent)) ||
+            (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+        if (!_isMobile) return; // На ПК не нужен Touch Mode
+
         window.__rpgTouchEnabled = false; 
 
         const interceptor = (e) => {
