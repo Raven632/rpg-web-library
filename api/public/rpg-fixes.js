@@ -596,6 +596,7 @@ if (!window.__rpgPluginHookInstalled) {
 
                 #_mob_ctrl { position:fixed; bottom:0; left:0; right:0; z-index:2147483646; pointer-events:none; padding:16px; height:220px; touch-action:none; -webkit-touch-callout:none; -webkit-user-select:none; user-select:none; }
                 #_dpad { position:absolute; bottom:20px; left:20px; width:190px; height:190px; pointer-events:auto; touch-action:none; }
+                #_d_center { position:absolute; top:75px; left:75px; width:40px; height:40px; background:rgba(255,255,255,0.05); border-radius:50%; pointer-events:none; }
                 ._dpad_btn { position:absolute; width:58px; height:58px; background:rgba(0,0,0,0.4); border:1px solid rgba(255,255,255,0.3); border-radius:10px; display:flex; align-items:center; justify-content:center; }
                 ._dpad_btn._on { background:rgba(255,255,255,0.6); }
                 ._dpad_btn svg { width:24px; fill:rgba(255,255,255,0.95); pointer-events:none; }
@@ -695,6 +696,10 @@ if (!window.__rpgPluginHookInstalled) {
                 if (e.target.closest('#_mob_ctrl') || e.target.closest('#_sys_menu_container')) e.preventDefault();
             });
             document.getElementById('_mob_ctrl').addEventListener('pointerdown', e => e.stopPropagation(), { passive: false });
+
+            ['touchstart', 'touchmove', 'touchend', 'pointerdown', 'pointermove', 'pointerup', 'mousedown', 'mousemove', 'mouseup'].forEach(ev => {
+                document.getElementById('_mob_ctrl').addEventListener(ev, e => e.stopPropagation(), { passive: false });
+            });
 
             // 🛡️ Динамические раскладки геймпада
             let currentLayout = 0;
