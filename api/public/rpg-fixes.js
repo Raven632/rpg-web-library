@@ -1,6 +1,39 @@
 // ============================================================================
-// 1. АБСОЛЮТНАЯ ИМИТАЦИЯ ANDROID API (УБИЙЦА ОШИБОК AURAMZ)
+// 1. АБСОЛЮТНАЯ ИМИТАЦИЯ ANDROID И СИСТЕМНЫХ API (УБИЙЦА ОШИБОК)
 // ============================================================================
+
+// Глобальные заглушки для Node.js модов (Karryn's Prison и т.д.)
+window.process = window.process || {};
+window.process.env = window.process.env || {};
+window.process.env.USER = 'Player';
+window.process.platform = window.process.platform || 'browser';
+window.process.mainModule = { filename: '' };
+
+// Подавляем ошибку Firefox/Chrome при выходе из полноэкранного режима (Not in fullscreen mode)
+if (typeof document !== 'undefined') {
+    const origExit = document.exitFullscreen;
+    if (origExit) {
+        document.exitFullscreen = function() {
+            if (!document.fullscreenElement) return Promise.resolve();
+            return origExit.call(this);
+        };
+    }
+    const origMoz = document.mozCancelFullScreen;
+    if (origMoz) {
+        document.mozCancelFullScreen = function() {
+            if (!document.mozFullScreenElement) return Promise.resolve();
+            return origMoz.call(this);
+        };
+    }
+    const origWebkit = document.webkitExitFullscreen;
+    if (origWebkit) {
+        document.webkitExitFullscreen = function() {
+            if (!document.webkitFullscreenElement) return Promise.resolve();
+            return origWebkit.call(this);
+        };
+    }
+}
+
 window.ExternalStorage = {
     _reply: function(cbId, res) {
         setTimeout(function() {
@@ -87,11 +120,11 @@ if (!window.__rpgPluginHookInstalled) {
 }
 
 // ============================================================================
-// 3. ОСНОВНОЙ КОД RPG-FIXES (Ultimate v3.7 - Dynamic Layouts)
+// 3. ОСНОВНОЙ КОД RPG-FIXES (Ultimate v3.8 - Fullscreen Bulletproof)
 // ============================================================================
 (() => {
-    if (window.__RPG_FIXES_ULTIMATE_V37__) return;
-    window.__RPG_FIXES_ULTIMATE_V37__ = true;
+    if (window.__RPG_FIXES_ULTIMATE_V38__) return;
+    window.__RPG_FIXES_ULTIMATE_V38__ = true;
 
     function applyConsoleFixes() {
         function applyCanvasReadFrequently(proto) {
@@ -157,16 +190,33 @@ if (!window.__rpgPluginHookInstalled) {
     }
 
     function setupBrowserStubs() {
-        if (typeof process === 'undefined') {
-            window.process = { env: {}, mainModule: { filename: '' }, platform: 'browser' };
+        if (typeof window.Logger === 'undefined') {
+            const dummyLog = function() {};
+            window.Logger = {
+                createDefaultLogger: function() { return { info: dummyLog, warn: dummyLog, error: dummyLog, debug: dummyLog, fatal: dummyLog, trace: dummyLog }; },
+                default: { createDefaultLogger: function() { return { info: dummyLog, warn: dummyLog, error: dummyLog, debug: dummyLog, fatal: dummyLog, trace: dummyLog }; } }
+            };
         }
+        
+        window.__import_meta = { url: location.href, env: {} };
+
         if (typeof require === 'undefined') {
             window.require = function (m) {
                 if (m === 'path') return { 
-                    dirname: p => p.replace(/[/\\][^/\\]*$/, '') || '.', 
+                    dirname: p => p ? p.replace(/[/\\][^/\\]*$/, '') || '.' : '.', 
                     join: (...a) => a.join('/'), 
-                    basename: p => p.split(/[/\\]/).pop(), 
-                    extname: p => { const b = p.split(/[/\\]/).pop(); const i = b.lastIndexOf('.'); return i > 0 ? b.slice(i) : ''; } 
+                    basename: p => p ? p.split(/[/\\]/).pop() : '', 
+                    extname: p => { const b = (p||'').split(/[/\\]/).pop(); const i = b.lastIndexOf('.'); return i > 0 ? b.slice(i) : ''; },
+                    resolve: function() { return Array.prototype.slice.call(arguments).join('/').replace(/\\/g, '/').replace(/\/+/g, '/'); }
+                };
+                if (m === 'util') return {
+                    promisify: function(fn) { 
+                        return function(...args) { 
+                            return new Promise((resolve, reject) => { 
+                                fn(...args, (err, res) => err ? reject(err) : resolve(res)); 
+                            }); 
+                        }; 
+                    }
                 };
                 if (m === 'fs') return { 
                     readFileSync: () => '', writeFileSync: () => {}, mkdirSync: () => {}, 
@@ -572,6 +622,23 @@ if (!window.__rpgPluginHookInstalled) {
             }, 100);
             setTimeout(() => clearInterval(timer), 15000);
         }
+        // Глушим ошибку DOMException (Autoplay Policy) для HTML5 Audio
+        if (typeof HTMLAudioElement !== 'undefined') {
+            const origPlay = HTMLAudioElement.prototype.play;
+            HTMLAudioElement.prototype.play = function() {
+                try {
+                    const promise = origPlay.call(this);
+                    if (promise !== undefined) {
+                        promise.catch(e => {
+                            console.warn('[RPG Fixes] Подавлена ошибка автовоспроизведения аудио:', e.message);
+                        });
+                    }
+                    return promise;
+                } catch(e) {
+                    console.warn('[RPG Fixes] Синхронная ошибка аудио подавлена.');
+                }
+            };
+        }
     }
 
     // --- 8. UI & VIRTUAL CONTROLS (BULLETPROOF & DYNAMIC LAYOUTS) ---
@@ -967,7 +1034,7 @@ if (!window.__rpgPluginHookInstalled) {
         const _isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
             (/iPad|iPhone|iPod/.test(navigator.userAgent)) ||
             (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-        if (!_isMobile) return; // На ПК не нужен Touch Mode
+        if (!_isMobile) return; 
 
         window.__rpgTouchEnabled = false; 
 
@@ -978,7 +1045,7 @@ if (!window.__rpgPluginHookInstalled) {
                 e.target.closest('#_mob_ctrl') || 
                 e.target.closest('#_fps_monitor') || 
                 e.target.closest('#_spike_panel') ||
-                e.target.closest('#_layout_toggle') // Защита новой кнопки
+                e.target.closest('#_layout_toggle') 
             )) return;
             e.stopPropagation();
             e.stopImmediatePropagation();
@@ -1036,7 +1103,7 @@ if (!window.__rpgPluginHookInstalled) {
         setupSpikeDiagnostics();
         setupTouchModeToggle();
         
-        console.log('✅ RPG-Fixes Ultimate v3.7 (Dynamic Layouts) успешно загружен!');
+        console.log('✅ RPG-Fixes Ultimate v3.8 (Fullscreen Bulletproof) успешно загружен!');
     }
 
     initUltimateFixes();

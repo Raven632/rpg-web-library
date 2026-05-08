@@ -305,6 +305,18 @@ app.get('*', requireAuth, async (req, res, next) => {
                 res.setHeader('Access-Control-Allow-Origin', '*');
                 return res.send(html);
             }
+
+            if (filePath.endsWith('.js') && finalStat.size < 5 * 1024 * 1024) { // Проверяем JS файлы до 5 МБ
+                let jsContent = await fsp.readFile(filePath, 'utf8');
+                if (jsContent.includes('import.meta')) {
+                    // Идеально безопасная замена, чтобы не сломать синтаксис (Webpack ASI)
+                    jsContent = jsContent.replace(/\bimport\.meta\b/g, "window.__import_meta");
+                    res.setHeader('Content-Type', 'application/javascript');
+                    res.setHeader('Access-Control-Allow-Origin', '*');
+                    return res.send(jsContent);
+                }
+            }
+
             res.setHeader('Access-Control-Allow-Origin', '*');
             return res.sendFile(filePath);
         }
