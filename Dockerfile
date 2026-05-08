@@ -42,20 +42,17 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app/api
 
 # Копируем конфиги бэкенда и ставим зависимости
-COPY api/package*.json ./
+COPY --chown=node:node api/package*.json ./
 RUN npm install --omit=dev
 RUN npm install sqlite3 --build-from-source
 RUN npm install sqlite
 
 # Копируем весь исходный код бэкенда (включая api/public/rpg-fixes.js)
-COPY api/ ./
+COPY --chown=node:node api/ ./
 
 # МАГИЯ: Забираем собранный сайт из первого этапа 
 # и кладем его ВНУТРЬ папки public нашего бэкенда!
-COPY --from=builder /app/frontend/dist/ ./public/
-
-# Устанавливаем права для безопасного пользователя node
-RUN chown -R node:node /app
+COPY --chown=node:node --from=builder /app/frontend/dist/ ./public/
 
 USER node
 EXPOSE 3000
