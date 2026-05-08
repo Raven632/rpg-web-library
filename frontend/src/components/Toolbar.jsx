@@ -92,7 +92,7 @@ const Toolbar = ({
         {t.add_game}
       </div>
 
-      <input type="file" ref={fileInputRef} style={{ display: 'none' }} accept=".zip,.7z,.rar" onChange={handleFileSelect} />
+      <input type="file" ref={fileInputRef} style={{ display: 'none' }} accept=".zip,.7z,.rar,application/zip,application/x-rar-compressed,application/vnd.rar,application/x-7z-compressed,application/octet-stream" onChange={handleFileSelect}/>
 
       {uploadState.active && (
         <div className="progress-wrap" style={{ display: 'block' }}>
