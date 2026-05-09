@@ -46,6 +46,7 @@ COPY --chown=node:node api/package*.json ./
 RUN npm install --omit=dev
 RUN npm install sqlite3 --build-from-source
 RUN npm install sqlite
+RUN npm install -g nodemon
 
 # Копируем весь исходный код бэкенда (включая api/public/rpg-fixes.js)
 COPY --chown=node:node api/ ./

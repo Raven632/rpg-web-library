@@ -1,15 +1,16 @@
 # docker-compose.dev.yml (Локальная разработка)
 services:
   rpg-library:
+    # Заставляем сервер автоматически перезагружаться при изменениях
+    command: nodemon server.js
     volumes:
-      # Ювелирно прокидываем только исходный код бэкенда:
+      # Прокидываем всю папку src разом (там лежат db, routes, services)
       - ./api/src:/app/api/src
+      # Главный файл сервера
       - ./api/server.js:/app/api/server.js
-      # Ювелирно прокидываем только один скрипт из папки public:
+      # Ювелирно прокидываем только один скрипт из папки public
       - ./api/public/rpg-fixes.js:/app/api/public/rpg-fixes.js
       
-      # (Трюк с /app/api/node_modules больше не нужен, 
-      # так как мы больше не перезаписываем корень папки api)
     restart: "no"
     environment:
       - NODE_ENV=development

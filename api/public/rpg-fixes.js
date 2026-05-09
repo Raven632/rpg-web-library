@@ -1085,6 +1085,54 @@ if (!window.__rpgPluginHookInstalled) {
         });
     }
 
+    // --- 10. ГЛОБАЛЬНЫЙ ЧИТ-МОД (Emeraldcoder) ---
+    function injectEmeraldCheatMenu() {
+        // 1. Асинхронно загружаем JS и CSS из корня нашего сервера
+        const script = document.createElement('script');
+        script.src = '/Cheat_Menu.js';
+        document.body.appendChild(script);
+
+        const cssLink = document.createElement('link');
+        cssLink.rel = 'stylesheet';
+        cssLink.href = '/Cheat_Menu.css';
+        document.head.appendChild(cssLink);
+        
+        // 2. Изолированно добавляем кнопку в меню, как только оно появится
+        const initObserver = setInterval(() => {
+            const sysPanel = document.getElementById('_sys_panel');
+            if (!sysPanel) return; // Ждем создания меню
+            clearInterval(initObserver);
+
+            if (document.getElementById('_sys_cheat_mod')) return; // Защита от дублей
+
+            const cheatBtn = document.createElement('div');
+            cheatBtn.id = '_sys_cheat_mod';
+            cheatBtn.className = '_sys_item';
+            cheatBtn.innerHTML = '💉 Открыть Чит-Меню';
+            sysPanel.appendChild(cheatBtn);
+            
+            // 3. Логика активации
+            cheatBtn.addEventListener('pointerdown', (e) => {
+                e.preventDefault(); 
+                e.stopPropagation();
+                
+                if (window.Cheat_Menu) {
+                    window.Cheat_Menu.overlay_openable = true;
+                    // Эмулируем клавишу '1' (код 49)
+                    document.dispatchEvent(new KeyboardEvent('keydown', { 
+                        bubbles: true, cancelable: true, keyCode: 49, which: 49, key: '1' 
+                    }));
+                } else {
+                    console.warn('[RPG Fixes] Плагин читов еще не загрузился в память.');
+                }
+                
+                sysPanel.classList.remove('_open');
+            }, { passive: false });
+
+            console.log('✅ [RPG Fixes] Модуль читов элегантно интегрирован.');
+        }, 300);
+    }
+
     // ============================================================================
     // ИНИЦИАЛИЗАЦИЯ
     // ============================================================================
@@ -1102,6 +1150,7 @@ if (!window.__rpgPluginHookInstalled) {
         setupFpsMonitor();
         setupSpikeDiagnostics();
         setupTouchModeToggle();
+        injectEmeraldCheatMenu();
         
         console.log('✅ RPG-Fixes Ultimate v3.8 (Fullscreen Bulletproof) успешно загружен!');
     }
