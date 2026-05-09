@@ -1133,6 +1133,100 @@ if (!window.__rpgPluginHookInstalled) {
         }, 300);
     }
 
+    // --- 11. ГЛОБАЛЬНЫЙ ЩИТ ОТ КРАШЕЙ (GACE v3 - Умная маршрутизация) ---
+    function setupGlobalCrashProtection() {
+        
+        // ==========================================
+        // УРОВЕНЬ 1 и 2: Защита Ядра и Умный Soft-Crash
+        // ==========================================
+        const coreTimer = setInterval(() => {
+            if (typeof SceneManager !== 'undefined' && typeof DataManager !== 'undefined') {
+                clearInterval(coreTimer);
+
+                if (!SceneManager.__gacePatched) {
+                    SceneManager.__gacePatched = true;
+
+                    const origIsDatabaseLoaded = DataManager.isDatabaseLoaded;
+                    DataManager.isDatabaseLoaded = function() {
+                        const isLoaded = origIsDatabaseLoaded.call(this);
+                        if (isLoaded && !this.__gaceDataProtected) {
+                            this.__gaceDataProtected = true;
+                            const databases = [ window.$dataItems, window.$dataWeapons, window.$dataArmors, window.$dataSkills, window.$dataEnemies, window.$dataActors, window.$dataClasses, window.$dataStates ];
+                            databases.forEach(db => {
+                                if (db && Array.isArray(db)) {
+                                    for (let i = 1; i < db.length; i++) {
+                                        if (db[i]) {
+                                            if (!db[i].meta) db[i].meta = {}; 
+                                            if (!db[i].traits) db[i].traits = [];
+                                            if (!db[i].params) db[i].params = [0,0,0,0,0,0,0,0];
+                                            if (!db[i].note) db[i].note = '';
+                                        }
+                                    }
+                                }
+                            });
+                        }
+                        return isLoaded;
+                    };
+
+                    const origCatchException = SceneManager.catchException;
+                    SceneManager.catchException = function(e) {
+                        if (e instanceof Error) {
+                            // Ищем реальную сцену: если мы в процессе перехода, смотрим на _nextScene
+                            const targetScene = this._nextScene || this._scene;
+                            const sceneName = targetScene ? targetScene.constructor.name : '';
+                            
+                            const isCriticalScene = !sceneName || sceneName === 'Scene_Boot' || sceneName === 'Scene_Title' || sceneName === 'Scene_Map' || sceneName === 'Scene_Battle';
+
+                            if (!isCriticalScene) {
+                                console.warn(`⚠️ [GACE] Перехвачен краш при загрузке UI (${sceneName}):`, e.message);
+                                try {
+                                    if (typeof SoundManager !== 'undefined') SoundManager.playBuzzer();
+                                    
+                                    this._nextScene = null; // Отменяем переход в сломанное меню
+                                    
+                                    if (this._scene && this._scene._windowLayer && this._scene._windowLayer.children) {
+                                        this._scene._windowLayer.children.forEach(w => {
+                                            if (w && typeof w.deactivate === 'function') w.deactivate();
+                                        });
+                                    }
+                                    
+                                    this.pop();
+                                    return; 
+                                } catch (err) {}
+                            }
+                        }
+                        origCatchException.call(this, e);
+                    };
+                }
+            }
+        }, 100);
+
+        // ==========================================
+        // УРОВЕНЬ 3: Асинхронные патчи для плагинов (Ждем их загрузки)
+        // ==========================================
+        const pluginTimer = setInterval(() => {
+            if (typeof Game_Party !== 'undefined' && Game_Party.prototype.getAllGlossaryCategory && !Game_Party.prototype.__gaceGlossaryPatched) {
+                Game_Party.prototype.__gaceGlossaryPatched = true;
+                
+                const origGlossaryCat = Game_Party.prototype.getAllGlossaryCategory;
+                Game_Party.prototype.getAllGlossaryCategory = function() {
+                    try {
+                        const categories = origGlossaryCat.apply(this, arguments);
+                        return categories ? categories.filter(Boolean) : [];
+                    } catch (e) {
+                        console.warn('🛡️ [GACE] Плагин Глоссария попытался крашнуться, применена заглушка.');
+                        return ['Все']; 
+                    }
+                };
+                console.log('✅ [GACE] Асинхронный патч для SceneGlossary.js успешно применен!');
+                clearInterval(pluginTimer);
+            }
+        }, 500);
+
+        // Убиваем поиск плагинов через 15 секунд, чтобы не тратить память
+        setTimeout(() => clearInterval(pluginTimer), 15000);
+    }
+
     // ============================================================================
     // ИНИЦИАЛИЗАЦИЯ
     // ============================================================================
@@ -1151,6 +1245,7 @@ if (!window.__rpgPluginHookInstalled) {
         setupSpikeDiagnostics();
         setupTouchModeToggle();
         injectEmeraldCheatMenu();
+        setupGlobalCrashProtection();
         
         console.log('✅ RPG-Fixes Ultimate v3.8 (Fullscreen Bulletproof) успешно загружен!');
     }
