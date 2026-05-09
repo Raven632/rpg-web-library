@@ -198,6 +198,32 @@ async function syncDatabase() {
     }
 }
 
+const { exec } = require('child_process');
+const fsPromises = require('fs/promises');
+
+// --- РОУТ ДЛЯ МОНИТОРИНГА ПАМЯТИ ---
+app.get('/api/storage', async (req, res) => {
+    try {
+        const gamesDir = GAMES_DIR; // Берем из твоих конфигов
+
+        // 1. Узнаем размер всех игр (через Linux утилиту 'du' - это в 100 раз быстрее JS)
+        const { stdout: duOut } = await execFilePromise('du', ['-sb', gamesDir]);
+        const usedBytes = parseInt(duOut.split('\t')[0], 10);
+
+        // 2. Узнаем свободное место на диске (Фича Node.js 20+)
+        const stats = await fsPromises.statfs(gamesDir);
+        const freeBytes = stats.bavail * stats.bsize;
+
+        res.json({
+            used: usedBytes,
+            free: freeBytes
+        });
+    } catch (error) {
+        console.error('[Storage] Ошибка чтения диска:', error);
+        res.status(500).json({ error: 'Failed to read storage' });
+    }
+});
+
 // ============================================================================
 // [6] МАРШРУТЫ АВТОРИЗАЦИИ
 // ============================================================================

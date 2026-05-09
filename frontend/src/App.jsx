@@ -7,6 +7,7 @@ import GameModal from './components/GameModal'
 import LoginModal from './components/LoginModal'
 import Toast from './components/Toast'
 import { locales } from './components/locales'
+import StorageMonitor from './components/StorageMonitor';
 
 const socket = io();
 
@@ -193,6 +194,8 @@ function App() {
   return (
     <div className="app-container">
       <Header currentLang={lang} onLangChange={setLang} t={t} />
+
+      <StorageMonitor />
       
       <Toolbar 
         searchQuery={searchQuery} setSearchQuery={setSearchQuery} 
