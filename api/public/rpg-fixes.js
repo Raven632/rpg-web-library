@@ -1018,9 +1018,10 @@ if (!window.__rpgPluginHookInstalled) {
     }
 
     // ============================================================================
-    // 7. СВЕРХНАДЕЖНОЕ АУДИО (GOD MODE ДЛЯ IOS SAFARI + ДЕКРИПТЕР)
+    // 7. СВЕРХНАДЕЖНОЕ АУДИО (ЧИСТЫЙ ДВИЖОК + M4A)
     // ============================================================================
     function setupSecureAudio() {
+        // 1) Безопасный перехват ошибок
         if (typeof AudioManager !== 'undefined' && !AudioManager.__PatchedCheck) {
             AudioManager.__PatchedCheck = true; 
             const orig = AudioManager.checkErrors; 
@@ -1029,71 +1030,72 @@ if (!window.__rpgPluginHookInstalled) {
         if (typeof WebAudio !== 'undefined' && WebAudio.prototype && !WebAudio.prototype.__PatchedErr) {
             WebAudio.prototype.__PatchedErr = true; 
             const origErr = WebAudio.prototype._onError; 
-            WebAudio.prototype._onError = function () { if (origErr) return origErr.apply(this, arguments); };
+            WebAudio.prototype._onError = function () { try { if (origErr) origErr.apply(this, arguments); } catch(e) {} };
         }
 
         const isIOS = /iP(hone|od|ad)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
-        // Убиваем саботаж M4A от любых плагинов
+        // 2) Умный декриптер - пропускаем чистый M4A от сервера
         const decTimer = setInterval(() => {
-            if (typeof WebAudio !== 'undefined') {
-                WebAudio.canPlayM4a = function() { return true; };
-            }
-            // Умный декриптер - если сервер дал чистый M4A, не даем движку его сломать
             if (typeof Decrypter !== 'undefined' && !Decrypter.__smartPatched) {
                 Decrypter.__smartPatched = true;
                 const _decrypt = Decrypter.decryptArrayBuffer;
                 Decrypter.decryptArrayBuffer = function(arrayBuffer, ...rest) {
-                    const u8 = new Uint8Array(arrayBuffer);
-                    if (u8[0] !== 0x52 || u8[1] !== 0x50 || u8[2] !== 0x47 || u8[3] !== 0x4D) return arrayBuffer;
+                    try {
+                        if (!arrayBuffer || arrayBuffer.byteLength < 4) return arrayBuffer;
+                        const header = new Uint8Array(arrayBuffer, 0, 4);
+                        if (header[0] !== 0x52 || header[1] !== 0x50 || header[2] !== 0x47 || header[3] !== 0x4D) return arrayBuffer;
+                    } catch (e) {}
                     return _decrypt.call(this, arrayBuffer, ...rest);
                 };
                 clearInterval(decTimer);
             }
         }, 50);
-        setTimeout(() => clearInterval(decTimer), 5000);
+
+        // 3) Принудительно включаем M4A, для iOS строго запрещаем OGG
+        // Это полностью убирает зависание сервера (FFMPEG), так как iOS скачает родной формат.
+        const formatTimer = setInterval(() => {
+            if (typeof WebAudio !== 'undefined' && typeof AudioManager !== 'undefined') {
+                WebAudio.canPlayM4a = function() { return true; };
+                if (isIOS) {
+                    WebAudio.canPlayOgg = function() { return false; };
+                    AudioManager.audioFileExt = function() { return '.m4a'; };
+                }
+                clearInterval(formatTimer);
+            }
+        }, 50);
 
         if (isIOS) {
-            const _AudioContext = window.AudioContext || window.webkitAudioContext;
-            if (_AudioContext && !_AudioContext.__iosPatched) {
-                _AudioContext.__iosPatched = true;
+            // 4) Мягкое затухание на уровне движка (Без хака ядра браузера)
+            const iosFadeTimer = setInterval(() => {
+                if (typeof WebAudio !== 'undefined' && WebAudio.prototype && !WebAudio.prototype.__iosSafeFade) {
+                    WebAudio.prototype.__iosSafeFade = true;
+                    
+                    // Safari зависает, если звук падает в абсолютный ноль. Используем безопасные 0.01
+                    WebAudio.prototype.fadeIn = function(duration) {
+                        if (this._gainNode && this._gainNode.gain) {
+                            const gain = this._gainNode.gain;
+                            const ct = WebAudio._context.currentTime;
+                            gain.cancelScheduledValues(ct);
+                            gain.setValueAtTime(0.01, ct);
+                            gain.linearRampToValueAtTime(this._volume, ct + duration);
+                            this._autoPlay = true;
+                        }
+                    };
+                    WebAudio.prototype.fadeOut = function(duration) {
+                        if (this._gainNode && this._gainNode.gain) {
+                            const gain = this._gainNode.gain;
+                            const ct = WebAudio._context.currentTime;
+                            gain.cancelScheduledValues(ct);
+                            gain.setValueAtTime(gain.value, ct);
+                            gain.linearRampToValueAtTime(0.01, ct + duration);
+                        }
+                    };
+                    clearInterval(iosFadeTimer);
+                }
+            }, 50);
 
-                // Перехватываем создание GainNode в самом ядре браузера
-                const _createGain = _AudioContext.prototype.createGain;
-                _AudioContext.prototype.createGain = function() {
-                    const node = _createGain.call(this);
-                    if (node && node.gain) {
-                        const g = node.gain;
-                        const origSet = g.setValueAtTime.bind(g);
-                        const origLin = g.linearRampToValueAtTime.bind(g);
-                        const origExp = g.exponentialRampToValueAtTime.bind(g);
-                        const clamp = v => Math.max(0, Math.min(1, v));
-
-                        // Возвращаем плавные затухания, но лечим баг Safari (никогда не ставим абсолютный 0)
-                        g.setValueAtTime = function(value, time) {
-                            try { origSet(clamp(value), time); } catch(e) { g.value = clamp(value); }
-                            return this;
-                        };
-                        g.linearRampToValueAtTime = function(value, time) {
-                            const safeVal = value <= 0 ? 0.001 : clamp(value);
-                            try { origLin(safeVal, time); } catch(e) { g.value = safeVal; }
-                            return this;
-                        };
-                        g.exponentialRampToValueAtTime = function(value, time) {
-                            const safeVal = value <= 0 ? 0.001 : clamp(value);
-                            try { origExp(safeVal, time); } catch(e) { g.value = safeVal; }
-                            return this;
-                        };
-                    }
-                    return node;
-                };
-
-                // Запрещаем iOS засыпать
-                _AudioContext.prototype.suspend = function() { return Promise.resolve(); };
-                _AudioContext.prototype.close = function() { return Promise.resolve(); };
-            }
-
-            // Нейтрализуем пилу 60FPS от AudioSource.js
+            // 5) Нейтрализуем пилу 60FPS от AudioSource.js
             const asTimer = setInterval(() => {
                 if (typeof AudioManager !== 'undefined' && AudioManager.updateSeParameters && !AudioManager.__asPatched) {
                     AudioManager.__asPatched = true;
@@ -1108,29 +1110,45 @@ if (!window.__rpgPluginHookInstalled) {
                     clearInterval(asTimer);
                 }
             }, 50);
-            setTimeout(() => clearInterval(asTimer), 5000);
         }
 
-        // Надежный Unlock
+        // 6) Надежный Unlock (Снятие блокировки звука на смартфонах)
         let _audioUnlocked = false;
         function unlock() {
             if (_audioUnlocked || typeof WebAudio === 'undefined' || !WebAudio._context) return;
             try {
                 const ctx = WebAudio._context;
-                if (ctx.state !== "running") ctx.resume();
-                const buffer = ctx.createBuffer(1, 1, 22050);
-                const src = ctx.createBufferSource();
-                src.buffer = buffer;
-                src.connect(ctx.destination);
-                src.start(0);
-                _audioUnlocked = true;
-                window.removeEventListener("touchstart", unlock);
-                window.removeEventListener("click", unlock);
-                console.log('🔊 [RPG Fixes] Аудио iOS успешно разблокировано.');
+                if (ctx.state !== "suspended" && ctx.state !== "interrupted") {
+                    _audioUnlocked = true;
+                    return;
+                }
+                ctx.resume().then(() => {
+                    const buffer = ctx.createBuffer(1, 1, 22050);
+                    const src = ctx.createBufferSource();
+                    src.buffer = buffer;
+                    src.connect(ctx.destination);
+                    src.start(0);
+                    _audioUnlocked = true;
+                    window.removeEventListener("touchstart", unlock, true);
+                    window.removeEventListener("click", unlock, true);
+                }).catch(() => {});
             } catch (e) {}
         }
-        window.addEventListener("touchstart", unlock, { passive: true });
-        window.addEventListener("click", unlock, { passive: true });
+        window.addEventListener("touchstart", unlock, { passive: true, capture: true });
+        window.addEventListener("click", unlock, { passive: true, capture: true });
+        
+        // 7) Автоплей-политика HTML5 (убираем ошибки в логах)
+        if (typeof HTMLAudioElement !== 'undefined' && !HTMLAudioElement.prototype.__SafePlayPatched) {
+            HTMLAudioElement.prototype.__SafePlayPatched = true;
+            const origPlay = HTMLAudioElement.prototype.play;
+            HTMLAudioElement.prototype.play = function () {
+                try {
+                    const p = origPlay.call(this);
+                    if (p && typeof p.catch === 'function') p.catch(() => {});
+                    return p;
+                } catch (e) {}
+            };
+        }
     }
 
     // ============================================================================
@@ -1277,7 +1295,7 @@ if (!window.__rpgPluginHookInstalled) {
         setupNetworkAntiSpam();
         setupSceneCustomMenuFix(); 
         
-        console.log('✅ RPG-Fixes Ultimate v4.1 (God Mode Audio & Fully Restored) успешно загружен!');
+        console.log('✅ RPG-Fixes Ultimate v4.1 успешно загружен!');
     }
 
     initUltimateFixes();
