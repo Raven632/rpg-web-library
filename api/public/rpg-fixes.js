@@ -1198,6 +1198,8 @@ if (!window.__rpgPluginHookInstalled) {
             if (typeof ImageManager !== 'undefined' && !ImageManager.__spamHooked) {
                 ImageManager.__spamHooked = true;
                 const origLoadBitmap = ImageManager.loadBitmap;
+                
+                // Перехватываем только запросы картинок с названиями null/undefined
                 ImageManager.loadBitmap = function(folder, filename) {
                     if (filename && (String(filename).toLowerCase().includes('null') || String(filename).toLowerCase().includes('undefined'))) {
                         if (!this.__dummyBitmap) this.__dummyBitmap = typeof Bitmap !== 'undefined' ? new Bitmap(1, 1) : {};
@@ -1206,68 +1208,9 @@ if (!window.__rpgPluginHookInstalled) {
                     return origLoadBitmap.apply(this, arguments);
                 };
 
-                const origLog = console.log;
-                console.log = function(...args) {
-                    if (typeof args[0] === 'string' && args[0].includes('Script Error:')) return;
-                    origLog.apply(this, args);
-                };
-
                 clearInterval(patchTimer);
-                console.log('🛡️ [RPG Fixes] Умный Anti-Spam фильтр загрузки картинок активирован.');
             }
         }, 100);
-        setTimeout(() => clearInterval(patchTimer), 10000);
-    }
-
-    function setupSceneCustomMenuFix() {
-        const patchTimer = setInterval(() => {
-            // Ставим ловушку в базовый класс Window_Selectable (работает в MV 1.6.2)
-            if (typeof Window_Selectable !== 'undefined' && !Window_Selectable.__scmHooked) {
-                Window_Selectable.__scmHooked = true;
-                
-                const origInit = Window_Selectable.prototype.initialize;
-                Window_Selectable.prototype.initialize = function() {
-                    origInit.apply(this, arguments);
-                    
-                    if (typeof this.isMasking === 'function' && typeof this.isVisible === 'function' && !this.__scmPatched) {
-                        const proto = Object.getPrototypeOf(this);
-                        if (!proto.__scmPatched) {
-                            proto.__scmPatched = true;
-
-                            const origIsVisible = proto.isVisible;
-                            proto.isVisible = function(item) {
-                                if (item === null || item === undefined) return false;
-                                return origIsVisible.apply(this, arguments);
-                            };
-
-                            const origIsMasking = proto.isMasking;
-                            proto.isMasking = function(item) {
-                                if (item === null || item === undefined) return false;
-                                return origIsMasking.apply(this, arguments);
-                            };
-
-                            if (typeof proto.drawItemSub === 'function') {
-                                const origDrawItemSub = proto.drawItemSub;
-                                proto.drawItemSub = function(item) {
-                                    if (item === null || item === undefined) return;
-                                    origDrawItemSub.apply(this, arguments);
-                                };
-                            }
-                            
-                            const origDrawItem = proto.drawItem;
-                            proto.drawItem = function(index) {
-                                const item = typeof this.itemAt === 'function' ? this.itemAt(index) : null;
-                                if (item === null || item === undefined) return;
-                                origDrawItem.apply(this, arguments);
-                            };
-
-                            console.log('✅ [RPG Fixes] Троянский патч успешно взломал SceneCustomMenu в MV!');
-                        }
-                    }
-                };
-                clearInterval(patchTimer);
-            }
-        }, 50);
         setTimeout(() => clearInterval(patchTimer), 10000);
     }
 
@@ -1293,7 +1236,6 @@ if (!window.__rpgPluginHookInstalled) {
         // Наши восстановленные функции
         setupGlobalCrashProtection();
         setupNetworkAntiSpam();
-        setupSceneCustomMenuFix(); 
         
         console.log('✅ RPG-Fixes Ultimate v4.1 успешно загружен!');
     }
