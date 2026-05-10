@@ -2,11 +2,17 @@
 // 1. АБСОЛЮТНАЯ ИМИТАЦИЯ ANDROID И СИСТЕМНЫХ API (УБИЙЦА ОШИБОК)
 // ============================================================================
 window.process = window.process || {};
-window.process.env = window.process.env || {};
-window.process.env.USER = 'Player';
 window.process.platform = window.process.platform || 'browser';
 window.process.mainModule = { filename: '' };
 window.process.versions = {};
+
+// Бронежилет для process.env
+let _env = { USER: 'Player' };
+Object.defineProperty(window.process, 'env', {
+    get: function() { return _env; },
+    set: function(val) { _env = Object.assign(_env, val || {}); _env.USER = 'Player'; },
+    configurable: true
+});
 
 // Подавляем ошибку Firefox/Chrome при выходе из полноэкранного режима
 if (typeof document !== 'undefined') {
@@ -308,49 +314,66 @@ if (!window.__rpgPluginHookInstalled) {
 
     function applyPerformanceOptimizations() {
         const initTimer = setInterval(() => {
-            if (typeof PIXI === 'undefined' || typeof ImageManager === 'undefined' || typeof SceneManager === 'undefined') return;
-            if (ImageManager && ImageManager.cache) ImageManager.cache.limit = 20 * 1000 * 1000;
+            if (typeof PIXI === 'undefined' || typeof SceneManager === 'undefined') return;
             if (PIXI.settings) PIXI.settings.GC_MODE = PIXI.GC_MODES.MANUAL; 
             if (!SceneManager.__gcPatched) {
                 SceneManager.__gcPatched = true;
                 const origChangeScene = SceneManager.changeScene;
                 SceneManager.changeScene = function() {
                     origChangeScene.call(this);
-                    if (Graphics && Graphics._renderer && Graphics._renderer.textureGC) Graphics._renderer.textureGC.run();
+                    if (Graphics?._renderer?.textureGC) Graphics._renderer.textureGC.run();
                 };
             }
-            document.addEventListener('visibilitychange', () => {
-                if (typeof AudioManager === 'undefined') return;
-                if (document.hidden && SceneManager._scene) SceneManager._scene.pause = true;
-                else if (!document.hidden && SceneManager._scene) SceneManager._scene.pause = false;
-            });
             clearInterval(initTimer);
         }, 200);
         setTimeout(() => clearInterval(initTimer), 10000);
 
-        const patchTimer = setInterval(() => {
-            if (typeof Tilemap !== 'undefined' && typeof Sprite_Character !== 'undefined') {
-                const origTilemapUpdate = Tilemap.prototype.updateTransform;
-                Tilemap.prototype.updateTransform = function() { this.x = Math.round(this.x); this.y = Math.round(this.y); origTilemapUpdate.call(this); };
-                const origSpriteUpdate = Sprite_Character.prototype.updatePosition;
-                Sprite_Character.prototype.updatePosition = function() { origSpriteUpdate.call(this); this.x = Math.round(this.x); this.y = Math.round(this.y); };
-                clearInterval(patchTimer);
-            }
-        }, 200);
-        setTimeout(() => clearInterval(patchTimer), 10000);
+        // ====================================================================
+        // 🔥 ФИКС СНА (БЛОКИРОВКИ ЭКРАНА И СВОРАЧИВАНИЯ) 🔥
+        // ====================================================================
+        if (!window.__abortShieldInstalled) {
+            window.__abortShieldInstalled = true;
+            
+            // 1. Глушим экран ошибки Karryn's Prison
+            const origAddListener = window.addEventListener;
+            window.addEventListener = function(type, listener, options) {
+                if (type === 'unhandledrejection' || type === 'error') {
+                    const safeListener = function(event) {
+                        const err = event.reason || event.error || event;
+                        if (err && (err.name === 'AbortError' || (err.message && err.message.toLowerCase().includes('aborted')))) {
+                            event.preventDefault(); event.stopPropagation(); return;
+                        }
+                        if (typeof listener === 'function') return listener.apply(this, arguments);
+                        if (listener && typeof listener.handleEvent === 'function') return listener.handleEvent(event);
+                    };
+                    return origAddListener.call(this, type, safeListener, options);
+                }
+                return origAddListener.call(this, type, listener, options);
+            };
 
-        const attachWebGLRecovery = () => {
-            const canvas = document.getElementById('GameCanvas') || document.querySelector('canvas');
-            if (!canvas) return;
-            canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); console.warn('🔴 [WebGL] Контекст потерян!'); }, false);
-            canvas.addEventListener('webglcontextrestored', () => {
-                console.warn('🟢 [WebGL] Контекст восстановлен!');
-                try { if (typeof SceneManager !== 'undefined' && SceneManager._scene) SceneManager.goto(SceneManager._scene.constructor); } catch(err) {}
-            }, false);
-        };
-        document.addEventListener('DOMContentLoaded', attachWebGLRecovery);
-        window.addEventListener('load', attachWebGLRecovery);
-        setTimeout(attachWebGLRecovery, 3000);
+            // 2. Бронируем декодер (Умный авто-повтор после сна)
+            if (typeof Image !== 'undefined' && Image.prototype.decode && !Image.prototype.__safeDecode) {
+                Image.prototype.__safeDecode = true;
+                const origDecode = Image.prototype.decode;
+                Image.prototype.decode = function() {
+                    return origDecode.call(this).catch(e => {
+                        if (e.name === 'AbortError' || (e.message && e.message.toLowerCase().includes('aborted'))) {
+                            // Не зависаем вечно! Ждем включения экрана и пробуем загрузить картинку снова
+                            return new Promise(resolve => {
+                                const retry = () => resolve(origDecode.call(this).catch(()=>{}));
+                                if (document.hidden) {
+                                    const handler = () => { if (!document.hidden) { document.removeEventListener('visibilitychange', handler); retry(); } };
+                                    document.addEventListener('visibilitychange', handler);
+                                } else {
+                                    setTimeout(retry, 100);
+                                }
+                            });
+                        }
+                        throw e;
+                    });
+                };
+            }
+        }
     }
 
     // ============================================================================
@@ -1018,17 +1041,15 @@ if (!window.__rpgPluginHookInstalled) {
     }
 
     // ============================================================================
-    // 7. ЧИСТОЕ АУДИО + УМНЫЙ AUTO-FALLBACK (СОВЕРШЕНСТВО)
+    // 7. ЧИСТОЕ АУДИО + AUTO-FALLBACK + ЗАЩИТА ОТ АВТО-МУТА ПРИ СНЕ
     // ============================================================================
     function setupSecureAudio() {
-        // 1) Блокируем фатальные ошибки при отсутствии звуковых файлов
         if (typeof AudioManager !== 'undefined' && !AudioManager.__SafeCheckPatched) {
             AudioManager.__SafeCheckPatched = true; 
             const orig = AudioManager.checkErrors; 
             AudioManager.checkErrors = function () { try { if (orig) orig.apply(this, arguments); } catch (e) {} };
         }
 
-        // 2) Умный декриптер: расшифровываем только если есть подпись RPGM
         const decTimer = setInterval(() => {
             if (typeof Decrypter !== 'undefined' && !Decrypter.__smartPatched) {
                 Decrypter.__smartPatched = true;
@@ -1045,8 +1066,6 @@ if (!window.__rpgPluginHookInstalled) {
             }
         }, 50);
 
-        // 3) Маршрутизация: Заставляем ВСЕ устройства просить OGG (rpgmvo)
-        // Твой код доказал: iOS отлично декодирует OGG в памяти!
         const formatTimer = setInterval(() => {
             if (typeof WebAudio !== 'undefined' && typeof AudioManager !== 'undefined') {
                 WebAudio.canPlayOgg = function() { return true; };
@@ -1055,36 +1074,57 @@ if (!window.__rpgPluginHookInstalled) {
             }
         }, 50);
 
-        // 4) УМНЫЙ АВТО-FALLBACK (Решает проблему с недостающими файлами)
-        // Если игра просит .ogg, а сервер дает 404, мы невидимо скачиваем .m4a
+        // 🔥 ОТКЛЮЧАЕМ ВСТРОЕННЫЙ АВТО-МУТ ДВИЖКА ПРИ СВОРАЧИВАНИИ
+        // Игра больше не будет пытаться плавно затушить звук (из-за чего он ломался после сна)
+        const blurTimer = setInterval(() => {
+            if (typeof WebAudio !== 'undefined') {
+                if (WebAudio._onHide) WebAudio._onHide = function() {}; 
+                if (WebAudio._onShow) WebAudio._onShow = function() {}; 
+                if (WebAudio._shouldMuteOnHide) WebAudio._shouldMuteOnHide = function() { return false; }; 
+                if (typeof AudioManager !== 'undefined' && AudioManager.shouldMuteOnFocus) {
+                    AudioManager.shouldMuteOnFocus = function() { return false; };
+                }
+                clearInterval(blurTimer);
+            }
+        }, 50);
+
+        // 4) УМНЫЙ АВТО-FALLBACK (С ожиданием пробуждения)
         const fallbackTimer = setInterval(() => {
             if (typeof WebAudio !== 'undefined') {
                 clearInterval(fallbackTimer);
                 
-                // Для RPG Maker MZ (использует современный fetch API)
                 if (window.fetch && !window.__fetchAudioPatched) {
                     window.__fetchAudioPatched = true;
                     const origFetch = window.fetch;
                     window.fetch = async function(...args) {
-                        const res = await origFetch(...args);
+                        let res;
+                        try {
+                            res = await origFetch(...args);
+                        } catch (e) {
+                            if (e.name === 'AbortError' || (e.message && e.message.toLowerCase().includes('aborted'))) {
+                                await new Promise(resolve => {
+                                    const handler = () => { if (!document.hidden) { document.removeEventListener('visibilitychange', handler); resolve(); } };
+                                    if (document.hidden) document.addEventListener('visibilitychange', handler); else resolve();
+                                });
+                                return window.fetch(...args);
+                            }
+                            throw e;
+                        }
+                        
                         if (!res.ok && typeof args[0] === 'string' && args[0].match(/\.(ogg|rpgmvo)$/i)) {
                             const fbUrl = args[0].replace(/\.ogg$/i, '.m4a').replace(/\.rpgmvo$/i, '.rpgmvm');
-                            const fbRes = await origFetch(fbUrl, args[1]);
-                            if (fbRes.ok) return fbRes; // Подсовываем m4a вместо ogg!
+                            try { const fbRes = await origFetch(fbUrl, args[1]); if (fbRes.ok) return fbRes; } catch(e) {}
                         }
                         return res;
                     };
                 }
 
-                // Для RPG Maker MV (использует XMLHttpRequest)
                 if (WebAudio.prototype._load && !WebAudio.prototype.__loadPatched) {
                     WebAudio.prototype.__loadPatched = true;
                     WebAudio.prototype._load = function(url) {
                         const self = this;
                         let finalUrl = url;
-                        if (typeof Decrypter !== 'undefined' && Decrypter.hasEncryptedAudio) {
-                            finalUrl = Decrypter.extToEncryptExt(url);
-                        }
+                        if (typeof Decrypter !== 'undefined' && Decrypter.hasEncryptedAudio) finalUrl = Decrypter.extToEncryptExt(url);
                         const xhr = new XMLHttpRequest();
                         xhr.open('GET', finalUrl);
                         xhr.responseType = 'arraybuffer';
@@ -1092,20 +1132,12 @@ if (!window.__rpgPluginHookInstalled) {
                             if (xhr.status < 400) {
                                 self._onXhrLoad(xhr);
                             } else if (finalUrl.match(/\.(ogg|rpgmvo)$/i)) {
-                                // Сервер выдал 404? Делаем запасной запрос за m4a!
                                 const fbUrl = finalUrl.replace(/\.ogg$/i, '.m4a').replace(/\.rpgmvo$/i, '.rpgmvm');
                                 const xhr2 = new XMLHttpRequest();
-                                xhr2.open('GET', fbUrl);
-                                xhr2.responseType = 'arraybuffer';
-                                xhr2.onload = function() {
-                                    if (xhr2.status < 400) self._onXhrLoad(xhr2);
-                                    else self._isError = true;
-                                };
-                                xhr2.onerror = function() { self._isError = true; };
-                                xhr2.send();
-                            } else {
-                                self._isError = true;
-                            }
+                                xhr2.open('GET', fbUrl); xhr2.responseType = 'arraybuffer';
+                                xhr2.onload = function() { if (xhr2.status < 400) self._onXhrLoad(xhr2); else self._isError = true; };
+                                xhr2.onerror = function() { self._isError = true; }; xhr2.send();
+                            } else { self._isError = true; }
                         };
                         xhr.onerror = function() { self._isError = true; };
                         xhr.send();
@@ -1114,24 +1146,33 @@ if (!window.__rpgPluginHookInstalled) {
             }
         }, 50);
 
-        // 5) Стандартный, безопасный Unlock звука
-        let _unlocked = false;
-        function unlock() {
-            if (_unlocked) return;
+        // 5) МЯГКИЙ БУДИЛЬНИК (Без сброса громкости)
+        let _lastPoke = 0;
+        function forceAudioWakeUp() {
+            const now = Date.now();
+            if (now - _lastPoke < 500) return; 
+            
             const ctx = (typeof WebAudio !== 'undefined' && WebAudio._context) ? WebAudio._context : null;
             if (!ctx) return;
+
             try {
-                if (ctx.state === 'suspended') ctx.resume();
-                const buffer = ctx.createBuffer(1, 1, 22050);
-                const src = ctx.createBufferSource();
-                src.buffer = buffer;
-                src.connect(ctx.destination);
-                src.start(0);
-                _unlocked = true;
-                ['touchstart','pointerdown','click','keydown'].forEach(ev => window.removeEventListener(ev, unlock, true));
-            } catch (e) {}
+                if (ctx.state === 'suspended' || ctx.state === 'interrupted') {
+                    ctx.resume().catch(()=>{});
+                    const buffer = ctx.createBuffer(1, 1, 22050);
+                    const src = ctx.createBufferSource();
+                    src.buffer = buffer; src.connect(ctx.destination); src.start(0);
+                }
+                _lastPoke = now;
+            } catch (err) {}
         }
-        ['touchstart','pointerdown','click','keydown'].forEach(ev => window.addEventListener(ev, unlock, { passive: true, capture: true }));
+
+        ['touchstart', 'pointerdown', 'click', 'keydown'].forEach(ev => {
+            window.addEventListener(ev, forceAudioWakeUp, { capture: true, passive: true });
+        });
+
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden) setTimeout(forceAudioWakeUp, 100);
+        });
     }
 
     // ============================================================================
