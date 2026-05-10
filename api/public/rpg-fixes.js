@@ -8,6 +8,7 @@ window.process.env = window.process.env || {};
 window.process.env.USER = 'Player';
 window.process.platform = window.process.platform || 'browser';
 window.process.mainModule = { filename: '' };
+window.process.versions = {};
 
 // Подавляем ошибку Firefox/Chrome при выходе из полноэкранного режима (Not in fullscreen mode)
 if (typeof document !== 'undefined') {
@@ -162,11 +163,7 @@ if (!window.__rpgPluginHookInstalled) {
     }
 
     function applyCoreEnginePatches() {
-        var _origJSONParse = JSON.parse;
-        JSON.parse = function(text, reviver) {
-            if (text === null || text === undefined || text === '') return null;
-            return _origJSONParse.call(this, text, reviver);
-        };
+        // Убрали ядовитый патч JSON.parse! Пусть плагины сами ловят свои ошибки.
 
         document.addEventListener('touchstart', function() {
             if (typeof WebAudio !== 'undefined' && WebAudio._context && WebAudio._context.state === 'suspended') {
@@ -366,13 +363,15 @@ if (!window.__rpgPluginHookInstalled) {
         const CLOUD_INIT_GRACE_MS = 1800;
         const CLOUD_RETRY_MAX = 3;
 
-        window.addEventListener('load', () => {
+        const fastCoreTimer = setInterval(() => {
             if (typeof StorageManager !== 'undefined') StorageManager.isLocalMode = () => false;
             if (typeof DataManager !== 'undefined') { 
                 if (!DataManager.setAutoSaveFileId) DataManager.setAutoSaveFileId = () => {}; 
                 if (!DataManager.autoSaveFileId) DataManager.autoSaveFileId = () => 1; 
+                clearInterval(fastCoreTimer);
             }
-        });
+        }, 5);
+        setTimeout(() => clearInterval(fastCoreTimer), 10000);
 
         function resolveGameId() { 
             const parts = location.pathname.split('/').filter(Boolean).map(decodeURIComponent); 
@@ -1087,23 +1086,30 @@ if (!window.__rpgPluginHookInstalled) {
 
     // --- 10. ГЛОБАЛЬНЫЙ ЧИТ-МОД (Emeraldcoder) ---
     function injectEmeraldCheatMenu() {
-        // 1. Асинхронно загружаем JS и CSS из корня нашего сервера
-        const script = document.createElement('script');
-        script.src = '/Cheat_Menu.js';
-        document.body.appendChild(script);
+        // 1. Ждем, пока ядро игры полностью загрузится в память
+        const waitTimer = setInterval(() => {
+            if (typeof DataManager !== 'undefined' && typeof SceneManager !== 'undefined') {
+                clearInterval(waitTimer);
 
-        const cssLink = document.createElement('link');
-        cssLink.rel = 'stylesheet';
-        cssLink.href = '/Cheat_Menu.css';
-        document.head.appendChild(cssLink);
+                // 2. Асинхронно загружаем JS и CSS только после старта игры
+                const script = document.createElement('script');
+                script.src = '/Cheat_Menu.js';
+                document.body.appendChild(script);
+
+                const cssLink = document.createElement('link');
+                cssLink.rel = 'stylesheet';
+                cssLink.href = '/Cheat_Menu.css';
+                document.head.appendChild(cssLink);
+            }
+        }, 100);
         
-        // 2. Изолированно добавляем кнопку в меню, как только оно появится
+        // 3. Изолированно добавляем кнопку в меню, как только оно появится
         const initObserver = setInterval(() => {
             const sysPanel = document.getElementById('_sys_panel');
-            if (!sysPanel) return; // Ждем создания меню
+            if (!sysPanel) return; 
             clearInterval(initObserver);
 
-            if (document.getElementById('_sys_cheat_mod')) return; // Защита от дублей
+            if (document.getElementById('_sys_cheat_mod')) return; 
 
             const cheatBtn = document.createElement('div');
             cheatBtn.id = '_sys_cheat_mod';
@@ -1111,7 +1117,7 @@ if (!window.__rpgPluginHookInstalled) {
             cheatBtn.innerHTML = '💉 Открыть Чит-Меню';
             sysPanel.appendChild(cheatBtn);
             
-            // 3. Логика активации
+            // 4. Логика активации
             cheatBtn.addEventListener('pointerdown', (e) => {
                 e.preventDefault(); 
                 e.stopPropagation();
@@ -1133,99 +1139,71 @@ if (!window.__rpgPluginHookInstalled) {
         }, 300);
     }
 
-    // --- 11. ГЛОБАЛЬНЫЙ ЩИТ ОТ КРАШЕЙ (GACE v3 - Умная маршрутизация) ---
+    // --- 11. ГЛОБАЛЬНЫЙ ЩИТ ОТ КРАШЕЙ (GACE v6 - Максимально чистый и безопасный) ---
     function setupGlobalCrashProtection() {
-        
-        // ==========================================
-        // УРОВЕНЬ 1 и 2: Защита Ядра и Умный Soft-Crash
-        // ==========================================
         const coreTimer = setInterval(() => {
-            if (typeof SceneManager !== 'undefined' && typeof DataManager !== 'undefined') {
+            if (typeof SceneManager !== 'undefined') {
                 clearInterval(coreTimer);
 
                 if (!SceneManager.__gacePatched) {
                     SceneManager.__gacePatched = true;
 
-                    const origIsDatabaseLoaded = DataManager.isDatabaseLoaded;
-                    DataManager.isDatabaseLoaded = function() {
-                        const isLoaded = origIsDatabaseLoaded.call(this);
-                        if (isLoaded && !this.__gaceDataProtected) {
-                            this.__gaceDataProtected = true;
-                            const databases = [ window.$dataItems, window.$dataWeapons, window.$dataArmors, window.$dataSkills, window.$dataEnemies, window.$dataActors, window.$dataClasses, window.$dataStates ];
-                            databases.forEach(db => {
-                                if (db && Array.isArray(db)) {
-                                    for (let i = 1; i < db.length; i++) {
-                                        if (db[i]) {
-                                            if (!db[i].meta) db[i].meta = {}; 
-                                            if (!db[i].traits) db[i].traits = [];
-                                            if (!db[i].params) db[i].params = [0,0,0,0,0,0,0,0];
-                                            if (!db[i].note) db[i].note = '';
-                                        }
-                                    }
-                                }
-                            });
-                        }
-                        return isLoaded;
-                    };
-
+                    // Оставляем ТОЛЬКО защиту от фатального "Экрана смерти".
+                    // Больше мы не трогаем ни базу данных ($dataItems), ни картинки (ImageManager), ни окна!
                     const origCatchException = SceneManager.catchException;
                     SceneManager.catchException = function(e) {
                         if (e instanceof Error) {
-                            // Ищем реальную сцену: если мы в процессе перехода, смотрим на _nextScene
-                            const targetScene = this._nextScene || this._scene;
-                            const sceneName = targetScene ? targetScene.constructor.name : '';
-                            
-                            const isCriticalScene = !sceneName || sceneName === 'Scene_Boot' || sceneName === 'Scene_Title' || sceneName === 'Scene_Map' || sceneName === 'Scene_Battle';
-
-                            if (!isCriticalScene) {
-                                console.warn(`⚠️ [GACE] Перехвачен краш при загрузке UI (${sceneName}):`, e.message);
-                                try {
-                                    if (typeof SoundManager !== 'undefined') SoundManager.playBuzzer();
-                                    
-                                    this._nextScene = null; // Отменяем переход в сломанное меню
-                                    
-                                    if (this._scene && this._scene._windowLayer && this._scene._windowLayer.children) {
-                                        this._scene._windowLayer.children.forEach(w => {
-                                            if (w && typeof w.deactivate === 'function') w.deactivate();
-                                        });
-                                    }
-                                    
-                                    this.pop();
-                                    return; 
-                                } catch (err) {}
-                            }
+                            console.warn(`🛡️ [GACE] Ошибка перехвачена и подавлена:`, e.message);
+                            // Просто проглатываем ошибку, чтобы игра не выводила желтый экран и продолжала работать.
+                            if (typeof SoundManager !== 'undefined') SoundManager.playBuzzer();
+                            return; 
                         }
                         origCatchException.call(this, e);
                     };
+                    console.log('🛡️ [GACE v6] Чистый перехватчик фатальных крашей активирован.');
                 }
             }
         }, 100);
 
-        // ==========================================
-        // УРОВЕНЬ 3: Асинхронные патчи для плагинов (Ждем их загрузки)
-        // ==========================================
+        // Патч для SceneGlossary.js оставляем (он безопасный и чинит вылеты меню)
         const pluginTimer = setInterval(() => {
             if (typeof Game_Party !== 'undefined' && Game_Party.prototype.getAllGlossaryCategory && !Game_Party.prototype.__gaceGlossaryPatched) {
                 Game_Party.prototype.__gaceGlossaryPatched = true;
-                
                 const origGlossaryCat = Game_Party.prototype.getAllGlossaryCategory;
                 Game_Party.prototype.getAllGlossaryCategory = function() {
                     try {
                         const categories = origGlossaryCat.apply(this, arguments);
                         return categories ? categories.filter(Boolean) : [];
-                    } catch (e) {
-                        console.warn('🛡️ [GACE] Плагин Глоссария попытался крашнуться, применена заглушка.');
-                        return ['Все']; 
-                    }
+                    } catch (e) { return ['Все']; }
                 };
-                console.log('✅ [GACE] Асинхронный патч для SceneGlossary.js успешно применен!');
                 clearInterval(pluginTimer);
             }
         }, 500);
 
-        // Убиваем поиск плагинов через 15 секунд, чтобы не тратить память
         setTimeout(() => clearInterval(pluginTimer), 15000);
     }
+
+    // --- 12. ЛЕГКИЙ ANTI-SPAM ФИЛЬТР КАРТИНОК ---
+    function setupNetworkAntiSpam() {
+        const patchTimer = setInterval(() => {
+            if (typeof ImageManager !== 'undefined' && !ImageManager.__spamHooked) {
+                ImageManager.__spamHooked = true;
+                const origLoadBitmap = ImageManager.loadBitmap;
+                ImageManager.loadBitmap = function(folder, filename) {
+                    // Защита от багованных плагинов, которые ищут null.png
+                    if (filename && (String(filename).toLowerCase() === 'null' || String(filename).toLowerCase() === 'undefined')) {
+                        if (!this.__dummyBitmap) this.__dummyBitmap = typeof Bitmap !== 'undefined' ? new Bitmap(1, 1) : {};
+                        return this.__dummyBitmap;
+                    }
+                    return origLoadBitmap.apply(this, arguments);
+                };
+                clearInterval(patchTimer);
+                console.log('🛡️ [RPG Fixes] Умный Anti-Spam фильтр загрузки картинок активирован.');
+            }
+        }, 100);
+        setTimeout(() => clearInterval(patchTimer), 10000);
+    }
+
 
     // ============================================================================
     // ИНИЦИАЛИЗАЦИЯ
@@ -1246,6 +1224,7 @@ if (!window.__rpgPluginHookInstalled) {
         setupTouchModeToggle();
         injectEmeraldCheatMenu();
         setupGlobalCrashProtection();
+        setupNetworkAntiSpam();
         
         console.log('✅ RPG-Fixes Ultimate v3.8 (Fullscreen Bulletproof) успешно загружен!');
     }
