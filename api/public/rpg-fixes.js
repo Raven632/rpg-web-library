@@ -1018,7 +1018,7 @@ if (!window.__rpgPluginHookInstalled) {
     }
 
     // ============================================================================
-    // 7. ЧИСТОЕ АУДИО (МИНИМАЛЬНОЕ ВМЕШАТЕЛЬСТВО + ФИКС OGG)
+    // 7. ЧИСТОЕ АУДИО + УМНЫЙ AUTO-FALLBACK (СОВЕРШЕНСТВО)
     // ============================================================================
     function setupSecureAudio() {
         // 1) Блокируем фатальные ошибки при отсутствии звуковых файлов
@@ -1045,8 +1045,8 @@ if (!window.__rpgPluginHookInstalled) {
             }
         }, 50);
 
-        // 3) Маршрутизация форматов: Заставляем ВСЕ устройства просить OGG (rpgmvo)
-        // WebAudio API на современных iOS умеет декодировать OGG из буфера памяти.
+        // 3) Маршрутизация: Заставляем ВСЕ устройства просить OGG (rpgmvo)
+        // Твой код доказал: iOS отлично декодирует OGG в памяти!
         const formatTimer = setInterval(() => {
             if (typeof WebAudio !== 'undefined' && typeof AudioManager !== 'undefined') {
                 WebAudio.canPlayOgg = function() { return true; };
@@ -1055,7 +1055,66 @@ if (!window.__rpgPluginHookInstalled) {
             }
         }, 50);
 
-        // 4) Стандартный, безопасный Unlock звука (без хаков GainNode)
+        // 4) УМНЫЙ АВТО-FALLBACK (Решает проблему с недостающими файлами)
+        // Если игра просит .ogg, а сервер дает 404, мы невидимо скачиваем .m4a
+        const fallbackTimer = setInterval(() => {
+            if (typeof WebAudio !== 'undefined') {
+                clearInterval(fallbackTimer);
+                
+                // Для RPG Maker MZ (использует современный fetch API)
+                if (window.fetch && !window.__fetchAudioPatched) {
+                    window.__fetchAudioPatched = true;
+                    const origFetch = window.fetch;
+                    window.fetch = async function(...args) {
+                        const res = await origFetch(...args);
+                        if (!res.ok && typeof args[0] === 'string' && args[0].match(/\.(ogg|rpgmvo)$/i)) {
+                            const fbUrl = args[0].replace(/\.ogg$/i, '.m4a').replace(/\.rpgmvo$/i, '.rpgmvm');
+                            const fbRes = await origFetch(fbUrl, args[1]);
+                            if (fbRes.ok) return fbRes; // Подсовываем m4a вместо ogg!
+                        }
+                        return res;
+                    };
+                }
+
+                // Для RPG Maker MV (использует XMLHttpRequest)
+                if (WebAudio.prototype._load && !WebAudio.prototype.__loadPatched) {
+                    WebAudio.prototype.__loadPatched = true;
+                    WebAudio.prototype._load = function(url) {
+                        const self = this;
+                        let finalUrl = url;
+                        if (typeof Decrypter !== 'undefined' && Decrypter.hasEncryptedAudio) {
+                            finalUrl = Decrypter.extToEncryptExt(url);
+                        }
+                        const xhr = new XMLHttpRequest();
+                        xhr.open('GET', finalUrl);
+                        xhr.responseType = 'arraybuffer';
+                        xhr.onload = function() {
+                            if (xhr.status < 400) {
+                                self._onXhrLoad(xhr);
+                            } else if (finalUrl.match(/\.(ogg|rpgmvo)$/i)) {
+                                // Сервер выдал 404? Делаем запасной запрос за m4a!
+                                const fbUrl = finalUrl.replace(/\.ogg$/i, '.m4a').replace(/\.rpgmvo$/i, '.rpgmvm');
+                                const xhr2 = new XMLHttpRequest();
+                                xhr2.open('GET', fbUrl);
+                                xhr2.responseType = 'arraybuffer';
+                                xhr2.onload = function() {
+                                    if (xhr2.status < 400) self._onXhrLoad(xhr2);
+                                    else self._isError = true;
+                                };
+                                xhr2.onerror = function() { self._isError = true; };
+                                xhr2.send();
+                            } else {
+                                self._isError = true;
+                            }
+                        };
+                        xhr.onerror = function() { self._isError = true; };
+                        xhr.send();
+                    };
+                }
+            }
+        }, 50);
+
+        // 5) Стандартный, безопасный Unlock звука
         let _unlocked = false;
         function unlock() {
             if (_unlocked) return;
@@ -1063,18 +1122,15 @@ if (!window.__rpgPluginHookInstalled) {
             if (!ctx) return;
             try {
                 if (ctx.state === 'suspended') ctx.resume();
-                // Стандартный пустой буфер, чтобы разбудить аудио-чип мобилки
                 const buffer = ctx.createBuffer(1, 1, 22050);
                 const src = ctx.createBufferSource();
                 src.buffer = buffer;
                 src.connect(ctx.destination);
                 src.start(0);
                 _unlocked = true;
-                
                 ['touchstart','pointerdown','click','keydown'].forEach(ev => window.removeEventListener(ev, unlock, true));
             } catch (e) {}
         }
-        
         ['touchstart','pointerdown','click','keydown'].forEach(ev => window.addEventListener(ev, unlock, { passive: true, capture: true }));
     }
 
