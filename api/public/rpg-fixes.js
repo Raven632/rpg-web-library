@@ -1,8 +1,6 @@
 // ============================================================================
 // 1. АБСОЛЮТНАЯ ИМИТАЦИЯ ANDROID И СИСТЕМНЫХ API (УБИЙЦА ОШИБОК)
 // ============================================================================
-
-// Глобальные заглушки для Node.js модов (Karryn's Prison и т.д.)
 window.process = window.process || {};
 window.process.env = window.process.env || {};
 window.process.env.USER = 'Player';
@@ -10,7 +8,7 @@ window.process.platform = window.process.platform || 'browser';
 window.process.mainModule = { filename: '' };
 window.process.versions = {};
 
-// Подавляем ошибку Firefox/Chrome при выходе из полноэкранного режима (Not in fullscreen mode)
+// Подавляем ошибку Firefox/Chrome при выходе из полноэкранного режима
 if (typeof document !== 'undefined') {
     const origExit = document.exitFullscreen;
     if (origExit) {
@@ -121,11 +119,11 @@ if (!window.__rpgPluginHookInstalled) {
 }
 
 // ============================================================================
-// 3. ОСНОВНОЙ КОД RPG-FIXES (Ultimate v3.8 - Fullscreen Bulletproof)
+// 3. ОСНОВНОЙ КОД RPG-FIXES (Ultimate v4.0 - Fullscreen Bulletproof)
 // ============================================================================
 (() => {
-    if (window.__RPG_FIXES_ULTIMATE_V38__) return;
-    window.__RPG_FIXES_ULTIMATE_V38__ = true;
+    if (window.__RPG_FIXES_ULTIMATE__) return;
+    window.__RPG_FIXES_ULTIMATE__ = true;
 
     function applyConsoleFixes() {
         function applyCanvasReadFrequently(proto) {
@@ -163,21 +161,18 @@ if (!window.__rpgPluginHookInstalled) {
     }
 
     function applyCoreEnginePatches() {
-        // Убрали ядовитый патч JSON.parse! Пусть плагины сами ловят свои ошибки.
-
-        document.addEventListener('touchstart', function() {
-            if (typeof WebAudio !== 'undefined' && WebAudio._context && WebAudio._context.state === 'suspended') {
-                WebAudio._context.resume();
-            }
-        }, { once: true, passive: true });
-
         const pmTimer = setInterval(() => {
             if (window.PluginManager && typeof PluginManager.setup === 'function' && !window.__pmHooked) {
                 window.__pmHooked = true;
+                
+                // 🛑 Глушим плагин AudioStreaming еще до его запуска!
+                if (!PluginManager._parameters) PluginManager._parameters = {};
+                PluginManager._parameters['audiostreaming'] = { mode: "00" };
+
                 const origSetup = PluginManager.setup;
                 PluginManager.setup = function(plugins) {
                     if (Array.isArray(plugins)) {
-                        plugins = plugins.filter(p => !['EliMZ_MobileControls', 'ToggleSaveDirectory', 'Mobile'].includes(p.name));
+                        plugins = plugins.filter(p => !['EliMZ_MobileControls', 'ToggleSaveDirectory', 'Mobile', 'AudioStreaming'].includes(p.name));
                     }
                     origSetup.call(this, plugins);
                 };
@@ -358,6 +353,9 @@ if (!window.__rpgPluginHookInstalled) {
         setTimeout(attachWebGLRecovery, 3000);
     }
 
+    // ============================================================================
+    // 4. СИСТЕМА ОБЛАЧНЫХ СОХРАНЕНИЙ
+    // ============================================================================
     function setupCloudSaves() {
         const CLOUD_BASE = '/api/saves';
         const CLOUD_INIT_GRACE_MS = 1800;
@@ -550,97 +548,9 @@ if (!window.__rpgPluginHookInstalled) {
         window.addEventListener('pageshow', () => { if (cloudFetchFailed) fetchCloudSaves(); });
     }
 
-    function setupSecureAudio() {
-        if (typeof AudioManager !== 'undefined' && !AudioManager.__PatchedCheck) {
-            AudioManager.__PatchedCheck = true; 
-            const orig = AudioManager.checkErrors; 
-            AudioManager.checkErrors = function () { try { if (orig) orig.apply(this, arguments); } catch (e) {} };
-        }
-        if (typeof WebAudio !== 'undefined' && WebAudio.prototype && !WebAudio.prototype.__PatchedErr) {
-            WebAudio.prototype.__PatchedErr = true; 
-            const origErr = WebAudio.prototype._onError; 
-            WebAudio.prototype._onError = function () { if (origErr) return origErr.apply(this, arguments); };
-        }
-
-        const audioInitTimer = setInterval(() => {
-            if (typeof AudioManager !== 'undefined') {
-                AudioManager.shouldUseHtml5Audio = function() { return false; };
-                if (AudioManager._audioBuffers) AudioManager._audioBuffers = []; 
-                clearInterval(audioInitTimer);
-            }
-        }, 100);
-        setTimeout(() => clearInterval(audioInitTimer), 5000);
-
-        let unlocked = false;
-        function syncUnlockAudio() {
-            if (unlocked) return;
-            const contexts = [];
-            if (typeof WebAudio !== 'undefined' && WebAudio._context) contexts.push(WebAudio._context);
-            else {
-                if (!window.__globalIOSAudioContext) { const AC = window.AudioContext || window.webkitAudioContext; if (AC) window.__globalIOSAudioContext = new AC(); }
-                if (window.__globalIOSAudioContext) contexts.push(window.__globalIOSAudioContext);
-            }
-            let anyResumed = false;
-            contexts.forEach(ctx => {
-                if (ctx && ctx.state === 'suspended') { try { ctx.resume(); } catch (e) {} }
-                try {
-                    const buffer = ctx.createBuffer(1, 1, 22050); const source = ctx.createBufferSource();
-                    source.buffer = buffer; source.connect(ctx.destination); source.start(0); anyResumed = true;
-                } catch (e) {}
-            });
-            if (anyResumed) {
-                unlocked = true;
-                ['pointerdown', 'touchstart', 'touchend', 'click', 'keydown'].forEach(e => window.removeEventListener(e, syncUnlockAudio, true));
-            }
-        }
-        
-        ['pointerdown', 'touchstart', 'touchend', 'click', 'keydown'].forEach(e => window.addEventListener(e, syncUnlockAudio, { passive: true, capture: true }));
-        document.addEventListener('visibilitychange', () => { 
-            if (!document.hidden) { 
-                unlocked = false; syncUnlockAudio(); 
-                if (typeof WebAudio !== 'undefined' && WebAudio._context && WebAudio._context.state === 'suspended') { try { WebAudio._context.resume(); } catch(e) {} }
-            } 
-        });
-
-        const isApple = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-        if (isApple) {
-            const timer = setInterval(() => {
-                if (typeof AudioManager === 'undefined') return;
-                clearInterval(timer);
-                AudioManager.audioFileExt = function() { return '.ogg'; };
-                if (typeof Decrypter !== 'undefined') {
-                    Object.defineProperty(Decrypter, 'hasEncryptedAudio', { get: () => false, set: () => {} });
-                    const origDecrypt = Decrypter.decryptArrayBuffer;
-                    Decrypter.decryptArrayBuffer = function(buffer) {
-                        if (!buffer || buffer.byteLength < 16) return buffer;
-                        const header = new Uint8Array(buffer, 0, 4);
-                        if (!(header[0]===0x52 && header[1]===0x50 && header[2]===0x47 && header[3]===0x4D)) return buffer; 
-                        return origDecrypt.call(this, buffer);
-                    };
-                }
-            }, 100);
-            setTimeout(() => clearInterval(timer), 15000);
-        }
-        // Глушим ошибку DOMException (Autoplay Policy) для HTML5 Audio
-        if (typeof HTMLAudioElement !== 'undefined') {
-            const origPlay = HTMLAudioElement.prototype.play;
-            HTMLAudioElement.prototype.play = function() {
-                try {
-                    const promise = origPlay.call(this);
-                    if (promise !== undefined) {
-                        promise.catch(e => {
-                            console.warn('[RPG Fixes] Подавлена ошибка автовоспроизведения аудио:', e.message);
-                        });
-                    }
-                    return promise;
-                } catch(e) {
-                    console.warn('[RPG Fixes] Синхронная ошибка аудио подавлена.');
-                }
-            };
-        }
-    }
-
-    // --- 8. UI & VIRTUAL CONTROLS (BULLETPROOF & DYNAMIC LAYOUTS) ---
+    // ============================================================================
+    // 5. ИНТЕРФЕЙС, ЭКРАННЫЕ КНОПКИ И ГЕЙМПАД
+    // ============================================================================
     function setupUIAndGamepad() {
         document.addEventListener('DOMContentLoaded', () => {
             if (document.getElementById('_sys_menu_container')) return;
@@ -713,7 +623,7 @@ if (!window.__rpgPluginHookInstalled) {
             ui.innerHTML = layoutToggleHtml + sysMenuHtml + (isMobile ? mobCtrlHtml : '');
             document.body.appendChild(ui);
 
-            // Menu Handlers
+            // Обработчики меню
             const sysBtn = document.getElementById('_sys_btn');
             const sysPanel = document.getElementById('_sys_panel');
 
@@ -764,15 +674,15 @@ if (!window.__rpgPluginHookInstalled) {
             document.addEventListener('contextmenu', e => {
                 if (e.target.closest('#_mob_ctrl') || e.target.closest('#_sys_menu_container')) e.preventDefault();
             });
+            
             if (isMobile) {
                 document.getElementById('_mob_ctrl').addEventListener('pointerdown', e => e.stopPropagation(), { passive: false });
-
                 ['touchstart', 'touchmove', 'touchend', 'pointerdown', 'pointermove', 'pointerup', 'mousedown', 'mousemove', 'mouseup'].forEach(ev => {
                     document.getElementById('_mob_ctrl').addEventListener(ev, e => e.stopPropagation(), { passive: false });
                 });
             }
 
-            // 🛡️ Динамические раскладки геймпада
+            // Динамические раскладки кнопок
             let currentLayout = 0;
             const layouts = [
                 {
@@ -824,14 +734,12 @@ if (!window.__rpgPluginHookInstalled) {
             const triggerKey = (id, isDown) => {
                 const type = isDown ? 'keydown' : 'keyup';
                 let config;
-                
                 if (id.startsWith('_d_')) {
                     config = dpadMap[id];
                     config.code = config.key;
                 } else {
                     config = layouts[currentLayout].keys[id];
                 }
-
                 if (!config) return;
 
                 if (typeof Input !== 'undefined') {
@@ -850,22 +758,8 @@ if (!window.__rpgPluginHookInstalled) {
             allBtnIds.forEach(id => {
                 const el = document.getElementById(id);
                 if (!el) return;
-
-                const press = e => {
-                    e.preventDefault(); e.stopPropagation();
-                    if (el.dataset.active) return;
-                    el.dataset.active = "true";
-                    el.classList.add('_on');
-                    triggerKey(id, true);
-                };
-
-                const release = e => {
-                    e.preventDefault(); e.stopPropagation();
-                    if (!el.dataset.active) return;
-                    el.dataset.active = "";
-                    el.classList.remove('_on');
-                    triggerKey(id, false);
-                };
+                const press = e => { e.preventDefault(); e.stopPropagation(); if (el.dataset.active) return; el.dataset.active = "true"; el.classList.add('_on'); triggerKey(id, true); };
+                const release = e => { e.preventDefault(); e.stopPropagation(); if (!el.dataset.active) return; el.dataset.active = ""; el.classList.remove('_on'); triggerKey(id, false); };
 
                 el.addEventListener('touchstart', press, { passive: false });
                 el.addEventListener('touchend', release, { passive: false });
@@ -877,7 +771,7 @@ if (!window.__rpgPluginHookInstalled) {
         });
     }
 
-    // --- 9. DIAGNOSTICS & DEBUGGING ---
+    // --- 6. ДИАГНОСТИКА, ТАЧ-РЕЖИМ, МОНИТОРЫ ---
     function setupFpsMonitor() {
         const showByDefault = location.search.includes('fps') || location.search.includes('dev');
         window.__fpsMonitorVisible = showByDefault;
@@ -1069,7 +963,6 @@ if (!window.__rpgPluginHookInstalled) {
                 const panel = document.getElementById('_sys_panel');
                 if (!panel) return;
                 clearInterval(panelTimer);
-                
                 if (!document.getElementById('_touch_mode_item')) {
                     const item = document.createElement('div');
                     item.id = '_touch_mode_item';
@@ -1079,19 +972,14 @@ if (!window.__rpgPluginHookInstalled) {
                     panel.appendChild(item);
                     item.addEventListener('pointerdown', (e) => { e.stopPropagation(); window.__toggleRpgTouchMode(); });
                 }
-
             }, 150);
         });
     }
 
-    // --- 10. ГЛОБАЛЬНЫЙ ЧИТ-МОД (Emeraldcoder) ---
     function injectEmeraldCheatMenu() {
-        // 1. Ждем, пока ядро игры полностью загрузится в память
         const waitTimer = setInterval(() => {
             if (typeof DataManager !== 'undefined' && typeof SceneManager !== 'undefined') {
                 clearInterval(waitTimer);
-
-                // 2. Асинхронно загружаем JS и CSS только после старта игры
                 const script = document.createElement('script');
                 script.src = '/Cheat_Menu.js';
                 document.body.appendChild(script);
@@ -1103,7 +991,6 @@ if (!window.__rpgPluginHookInstalled) {
             }
         }, 100);
         
-        // 3. Изолированно добавляем кнопку в меню, как только оно появится
         const initObserver = setInterval(() => {
             const sysPanel = document.getElementById('_sys_panel');
             if (!sysPanel) return; 
@@ -1117,55 +1004,158 @@ if (!window.__rpgPluginHookInstalled) {
             cheatBtn.innerHTML = '💉 Открыть Чит-Меню';
             sysPanel.appendChild(cheatBtn);
             
-            // 4. Логика активации
             cheatBtn.addEventListener('pointerdown', (e) => {
-                e.preventDefault(); 
-                e.stopPropagation();
-                
+                e.preventDefault(); e.stopPropagation();
                 if (window.Cheat_Menu) {
                     window.Cheat_Menu.overlay_openable = true;
-                    // Эмулируем клавишу '1' (код 49)
-                    document.dispatchEvent(new KeyboardEvent('keydown', { 
-                        bubbles: true, cancelable: true, keyCode: 49, which: 49, key: '1' 
-                    }));
+                    document.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, keyCode: 49, which: 49, key: '1' }));
                 } else {
                     console.warn('[RPG Fixes] Плагин читов еще не загрузился в память.');
                 }
-                
                 sysPanel.classList.remove('_open');
             }, { passive: false });
-
-            console.log('✅ [RPG Fixes] Модуль читов элегантно интегрирован.');
         }, 300);
     }
 
-    // --- 11. ГЛОБАЛЬНЫЙ ЩИТ ОТ КРАШЕЙ (GACE v6 - Максимально чистый и безопасный) ---
+    // ============================================================================
+    // 7. СВЕРХНАДЕЖНОЕ АУДИО (GOD MODE ДЛЯ IOS SAFARI + ДЕКРИПТЕР)
+    // ============================================================================
+    function setupSecureAudio() {
+        if (typeof AudioManager !== 'undefined' && !AudioManager.__PatchedCheck) {
+            AudioManager.__PatchedCheck = true; 
+            const orig = AudioManager.checkErrors; 
+            AudioManager.checkErrors = function () { try { if (orig) orig.apply(this, arguments); } catch (e) {} };
+        }
+        if (typeof WebAudio !== 'undefined' && WebAudio.prototype && !WebAudio.prototype.__PatchedErr) {
+            WebAudio.prototype.__PatchedErr = true; 
+            const origErr = WebAudio.prototype._onError; 
+            WebAudio.prototype._onError = function () { if (origErr) return origErr.apply(this, arguments); };
+        }
+
+        const isIOS = /iP(hone|od|ad)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+        // Убиваем саботаж M4A от любых плагинов
+        const decTimer = setInterval(() => {
+            if (typeof WebAudio !== 'undefined') {
+                WebAudio.canPlayM4a = function() { return true; };
+            }
+            // Умный декриптер - если сервер дал чистый M4A, не даем движку его сломать
+            if (typeof Decrypter !== 'undefined' && !Decrypter.__smartPatched) {
+                Decrypter.__smartPatched = true;
+                const _decrypt = Decrypter.decryptArrayBuffer;
+                Decrypter.decryptArrayBuffer = function(arrayBuffer, ...rest) {
+                    const u8 = new Uint8Array(arrayBuffer);
+                    if (u8[0] !== 0x52 || u8[1] !== 0x50 || u8[2] !== 0x47 || u8[3] !== 0x4D) return arrayBuffer;
+                    return _decrypt.call(this, arrayBuffer, ...rest);
+                };
+                clearInterval(decTimer);
+            }
+        }, 50);
+        setTimeout(() => clearInterval(decTimer), 5000);
+
+        if (isIOS) {
+            const _AudioContext = window.AudioContext || window.webkitAudioContext;
+            if (_AudioContext && !_AudioContext.__iosPatched) {
+                _AudioContext.__iosPatched = true;
+
+                // Перехватываем создание GainNode в самом ядре браузера
+                const _createGain = _AudioContext.prototype.createGain;
+                _AudioContext.prototype.createGain = function() {
+                    const node = _createGain.call(this);
+                    if (node && node.gain) {
+                        const g = node.gain;
+                        const origSet = g.setValueAtTime.bind(g);
+                        const origLin = g.linearRampToValueAtTime.bind(g);
+                        const origExp = g.exponentialRampToValueAtTime.bind(g);
+                        const clamp = v => Math.max(0, Math.min(1, v));
+
+                        // Возвращаем плавные затухания, но лечим баг Safari (никогда не ставим абсолютный 0)
+                        g.setValueAtTime = function(value, time) {
+                            try { origSet(clamp(value), time); } catch(e) { g.value = clamp(value); }
+                            return this;
+                        };
+                        g.linearRampToValueAtTime = function(value, time) {
+                            const safeVal = value <= 0 ? 0.001 : clamp(value);
+                            try { origLin(safeVal, time); } catch(e) { g.value = safeVal; }
+                            return this;
+                        };
+                        g.exponentialRampToValueAtTime = function(value, time) {
+                            const safeVal = value <= 0 ? 0.001 : clamp(value);
+                            try { origExp(safeVal, time); } catch(e) { g.value = safeVal; }
+                            return this;
+                        };
+                    }
+                    return node;
+                };
+
+                // Запрещаем iOS засыпать
+                _AudioContext.prototype.suspend = function() { return Promise.resolve(); };
+                _AudioContext.prototype.close = function() { return Promise.resolve(); };
+            }
+
+            // Нейтрализуем пилу 60FPS от AudioSource.js
+            const asTimer = setInterval(() => {
+                if (typeof AudioManager !== 'undefined' && AudioManager.updateSeParameters && !AudioManager.__asPatched) {
+                    AudioManager.__asPatched = true;
+                    const _update = AudioManager.updateSeParameters;
+                    AudioManager.updateSeParameters = function(buffer, se) {
+                        if (buffer && buffer._gainNode && buffer._gainNode.gain) {
+                            buffer._gainNode.gain.value = buffer.volume || 1.0;
+                            return;
+                        }
+                        return _update.call(this, buffer, se);
+                    };
+                    clearInterval(asTimer);
+                }
+            }, 50);
+            setTimeout(() => clearInterval(asTimer), 5000);
+        }
+
+        // Надежный Unlock
+        let _audioUnlocked = false;
+        function unlock() {
+            if (_audioUnlocked || typeof WebAudio === 'undefined' || !WebAudio._context) return;
+            try {
+                const ctx = WebAudio._context;
+                if (ctx.state !== "running") ctx.resume();
+                const buffer = ctx.createBuffer(1, 1, 22050);
+                const src = ctx.createBufferSource();
+                src.buffer = buffer;
+                src.connect(ctx.destination);
+                src.start(0);
+                _audioUnlocked = true;
+                window.removeEventListener("touchstart", unlock);
+                window.removeEventListener("click", unlock);
+                console.log('🔊 [RPG Fixes] Аудио iOS успешно разблокировано.');
+            } catch (e) {}
+        }
+        window.addEventListener("touchstart", unlock, { passive: true });
+        window.addEventListener("click", unlock, { passive: true });
+    }
+
+    // ============================================================================
+    // 8. ГЛОБАЛЬНЫЙ ЩИТ И ФИКСЫ ПЛАГИНОВ (MV/MZ)
+    // ============================================================================
     function setupGlobalCrashProtection() {
         const coreTimer = setInterval(() => {
             if (typeof SceneManager !== 'undefined') {
                 clearInterval(coreTimer);
-
                 if (!SceneManager.__gacePatched) {
                     SceneManager.__gacePatched = true;
-
-                    // Оставляем ТОЛЬКО защиту от фатального "Экрана смерти".
-                    // Больше мы не трогаем ни базу данных ($dataItems), ни картинки (ImageManager), ни окна!
                     const origCatchException = SceneManager.catchException;
                     SceneManager.catchException = function(e) {
                         if (e instanceof Error) {
-                            console.warn(`🛡️ [GACE] Ошибка перехвачена и подавлена:`, e.message);
-                            // Просто проглатываем ошибку, чтобы игра не выводила желтый экран и продолжала работать.
+                            console.warn(`🛡️ [GACE] Ошибка перехвачена:`, e.message);
                             if (typeof SoundManager !== 'undefined') SoundManager.playBuzzer();
                             return; 
                         }
                         origCatchException.call(this, e);
                     };
-                    console.log('🛡️ [GACE v6] Чистый перехватчик фатальных крашей активирован.');
                 }
             }
         }, 100);
 
-        // Патч для SceneGlossary.js оставляем (он безопасный и чинит вылеты меню)
+        // ВОССТАНОВЛЕНО: Безопасный патч для SceneGlossary.js
         const pluginTimer = setInterval(() => {
             if (typeof Game_Party !== 'undefined' && Game_Party.prototype.getAllGlossaryCategory && !Game_Party.prototype.__gaceGlossaryPatched) {
                 Game_Party.prototype.__gaceGlossaryPatched = true;
@@ -1177,26 +1167,33 @@ if (!window.__rpgPluginHookInstalled) {
                     } catch (e) { return ['Все']; }
                 };
                 clearInterval(pluginTimer);
+                console.log('✅ [GACE] Асинхронный патч для SceneGlossary.js успешно применен!');
             }
         }, 500);
 
         setTimeout(() => clearInterval(pluginTimer), 15000);
     }
 
-    // --- 12. ЛЕГКИЙ ANTI-SPAM ФИЛЬТР КАРТИНОК ---
+    // ВОССТАНОВЛЕНО: Отдельный и надежный анти-спам фильтр
     function setupNetworkAntiSpam() {
         const patchTimer = setInterval(() => {
             if (typeof ImageManager !== 'undefined' && !ImageManager.__spamHooked) {
                 ImageManager.__spamHooked = true;
                 const origLoadBitmap = ImageManager.loadBitmap;
                 ImageManager.loadBitmap = function(folder, filename) {
-                    // Защита от багованных плагинов, которые ищут null.png
-                    if (filename && (String(filename).toLowerCase() === 'null' || String(filename).toLowerCase() === 'undefined')) {
+                    if (filename && (String(filename).toLowerCase().includes('null') || String(filename).toLowerCase().includes('undefined'))) {
                         if (!this.__dummyBitmap) this.__dummyBitmap = typeof Bitmap !== 'undefined' ? new Bitmap(1, 1) : {};
                         return this.__dummyBitmap;
                     }
                     return origLoadBitmap.apply(this, arguments);
                 };
+
+                const origLog = console.log;
+                console.log = function(...args) {
+                    if (typeof args[0] === 'string' && args[0].includes('Script Error:')) return;
+                    origLog.apply(this, args);
+                };
+
                 clearInterval(patchTimer);
                 console.log('🛡️ [RPG Fixes] Умный Anti-Spam фильтр загрузки картинок активирован.');
             }
@@ -1204,6 +1201,57 @@ if (!window.__rpgPluginHookInstalled) {
         setTimeout(() => clearInterval(patchTimer), 10000);
     }
 
+    function setupSceneCustomMenuFix() {
+        const patchTimer = setInterval(() => {
+            // Ставим ловушку в базовый класс Window_Selectable (работает в MV 1.6.2)
+            if (typeof Window_Selectable !== 'undefined' && !Window_Selectable.__scmHooked) {
+                Window_Selectable.__scmHooked = true;
+                
+                const origInit = Window_Selectable.prototype.initialize;
+                Window_Selectable.prototype.initialize = function() {
+                    origInit.apply(this, arguments);
+                    
+                    if (typeof this.isMasking === 'function' && typeof this.isVisible === 'function' && !this.__scmPatched) {
+                        const proto = Object.getPrototypeOf(this);
+                        if (!proto.__scmPatched) {
+                            proto.__scmPatched = true;
+
+                            const origIsVisible = proto.isVisible;
+                            proto.isVisible = function(item) {
+                                if (item === null || item === undefined) return false;
+                                return origIsVisible.apply(this, arguments);
+                            };
+
+                            const origIsMasking = proto.isMasking;
+                            proto.isMasking = function(item) {
+                                if (item === null || item === undefined) return false;
+                                return origIsMasking.apply(this, arguments);
+                            };
+
+                            if (typeof proto.drawItemSub === 'function') {
+                                const origDrawItemSub = proto.drawItemSub;
+                                proto.drawItemSub = function(item) {
+                                    if (item === null || item === undefined) return;
+                                    origDrawItemSub.apply(this, arguments);
+                                };
+                            }
+                            
+                            const origDrawItem = proto.drawItem;
+                            proto.drawItem = function(index) {
+                                const item = typeof this.itemAt === 'function' ? this.itemAt(index) : null;
+                                if (item === null || item === undefined) return;
+                                origDrawItem.apply(this, arguments);
+                            };
+
+                            console.log('✅ [RPG Fixes] Троянский патч успешно взломал SceneCustomMenu в MV!');
+                        }
+                    }
+                };
+                clearInterval(patchTimer);
+            }
+        }, 50);
+        setTimeout(() => clearInterval(patchTimer), 10000);
+    }
 
     // ============================================================================
     // ИНИЦИАЛИЗАЦИЯ
@@ -1216,17 +1264,20 @@ if (!window.__rpgPluginHookInstalled) {
         fixDevicePixelRatio();
         setupModernViewport();
         applyPerformanceOptimizations();
-        setupSecureAudio();
+        setupSecureAudio(); 
         setupCloudSaves();
         setupUIAndGamepad();
         setupFpsMonitor();
         setupSpikeDiagnostics();
         setupTouchModeToggle();
         injectEmeraldCheatMenu();
+        
+        // Наши восстановленные функции
         setupGlobalCrashProtection();
         setupNetworkAntiSpam();
+        setupSceneCustomMenuFix(); 
         
-        console.log('✅ RPG-Fixes Ultimate v3.8 (Fullscreen Bulletproof) успешно загружен!');
+        console.log('✅ RPG-Fixes Ultimate v4.1 (God Mode Audio & Fully Restored) успешно загружен!');
     }
 
     initUltimateFixes();
