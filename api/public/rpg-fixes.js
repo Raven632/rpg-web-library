@@ -1018,24 +1018,17 @@ if (!window.__rpgPluginHookInstalled) {
     }
 
     // ============================================================================
-    // 7. СВЕРХНАДЕЖНОЕ АУДИО (ЧИСТЫЙ ДВИЖОК + M4A)
+    // 7. ЧИСТОЕ АУДИО (МИНИМАЛЬНОЕ ВМЕШАТЕЛЬСТВО + ФИКС OGG)
     // ============================================================================
     function setupSecureAudio() {
-        // 1) Безопасный перехват ошибок
-        if (typeof AudioManager !== 'undefined' && !AudioManager.__PatchedCheck) {
-            AudioManager.__PatchedCheck = true; 
+        // 1) Блокируем фатальные ошибки при отсутствии звуковых файлов
+        if (typeof AudioManager !== 'undefined' && !AudioManager.__SafeCheckPatched) {
+            AudioManager.__SafeCheckPatched = true; 
             const orig = AudioManager.checkErrors; 
             AudioManager.checkErrors = function () { try { if (orig) orig.apply(this, arguments); } catch (e) {} };
         }
-        if (typeof WebAudio !== 'undefined' && WebAudio.prototype && !WebAudio.prototype.__PatchedErr) {
-            WebAudio.prototype.__PatchedErr = true; 
-            const origErr = WebAudio.prototype._onError; 
-            WebAudio.prototype._onError = function () { try { if (origErr) origErr.apply(this, arguments); } catch(e) {} };
-        }
 
-        const isIOS = /iP(hone|od|ad)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-
-        // 2) Умный декриптер - пропускаем чистый M4A от сервера
+        // 2) Умный декриптер: расшифровываем только если есть подпись RPGM
         const decTimer = setInterval(() => {
             if (typeof Decrypter !== 'undefined' && !Decrypter.__smartPatched) {
                 Decrypter.__smartPatched = true;
@@ -1052,103 +1045,37 @@ if (!window.__rpgPluginHookInstalled) {
             }
         }, 50);
 
-        // 3) Принудительно включаем M4A, для iOS строго запрещаем OGG
-        // Это полностью убирает зависание сервера (FFMPEG), так как iOS скачает родной формат.
+        // 3) Маршрутизация форматов: Заставляем ВСЕ устройства просить OGG (rpgmvo)
+        // WebAudio API на современных iOS умеет декодировать OGG из буфера памяти.
         const formatTimer = setInterval(() => {
             if (typeof WebAudio !== 'undefined' && typeof AudioManager !== 'undefined') {
-                WebAudio.canPlayM4a = function() { return true; };
-                if (isIOS) {
-                    WebAudio.canPlayOgg = function() { return false; };
-                    AudioManager.audioFileExt = function() { return '.m4a'; };
-                }
+                WebAudio.canPlayOgg = function() { return true; };
+                AudioManager.audioFileExt = function() { return '.ogg'; };
                 clearInterval(formatTimer);
             }
         }, 50);
 
-        if (isIOS) {
-            // 4) Мягкое затухание на уровне движка (Без хака ядра браузера)
-            const iosFadeTimer = setInterval(() => {
-                if (typeof WebAudio !== 'undefined' && WebAudio.prototype && !WebAudio.prototype.__iosSafeFade) {
-                    WebAudio.prototype.__iosSafeFade = true;
-                    
-                    // Safari зависает, если звук падает в абсолютный ноль. Используем безопасные 0.01
-                    WebAudio.prototype.fadeIn = function(duration) {
-                        if (this._gainNode && this._gainNode.gain) {
-                            const gain = this._gainNode.gain;
-                            const ct = WebAudio._context.currentTime;
-                            gain.cancelScheduledValues(ct);
-                            gain.setValueAtTime(0.01, ct);
-                            gain.linearRampToValueAtTime(this._volume, ct + duration);
-                            this._autoPlay = true;
-                        }
-                    };
-                    WebAudio.prototype.fadeOut = function(duration) {
-                        if (this._gainNode && this._gainNode.gain) {
-                            const gain = this._gainNode.gain;
-                            const ct = WebAudio._context.currentTime;
-                            gain.cancelScheduledValues(ct);
-                            gain.setValueAtTime(gain.value, ct);
-                            gain.linearRampToValueAtTime(0.01, ct + duration);
-                        }
-                    };
-                    clearInterval(iosFadeTimer);
-                }
-            }, 50);
-
-            // 5) Нейтрализуем пилу 60FPS от AudioSource.js
-            const asTimer = setInterval(() => {
-                if (typeof AudioManager !== 'undefined' && AudioManager.updateSeParameters && !AudioManager.__asPatched) {
-                    AudioManager.__asPatched = true;
-                    const _update = AudioManager.updateSeParameters;
-                    AudioManager.updateSeParameters = function(buffer, se) {
-                        if (buffer && buffer._gainNode && buffer._gainNode.gain) {
-                            buffer._gainNode.gain.value = buffer.volume || 1.0;
-                            return;
-                        }
-                        return _update.call(this, buffer, se);
-                    };
-                    clearInterval(asTimer);
-                }
-            }, 50);
-        }
-
-        // 6) Надежный Unlock (Снятие блокировки звука на смартфонах)
-        let _audioUnlocked = false;
+        // 4) Стандартный, безопасный Unlock звука (без хаков GainNode)
+        let _unlocked = false;
         function unlock() {
-            if (_audioUnlocked || typeof WebAudio === 'undefined' || !WebAudio._context) return;
+            if (_unlocked) return;
+            const ctx = (typeof WebAudio !== 'undefined' && WebAudio._context) ? WebAudio._context : null;
+            if (!ctx) return;
             try {
-                const ctx = WebAudio._context;
-                if (ctx.state !== "suspended" && ctx.state !== "interrupted") {
-                    _audioUnlocked = true;
-                    return;
-                }
-                ctx.resume().then(() => {
-                    const buffer = ctx.createBuffer(1, 1, 22050);
-                    const src = ctx.createBufferSource();
-                    src.buffer = buffer;
-                    src.connect(ctx.destination);
-                    src.start(0);
-                    _audioUnlocked = true;
-                    window.removeEventListener("touchstart", unlock, true);
-                    window.removeEventListener("click", unlock, true);
-                }).catch(() => {});
+                if (ctx.state === 'suspended') ctx.resume();
+                // Стандартный пустой буфер, чтобы разбудить аудио-чип мобилки
+                const buffer = ctx.createBuffer(1, 1, 22050);
+                const src = ctx.createBufferSource();
+                src.buffer = buffer;
+                src.connect(ctx.destination);
+                src.start(0);
+                _unlocked = true;
+                
+                ['touchstart','pointerdown','click','keydown'].forEach(ev => window.removeEventListener(ev, unlock, true));
             } catch (e) {}
         }
-        window.addEventListener("touchstart", unlock, { passive: true, capture: true });
-        window.addEventListener("click", unlock, { passive: true, capture: true });
         
-        // 7) Автоплей-политика HTML5 (убираем ошибки в логах)
-        if (typeof HTMLAudioElement !== 'undefined' && !HTMLAudioElement.prototype.__SafePlayPatched) {
-            HTMLAudioElement.prototype.__SafePlayPatched = true;
-            const origPlay = HTMLAudioElement.prototype.play;
-            HTMLAudioElement.prototype.play = function () {
-                try {
-                    const p = origPlay.call(this);
-                    if (p && typeof p.catch === 'function') p.catch(() => {});
-                    return p;
-                } catch (e) {}
-            };
-        }
+        ['touchstart','pointerdown','click','keydown'].forEach(ev => window.addEventListener(ev, unlock, { passive: true, capture: true }));
     }
 
     // ============================================================================
