@@ -22,9 +22,16 @@ function App() {
 
   const t = locales[lang] || locales['ru'];
 
-  const [searchQuery, setSearchQuery] = useState('');
-  const [selectedTag, setSelectedTag] = useState('all');
-  const [currentSort, setCurrentSort] = useState('newest');
+  const [searchQuery, setSearchQuery] = useState(() => sessionStorage.getItem('rpg_search') || '');
+  const [selectedTag, setSelectedTag] = useState(() => sessionStorage.getItem('rpg_tag') || 'all');
+  const [currentSort, setCurrentSort] = useState(() => sessionStorage.getItem('rpg_sort') || 'newest');
+
+  useEffect(() => {
+    sessionStorage.setItem('rpg_search', searchQuery);
+    sessionStorage.setItem('rpg_tag', selectedTag);
+    sessionStorage.setItem('rpg_sort', currentSort);
+  }, [searchQuery, selectedTag, currentSort]);
+
   const [socketMessage, setSocketMessage] = useState('');
   const [selectedGame, setSelectedGame] = useState(null);
   const [authMode, setAuthMode] = useState(null);

@@ -6,6 +6,12 @@ export default defineConfig({
   server: {
     host: true,
     port: 5173,
+    watch: {
+      // КРИТИЧЕСКИ ВАЖНО: Заставит Vite проверять файлы каждую секунду, 
+      // что обязательно при работе через сетевой диск Y:
+      usePolling: true, 
+      interval: 500
+    },
     proxy: {
       '/api': {
         target: 'http://rpg-library:3000', 
@@ -15,11 +21,9 @@ export default defineConfig({
         target: 'http://rpg-library:3000',
         ws: true, 
       },
-      // --- НОВОЕ: Прокси для картинок и файлов игр ---
       '/media': {
         target: 'http://rpg-library:3000',
         changeOrigin: true,
-        // Vite уберет слово "/media" перед тем, как отправить запрос на бэкенд
         rewrite: (path) => path.replace(/^\/media/, '') 
       }
     }
