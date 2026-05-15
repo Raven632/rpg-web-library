@@ -402,7 +402,11 @@ footer {
 .modal-overlay.active { opacity: 1; pointer-events: all; }
 .modal-content { background: var(--bg-card); border: 1px solid rgba(201,168,76,0.3); border-radius: 8px; max-width: 1400px; width: 92vw; max-height: 90vh; display: flex; flex-direction: column; position: relative; transform: translateY(30px) scale(0.95); transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); box-shadow: 0 25px 60px rgba(0,0,0,0.9), 0 0 40px rgba(201,168,76,0.1); overflow: hidden; margin: 0 auto; }
 .modal-overlay.active .modal-content { transform: translateY(0) scale(1); }
-.modal-close { position: absolute; top: 15px; right: 20px; font-size: 2.5rem; color: var(--text-dim); cursor: pointer; line-height: 1; transition: color 0.2s; z-index: 100; font-family: sans-serif; text-shadow: 0 2px 10px rgba(0,0,0,0.8); }
+/* --- КНОПКИ УПРАВЛЕНИЯ --- */
+.modal-actions-top { position: absolute; top: 15px; right: 15px; display: flex; align-items: center; gap: 15px; z-index: 10; }
+.modal-edit-toggle { font-size: 1.6rem; cursor: pointer; opacity: 0.4; transition: all 0.3s ease; filter: grayscale(1); line-height: 1; }
+.modal-edit-toggle:hover, .modal-edit-toggle.active { opacity: 1; filter: grayscale(0); transform: rotate(45deg); text-shadow: 0 0 10px var(--gold); }
+.modal-close { font-size: 2.2rem; line-height: 0.8; cursor: pointer; color: var(--text-dim); transition: color 0.3s; }
 .modal-close:hover { color: var(--gold-light); }
 .modal-header { display: flex; flex-wrap: nowrap; gap: 40px; padding: 40px; background: linear-gradient(to bottom right, rgba(201,168,76,0.05), transparent); overflow-y: auto; flex: 1; }
 
@@ -447,4 +451,117 @@ footer {
   #modal-title { font-size: 1.3rem; margin-bottom: 12px; padding-right: 25px; word-break: break-word; } 
   .modal-description { font-size: 0.95rem; padding-left: 10px; padding-right: 5px; margin-bottom: 60px; border-left-width: 1px; }
   #modal-play-btn { font-size: 1rem; padding: 14px; position: sticky; bottom: 0; width: 100%; }
+}
+
+/* --- ВОССТАНОВЛЕНИЕ ЭСТЕТИКИ ГРИМУАРА --- */
+
+#modal-title {
+  font-family: 'Cinzel', serif;
+  font-size: 2rem;
+  color: var(--gold-light);
+  margin-bottom: 10px; /* Отступ до метаданных */
+  text-shadow: 0 0 15px rgba(201, 168, 76, 0.3);
+}
+
+/* Контейнер метаданных */
+.grimoire-metadata {
+  margin-bottom: 25px; /* Возвращаем отступ до тегов как в Beautiful версии */
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.meta-row {
+  display: flex;
+  gap: 20px;
+  border-bottom: 1px solid rgba(201, 168, 76, 0.1);
+  padding-bottom: 4px;
+}
+
+.meta-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-family: 'Crimson Text', serif;
+  font-size: 0.9rem;
+}
+
+.meta-label {
+  color: var(--text-dim);
+  font-style: italic;
+  font-size: 0.8rem;
+}
+
+.meta-value {
+  color: var(--text);
+  letter-spacing: 0.5px;
+}
+
+/* Ссылка-кнопка */
+.grimoire-link-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 6px 12px;
+  background: rgba(201, 168, 76, 0.05);
+  border: 1px solid var(--gold-dim);
+  border-radius: 4px;
+  color: var(--gold-light);
+  text-decoration: none;
+  font-family: 'Cinzel', serif;
+  font-size: 0.75rem;
+  transition: all 0.3s ease;
+  width: fit-content;
+}
+
+.grimoire-link-btn:hover {
+  background: rgba(201, 168, 76, 0.15);
+  border-color: var(--gold);
+  box-shadow: 0 0 10px rgba(201, 168, 76, 0.2);
+}
+
+/* --- ФОРМА РЕДАКТИРОВАНИЯ --- */
+.grimoire-form { display: flex; flex-direction: column; gap: 12px; margin-top: 10px; }
+.grimoire-form input {
+  width: 100%;
+  background: rgba(15, 12, 18, 0.7) !important;
+  border: 1px solid rgba(201, 168, 76, 0.2);
+  border-radius: 6px;
+  padding: 12px 15px;
+  color: var(--text);
+  font-family: 'Crimson Text', serif;
+  font-size: 1rem;
+  transition: all 0.3s ease;
+  outline: none;
+}
+.grimoire-form input:focus {
+  border-color: var(--gold);
+  background: rgba(20, 16, 24, 0.9) !important;
+  box-shadow: 0 0 15px rgba(201, 168, 76, 0.15);
+}
+.grimoire-form input::placeholder { color: var(--text-dim); opacity: 0.5; font-style: italic; }
+.form-actions { display: flex; gap: 10px; margin-top: 10px; }
+.save-btn { flex: 2; background: var(--gold-dim) !important; color: #000 !important; font-weight: 900; font-family: 'Cinzel', serif; border: none; padding: 12px; cursor: pointer; border-radius: 4px; transition: background 0.3s; }
+.save-btn:hover { background: var(--gold) !important; }
+.cancel-btn { flex: 1; background: rgba(255, 255, 255, 0.05) !important; color: var(--text-dim) !important; border: 1px solid rgba(255, 255, 255, 0.1); padding: 12px; cursor: pointer; border-radius: 4px; font-family: 'Cinzel', serif; }
+
+/* Обложка в режиме редактирования */
+.cover-edit-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--gold);
+  font-family: 'Cinzel', serif;
+  opacity: 0;
+  transition: opacity 0.3s;
+  cursor: pointer;
+  border-radius: 8px;
+}
+
+.modal-cover-wrapper:hover .cover-edit-overlay {
+  opacity: 1;
 }
