@@ -13,55 +13,84 @@ const Toolbar = ({
   const handleDrop = (e) => { e.preventDefault(); setIsDragging(false); const file = e.dataTransfer.files[0]; if (file) uploadFile(file); };
   const handleFileSelect = (e) => { const file = e.target.files[0]; if (file) uploadFile(file); e.target.value = ''; };
 
-  const uploadFile = (file) => {
-    if (!file.name.toLowerCase().match(/\.(zip|7z|rar)$/)) {
+  const uploadFile = async (file) => {
+    if (!file.name.toLowerCase().match(/\.(zip|7z|rar)$/i)) {
       showToast(t.wrong_ext, 'error');
       return;
     }
 
-    const formData = new FormData();
-    formData.append('game', file);
+    const CHUNK_SIZE = 50 * 1024 * 1024; // 50 Мегабайт
+    const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+    
+    // Создаем уникальный ID для этой загрузки (чтобы бэкенд знал, какие куски клеить)
+    const uploadId = Date.now().toString() + '_' + Math.random().toString(36).substring(2, 7);
+    
     setUploadState({ active: true, progress: 0, text: t.up_trans(file.name) });
 
-    const xhr = new XMLHttpRequest();
-    xhr.upload.addEventListener('progress', (e) => {
-      if (e.lengthComputable) {
-        const percent = Math.round((e.loaded / e.total) * 90);
-        setUploadState(prev => ({ 
-          ...prev, progress: percent, 
-          text: t.up_prog((e.loaded / 1024 / 1024).toFixed(1), (e.total / 1024 / 1024).toFixed(1)) 
-        }));
-      }
-    });
+    try {
+      for (let i = 0; i < totalChunks; i++) {
+        const start = i * CHUNK_SIZE;
+        const end = Math.min(start + CHUNK_SIZE, file.size);
+        const chunk = file.slice(start, end);
 
-    xhr.addEventListener('load', () => {
-      setUploadState(prev => ({ ...prev, progress: 100 }));
-      try {
-        const data = JSON.parse(xhr.responseText);
-        if (data.success) {
-          showToast(data.message, 'success');
-          setUploadState(prev => ({ ...prev, text: `✓ ${data.message}` }));
-          setTimeout(() => { setUploadState({ active: false, progress: 0, text: '' }); onUploadSuccess(); }, 2000);
-        } else {
-          showToast(data.error, 'error');
-          setUploadState(prev => ({ ...prev, text: `✗ ${data.error}` }));
-          setTimeout(() => setUploadState({ active: false, progress: 0, text: '' }), 4000);
+        const formData = new FormData();
+        formData.append('chunk', chunk, file.name); 
+        formData.append('uploadId', uploadId);
+        formData.append('chunkIndex', i);
+        formData.append('totalChunks', totalChunks);
+        formData.append('originalName', file.name);
+
+        // --- ДОБАВЛЯЕМ СИСТЕМУ ПОВТОРОВ (RETRY) ---
+        let chunkSuccess = false;
+        let retries = 0;
+
+        while (!chunkSuccess && retries < 3) {
+          try {
+            const data = await new Promise((resolve, reject) => {
+              const xhr = new XMLHttpRequest();
+              xhr.open('POST', '/api/games/upload-chunk');
+              
+              xhr.upload.addEventListener('progress', (e) => {
+                if (e.lengthComputable) {
+                  const loadedBytes = (i * CHUNK_SIZE) + e.loaded;
+                  const percent = Math.round((loadedBytes / file.size) * 90);
+                  setUploadState(prev => ({ 
+                    ...prev, progress: percent, 
+                    text: t.up_prog((loadedBytes / 1024 / 1024).toFixed(1), (file.size / 1024 / 1024).toFixed(1)) 
+                  }));
+                }
+              });
+
+              xhr.addEventListener('load', () => {
+                if (xhr.status >= 400) reject(new Error(t.up_err));
+                else resolve(JSON.parse(xhr.responseText));
+              });
+
+              xhr.addEventListener('error', () => reject(new Error(t.up_int)));
+              xhr.send(formData);
+            });
+
+            // Если ошибки не было, выходим из цикла retry
+            chunkSuccess = true;
+
+            if (data.finished) {
+              setUploadState(prev => ({ ...prev, progress: 100, text: `✓ ${data.message}` }));
+              showToast(data.message, 'success');
+              setTimeout(() => { setUploadState({ active: false, progress: 0, text: '' }); onUploadSuccess(); }, 2000);
+            }
+          } catch (err) {
+            retries++;
+            console.warn(`[Upload] Ошибка куска ${i}. Попытка ${retries} из 3...`);
+            if (retries >= 3) throw err; // Если 3 раза не вышло - крашим всю загрузку
+            await new Promise(r => setTimeout(r, 2000)); // Ждем 2 секунды перед повтором
+          }
         }
-      } catch(e) {
-        showToast(t.up_err, 'error');
-        setUploadState(prev => ({ ...prev, text: t.up_err }));
-        setTimeout(() => setUploadState({ active: false, progress: 0, text: '' }), 4000);
       }
-    });
-
-    xhr.addEventListener('error', () => {
-      showToast(t.up_int, 'error');
-      setUploadState({ active: true, progress: 0, text: t.up_int });
+    } catch (err) {
+      showToast(err.message, 'error');
+      setUploadState(prev => ({ ...prev, text: `✗ ${err.message}` }));
       setTimeout(() => setUploadState({ active: false, progress: 0, text: '' }), 4000);
-    });
-
-    xhr.open('POST', '/api/games/upload');
-    xhr.send(formData);
+    }
   };
 
   return (

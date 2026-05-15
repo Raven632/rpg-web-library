@@ -1,11 +1,11 @@
 const multer = require('multer');
 const path = require('path');
 const rateLimit = require('express-rate-limit');
-const { UPLOAD_TMP } = require('../config/index.js'); // Импортируем путь из нашего нового конфига
+const { UPLOAD_TMP } = require('../config/index.js');
 
 const uploadLimiter = rateLimit({ 
     windowMs: 60 * 1000, 
-    max: 5, 
+    max: 500, // УВЕЛИЧИЛИ ДО 500 (разрешаем отправку множества кусочков файла)
     message: { error: 'Слишком много загрузок' } 
 });
 
@@ -13,7 +13,7 @@ const storage = multer.diskStorage({
     destination: (req, file, cb) => cb(null, UPLOAD_TMP),
     filename: (req, file, cb) => {
         const ext = path.extname(file.originalname) || '';
-        cb(null, `archive_${Date.now()}${ext}`);
+        cb(null, `chunk_${Date.now()}_${Math.round(Math.random() * 1000)}${ext}`);
     }
 });
 

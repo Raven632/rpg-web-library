@@ -102,60 +102,99 @@ router.delete('/:id', async (req, res) => {
 // Экспорт роутера и отдельной функции для использования WebSockets
 module.exports = function(io, addGameToDB, EXTRACT_TMP) {
     
-    // Этот роут требует io и addGameToDB из server.js, поэтому передаем их
-    router.post('/upload', uploadLimiter, upload.single('game'), async (req, res) => {
-        if (!req.file) return res.status(400).json({ error: 'Файл не получен' });
+    // Этот роут принимает файлы кусочками и склеивает их
+    router.post('/upload-chunk', uploadLimiter, upload.single('chunk'), async (req, res) => {
+        if (!req.file) return res.status(400).json({ error: 'Чанк не получен' });
 
-        const archivePath = req.file.path;
-        let originalName = req.file.originalname.replace(/\.(zip|7z|rar)$/i, '').replace(/[^\w\s\-\.а-яА-Я\[\]]/g, '_').trim() || 'game_archive';
+        const { uploadId, chunkIndex, totalChunks, originalName } = req.body;
+        const chunkPath = req.file.path;
         
-        if (['_saves', '_tmp_uploads', 'api', 'socket.io', 'public', 'node_modules', '.audio-cache'].includes(originalName.toLowerCase())) {
-            originalName = 'game_' + Date.now();
-        }    
+        // Создаем уникальное имя для сборки файла
+        const safeUploadId = uploadId.replace(/[^a-zA-Z0-9_-]/g, '');
+        const finalArchivePath = path.join(EXTRACT_TMP, `${safeUploadId}.archive`);
 
-        const tmpExtractDir = path.join(EXTRACT_TMP, 'ext_' + Date.now());
+        try {
+            // =========================================================
+            // 1. Просто переименовываем кусок, давая ему порядковый номер
+            // =========================================================
+            const partFile = path.join(EXTRACT_TMP, `${safeUploadId}_${chunkIndex}.part`);
+            await fsp.rename(chunkPath, partFile);
 
-       try {
-            await fsp.mkdir(tmpExtractDir, { recursive: true });
-            io.emit('upload-status', { message: '🛡️ Проверка безопасности архива...' });
-
-            const { stdout } = await require('util').promisify(require('child_process').execFile)('7zz', ['l', '-ba', '-slt', archivePath], { maxBuffer: 200 * 1024 * 1024 });
-            const lines = stdout.split('\n').filter(l => l.startsWith('Path = '));
-            const baseTarget = path.resolve(tmpExtractDir) + path.sep;
-
-            for (const line of lines) {
-                const internalPath = line.replace('Path = ', '').trim();
-                if (!path.resolve(tmpExtractDir, internalPath).startsWith(baseTarget)) throw new Error(`Опасный путь (Zip Slip): ${internalPath}`);
+            // =========================================================
+            // 2. Если это еще не последний кусок, просто ждем дальше
+            // =========================================================
+            if (parseInt(chunkIndex) < parseInt(totalChunks) - 1) {
+                return res.json({ success: true, finished: false });
             }
 
-            io.emit('upload-status', { message: '🗜️ Распаковка архива...' });
-            await spawnExtract('7zz', ['x', archivePath, `-o${tmpExtractDir}`, '-y']);
-
-            io.emit('upload-status', { message: '🔍 Поиск файлов игры...' });
+            // =========================================================
+            // 3. ФИНАЛ: ПРИШЕЛ ПОСЛЕДНИЙ КУСОК! НАЧИНАЕМ АТОМАРНУЮ СБОРКУ
+            // =========================================================
+            const finalArchivePath = path.join(EXTRACT_TMP, `${safeUploadId}.archive`);
             
-            const sourceDir = await findGameFolder(tmpExtractDir);            
-            if (!sourceDir) throw new Error("Не найдена папка 'www' или 'index.html'");
-            
-            let finalDestFolder = originalName;
-            let counter = 1;
-            while (require('fs').existsSync(path.join(GAMES_DIR, finalDestFolder))) finalDestFolder = `${originalName}_${counter++}`;
-            const finalPath = path.join(GAMES_DIR, finalDestFolder);
+            // Собираем все .part файлы в один архив СТРОГО по порядку
+            for (let i = 0; i < parseInt(totalChunks); i++) {
+                const p = path.join(EXTRACT_TMP, `${safeUploadId}_${i}.part`);
+                const partData = await fsp.readFile(p);
+                await fsp.appendFile(finalArchivePath, partData);
+                await fsp.unlink(p).catch(() => {}); // Сразу удаляем мусорный кусочек
+            }
 
-            io.emit('upload-status', { message: '📦 Сохранение в библиотеку...' });
-            await require('util').promisify(require('child_process').execFile)('mv', [sourceDir, finalPath]);
+            // =========================================================
+            // 4. НАЧИНАЕМ РАСПАКОВКУ СОБРАННОГО АРХИВА
+            // =========================================================
+            let baseName = originalName.replace(/\.(zip|7z|rar)$/i, '').replace(/[^\w\s\-\.а-яА-Я\[\]]/g, '_').trim() || 'game_archive';
+            if (['_saves', '_tmp_uploads', 'api', 'socket.io', 'public', 'node_modules', '.audio-cache'].includes(baseName.toLowerCase())) {
+                baseName = 'game_' + Date.now();
+            }    
 
-            await fsp.rm(tmpExtractDir, { recursive: true, force: true }).catch(() => {});
-            await fsp.unlink(archivePath).catch(() => {});
+            const tmpExtractDir = path.join(EXTRACT_TMP, 'ext_' + Date.now());
 
-            await addGameToDB(finalDestFolder, finalPath);
+            try {
+                await fsp.mkdir(tmpExtractDir, { recursive: true });
+                io.emit('upload-status', { message: '🛡️ Проверка безопасности архива...' });
 
-            io.emit('upload-status', { message: '✨ Готово!' });
-            res.json({ success: true, folder: finalDestFolder, message: `Игра добавлена!` });
+                const { stdout } = await require('util').promisify(require('child_process').execFile)('7zz', ['l', '-ba', '-slt', finalArchivePath], { maxBuffer: 200 * 1024 * 1024 });
+                const lines = stdout.split('\n').filter(l => l.startsWith('Path = '));
+                const baseTarget = path.resolve(tmpExtractDir) + path.sep;
+
+                for (const line of lines) {
+                    const internalPath = line.replace('Path = ', '').trim();
+                    if (!path.resolve(tmpExtractDir, internalPath).startsWith(baseTarget)) throw new Error(`Опасный путь (Zip Slip): ${internalPath}`);
+                }
+
+                io.emit('upload-status', { message: '🗜️ Распаковка архива...' });
+                await spawnExtract('7zz', ['x', finalArchivePath, `-o${tmpExtractDir}`, '-y']);
+
+                io.emit('upload-status', { message: '🔍 Поиск файлов игры...' });
+                const sourceDir = await findGameFolder(tmpExtractDir);            
+                if (!sourceDir) throw new Error("Не найдена папка 'www' или 'index.html'");
+                
+                let finalDestFolder = baseName;
+                let counter = 1;
+                while (require('fs').existsSync(path.join(GAMES_DIR, finalDestFolder))) finalDestFolder = `${baseName}_${counter++}`;
+                const finalPath = path.join(GAMES_DIR, finalDestFolder);
+
+                io.emit('upload-status', { message: '📦 Сохранение в библиотеку...' });
+                await require('util').promisify(require('child_process').execFile)('mv', [sourceDir, finalPath]);
+
+                await fsp.rm(tmpExtractDir, { recursive: true, force: true }).catch(() => {});
+                await fsp.unlink(finalArchivePath).catch(() => {});
+
+                await addGameToDB(finalDestFolder, finalPath);
+
+                io.emit('upload-status', { message: '✨ Готово!' });
+                return res.json({ success: true, finished: true, folder: finalDestFolder, message: `Игра добавлена!` });
+            } catch (e) {
+                await fsp.rm(tmpExtractDir, { recursive: true, force: true }).catch(() => {});
+                await fsp.unlink(finalArchivePath).catch(() => {});
+                io.emit('upload-status', { message: '❌ Ошибка: ' + e.message });
+                return res.status(500).json({ error: 'Сбой: ' + e.message });
+            }
+
         } catch (e) {
-            await fsp.rm(tmpExtractDir, { recursive: true, force: true }).catch(() => {});
-            await fsp.unlink(archivePath).catch(() => {});
-            io.emit('upload-status', { message: '❌ Ошибка: ' + e.message });
-            res.status(500).json({ error: 'Сбой: ' + e.message });
+            await fsp.unlink(chunkPath).catch(() => {});
+            return res.status(500).json({ error: 'Ошибка склейки файла: ' + e.message });
         }
     });
 

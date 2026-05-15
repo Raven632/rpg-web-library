@@ -62,6 +62,25 @@ Promise.all([
 // [3] СИСТЕМНЫЕ УТИЛИТЫ И ФОНОВАЯ ОЧЕРЕДЬ
 // ============================================================================
 
+// --- АВТО-ОЧИСТКА ВРЕМЕННЫХ ФАЙЛОВ ---
+setInterval(async () => {
+    try {
+        const files = await fsp.readdir(EXTRACT_TMP);
+        const now = Date.now();
+        for (const file of files) {
+            const filePath = path.join(EXTRACT_TMP, file);
+            const stat = await fsp.stat(filePath);
+            // Если файл старее 24 часов (24 * 60 * 60 * 1000 мс) - удаляем
+            if (now - stat.mtimeMs > 86400000) { 
+                await fsp.rm(filePath, { recursive: true, force: true }).catch(()=>{});
+                console.log(`[Cleanup] Удален старый временный файл: ${file}`);
+            }
+        }
+    } catch (e) {
+        console.error('[Cleanup] Ошибка очистки:', e.message);
+    }
+}, 60 * 60 * 1000); // Запускать проверку каждый час
+
 // Процессор фоновой очереди (Умный универсальный парсер)
 async function processBackgroundScrape() {
     if (isBackgroundScraping || backgroundScrapeQueue.length === 0) return;
