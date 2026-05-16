@@ -73,8 +73,9 @@ test('processParsedData: извлекает теги и очищает HTML', as
   t.after(() => { global.fetch = originalFetch; });
 
   const mockGameData = {
-    genres: [{ name: 'RPG' }, { name: 'Fantasy' }],
-    intro_s: '<p>Epic <b>game</b>!</p>'
+    genres: [],
+    intro: '',
+    maker_name: ''
   };
 
   // 3. Вызываем через объект скрапера и используем правильное имя переменной
