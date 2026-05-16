@@ -204,9 +204,24 @@ class ScraperService {
         const tags = gameData.genres ? gameData.genres.map(g => g.name) : [];
         let description = (gameData.intro_s || gameData.intro || '').replace(/<[^>]*>?/gm, '').trim();
 
-        if (tags.length > 0) {
+        // --- НОВЫЕ ДАННЫЕ ИЗ API DLSITE ---
+        const developer = gameData.maker_name || '';
+        //regist_date приходит в виде "2020-03-07 10:00:00", забираем только дату до пробела
+        const releaseDate = gameData.regist_date ? gameData.regist_date.split(' ')[0] : '';
+        const link = `https://www.dlsite.com/home/work/=/product_id/${rjCode}.html`;
+        const language = 'Japanese'; // DLsite по умолчанию
+
+        // Я убрал жесткое условие "только если есть теги", чтобы данные сохранялись всегда
+        if (tags.length > 0 || description || developer) {
             const translatedDesc = await this.translateText(description, 'en');
-            const finalData = { tags: [...new Set(tags)], description: translatedDesc };
+            const finalData = { 
+                tags: [...new Set(tags)], 
+                description: translatedDesc,
+                developer,     // Добавили
+                releaseDate,   // Добавили
+                language,      // Добавили
+                link           // Добавили
+            };
             dlsiteTagCache.set(rjCode, { data: finalData, expiresAt: Date.now() + TAGS_CACHE_TTL_MS }); 
             return finalData;
         }
@@ -253,7 +268,15 @@ class ScraperService {
             if (data.results && data.results.length > 0) {
                 const vn = data.results[0];
                 let desc = (vn.description || '').replace(/\[\/?(b|i|u|url|spoiler|quote)[^\]]*\]/gi, '').trim();
-                return { coverUrl: vn.image ? vn.image.url : null, description: desc, tags: vn.tags ? vn.tags.map(t => t.name) : [] };
+                return { 
+                    coverUrl: vn.image ? vn.image.url : null, 
+                    description: desc, 
+                    tags: vn.tags ? vn.tags.map(t => t.name) : [],
+                    releaseDate: vn.released ? vn.released.substring(0, 4) : '', // Берем год
+                    link: `https://vndb.org/${vn.id}`,
+                    developer: '',
+                    language: ''
+                };
             }
         } catch (e) {}
         return null;
@@ -270,7 +293,15 @@ class ScraperService {
                 if (detailData[appId]?.success) {
                     const game = detailData[appId].data;
                     const desc = (game.short_description || game.about_the_game || '').replace(/<[^>]*>?/gm, '').trim();
-                    return { coverUrl: game.header_image, description: desc, tags: game.genres ? game.genres.map(g => g.description) : [] };
+                    return { 
+                        coverUrl: game.header_image, 
+                        description: desc, 
+                        tags: game.genres ? game.genres.map(g => g.description) : [],
+                        developer: game.developers ? game.developers.join(', ') : '',
+                        releaseDate: game.release_date?.date ? (game.release_date.date.match(/\d{4}/)?.[0] || '') : '',
+                        link: `https://store.steampowered.com/app/${appId}`,
+                        language: 'Multi'
+                    };
                 }
             }
         } catch (e) {}

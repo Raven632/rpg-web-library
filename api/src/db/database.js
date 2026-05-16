@@ -40,9 +40,13 @@ class DatabaseService {
             this.sessionToken = tokenRow.value;
         }
 
-        try { await this.db.exec('ALTER TABLE games ADD COLUMN ready INTEGER DEFAULT 0'); } catch (_) {}
-        try { await this.db.run('UPDATE games SET ready = 1 WHERE ready = 0 AND (title IS NOT NULL OR cover IS NOT NULL)'); } catch (e) {}
-
+        try { await this.db.exec('ALTER TABLE games ADD COLUMN developer TEXT DEFAULT ""'); } catch(e){}
+        try { await this.db.exec('ALTER TABLE games ADD COLUMN language TEXT DEFAULT ""'); } catch(e){}
+        try { await this.db.exec('ALTER TABLE games ADD COLUMN releaseDate TEXT DEFAULT ""'); } catch(e){}
+        try { await this.db.exec('ALTER TABLE games ADD COLUMN link TEXT DEFAULT ""'); } catch(e){}
+        try { await this.db.exec('ALTER TABLE games ADD COLUMN size INTEGER DEFAULT 0'); } catch(e){}
+        try { await this.db.exec('ALTER TABLE games ADD COLUMN version TEXT DEFAULT "1.0.0"'); } catch(e){}
+        
         console.log('🗄️ [DB] База данных инициализирована.');
         return this.db;
     }

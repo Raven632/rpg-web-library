@@ -141,9 +141,12 @@ function App() {
     } catch (err) {}
   };
 
-  const handleUpdateGame = (updatedGame) => {
-    setGames(prevGames => prevGames.map(g => g.id === updatedGame.id ? updatedGame : g));
-    setSelectedGame(prev => ({ ...prev, game: updatedGame })); 
+  const handleUpdateGame = (index, updatedGame) => {
+    // 1. Обновляем игру в общем списке (чтобы на главной странице обложка поменялась)
+    setGames(prev => prev.map(g => g.id === updatedGame.id ? updatedGame : g));
+    
+    // 2. КРИТИЧЕСКИ ВАЖНО: Обновляем снимок в выбранной игре, чтобы модалка сразу перерисовала обложку!
+    setSelectedGame(prev => prev ? { ...prev, game: updatedGame } : null);
   };
 
   const availableTags = useMemo(() => {
