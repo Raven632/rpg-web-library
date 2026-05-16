@@ -5,14 +5,42 @@ const dbService = require('../db/database.js');
 const scraperService = require('../services/scraper.js');
 const { GAMES_DIR } = require('../config/index.js');
 const { upload, uploadLimiter, coverUpload } = require('../utils/upload.js');
-const { spawnExtract, findGameFolder } = require('../utils/archive.js');
+const { spawnExtract, findGameFolder, getFolderSize } = require('../utils/archive.js');
 
 const router = express.Router();
+
+let isCalculatingSizes = false; // Глобальный замок
 
 // --- 1. ПОЛУЧЕНИЕ ВСЕХ ИГР (ТЕПЕРЬ С НОВЫМИ ПОЛЯМИ) ---
 router.get('/', async (req, res) => {
     try {
         const rows = await dbService.get().all('SELECT * FROM games WHERE ready = 1');
+
+        // =========================================================
+        // НОВОЕ: БЕЗОПАСНОЕ ФОНОВОЕ ВЗВЕШИВАНИЕ (С ЗАЩИТОЙ ОТ ГОНКИ)
+        // =========================================================
+        const gamesWithoutSize = rows.filter(r => !r.size || r.size === 0);
+        if (gamesWithoutSize.length > 0 && !isCalculatingSizes) {
+            isCalculatingSizes = true; // Вешаем замок (другие запросы игнорируют этот блок)
+            
+            setTimeout(async () => {
+                try {
+                    for (const g of gamesWithoutSize) {
+                        const gamePath = path.join(GAMES_DIR, g.id);
+                        const s = await getFolderSize(gamePath);
+                        if (s > 0) {
+                            await dbService.get().run('UPDATE games SET size = ? WHERE id = ?', [s, g.id]);
+                        }
+                    }
+                } catch (e) {
+                    console.error('[Background] Ошибка взвешивания:', e);
+                } finally {
+                    isCalculatingSizes = false; // Снимаем замок только когда всё закончили
+                }
+            }, 1000); 
+        }
+        // =========================================================
+
         const games = rows.map(row => ({
             id: row.id, 
             title: row.title, 
@@ -267,20 +295,43 @@ module.exports = function(io, addGameToDB, EXTRACT_TMP) {
                 await fsp.rm(tmpExtractDir, { recursive: true, force: true }).catch(() => {});
                 await fsp.unlink(finalArchivePath).catch(() => {});
 
+                // Запись базовых данных игры в базу данных
                 await addGameToDB(finalDestFolder, finalPath);
 
+                // 1. СРАЗУ отдаем ответ браузеру, чтобы фронтенд мгновенно показал успех и закрыл окно загрузки
                 io.emit('upload-status', { message: '✨ Готово!' });
-                return res.json({ success: true, finished: true, folder: finalDestFolder, message: `Игра добавлена!` });
+                res.json({ success: true, finished: true, folder: finalDestFolder, message: `Игра добавлена!` });
+
+                // 2. А тяжелый и долгий подсчет размера уводим в фоновый процесс, чтобы он не блокировал роут
+                setTimeout(async () => {
+                    try {
+                        io.emit('upload-status', { message: '📏 Подсчет размера...' });
+                        const gameSize = await getFolderSize(finalPath);
+                        await dbService.get().run('UPDATE games SET size = ? WHERE id = ?', [gameSize, finalDestFolder]);
+                        
+                        // Даем сигнал фронтенду обновить данные в интерфейсе, когда размер посчитан
+                        io.emit('scrape-success', { message: `Размер игры успешно определен!` });
+                    } catch (e) {
+                        console.error('[Upload] Ошибка фонового подсчета размера:', e);
+                    }
+                }, 500);
+
             } catch (e) {
                 await fsp.rm(tmpExtractDir, { recursive: true, force: true }).catch(() => {});
                 await fsp.unlink(finalArchivePath).catch(() => {});
                 io.emit('upload-status', { message: '❌ Ошибка: ' + e.message });
-                return res.status(500).json({ error: 'Сбой: ' + e.message });
+                
+                // Проверяем, не отправили ли мы уже ответ, чтобы сервер не упал при ошибке в фоне
+                if (!res.headersSent) {
+                    return res.status(500).json({ error: 'Сбой: ' + e.message });
+                }
             }
 
         } catch (e) {
             await fsp.unlink(chunkPath).catch(() => {});
-            return res.status(500).json({ error: 'Ошибка склейки файла: ' + e.message });
+            if (!res.headersSent) {
+                return res.status(500).json({ error: 'Ошибка склейки файла: ' + e.message });
+            }
         }
     });
 

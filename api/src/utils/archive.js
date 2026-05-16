@@ -26,4 +26,24 @@ async function findGameFolder(dir, depth = 0) {
     return null;
 }
 
-module.exports = { spawnExtract, findGameFolder };
+// --- НОВОЕ: Функция подсчета размера папки ---
+async function getFolderSize(dirPath) {
+    let totalSize = 0;
+    try {
+        const items = await fsp.readdir(dirPath, { withFileTypes: true });
+        for (const item of items) {
+            const fullPath = path.join(dirPath, item.name);
+            if (item.isDirectory()) {
+                totalSize += await getFolderSize(fullPath); // Рекурсия для подпапок
+            } else {
+                const stat = await fsp.stat(fullPath);
+                totalSize += stat.size; // Плюсуем байты
+            }
+        }
+    } catch (e) {
+        // Игнорируем системные файлы, к которым нет доступа
+    }
+    return totalSize;
+}
+
+module.exports = { spawnExtract, findGameFolder, getFolderSize };

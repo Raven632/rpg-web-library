@@ -38,6 +38,10 @@ const backgroundScrapeQueue = [];
 const queuedScrapes = new Set();
 let isBackgroundScraping = false;
 
+let cachedStorage = null;
+let lastStorageCheck = 0;
+const CACHE_TTL = 60 * 60 * 1000;
+
 app.use(compression());
 
 
@@ -221,22 +225,31 @@ const { exec } = require('child_process');
 const fsPromises = require('fs/promises');
 
 // --- РОУТ ДЛЯ МОНИТОРИНГА ПАМЯТИ ---
-app.get('/api/storage', async (req, res) => {
+app.get('/api/storage', requireAuth, async (req, res) => { 
     try {
+        // Проверяем кэш: если данные свежие, сразу отдаем их, не напрягая диск
+        if (cachedStorage && (Date.now() - lastStorageCheck < CACHE_TTL)) {
+            return res.json(cachedStorage);
+        }
+
         const gamesDir = GAMES_DIR; // Берем из твоих конфигов
 
-        // 1. Узнаем размер всех игр (через Linux утилиту 'du' - это в 100 раз быстрее JS)
+        // 1. Узнаем размер всех игр
         const { stdout: duOut } = await execFilePromise('du', ['-sb', gamesDir]);
         const usedBytes = parseInt(duOut.split('\t')[0], 10);
 
-        // 2. Узнаем свободное место на диске (Фича Node.js 20+)
+        // 2. Узнаем свободное место на диске (Node.js 20+)
         const stats = await fsPromises.statfs(gamesDir);
         const freeBytes = stats.bavail * stats.bsize;
 
-        res.json({
+        // Сохраняем новые данные в кэш
+        cachedStorage = {
             used: usedBytes,
             free: freeBytes
-        });
+        };
+        lastStorageCheck = Date.now();
+
+        res.json(cachedStorage);
     } catch (error) {
         console.error('[Storage] Ошибка чтения диска:', error);
         res.status(500).json({ error: 'Failed to read storage' });
