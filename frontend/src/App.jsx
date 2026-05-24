@@ -179,6 +179,8 @@ function App() {
       if (currentSort === 'recent') return b.lastPlayed - a.lastPlayed;
       if (currentSort === 'rating_desc') return (b.rating || 0) - (a.rating || 0);
       if (currentSort === 'name') return a.title.localeCompare(b.title);
+      if (currentSort === 'size_desc') return (b.size || 0) - (a.size || 0);
+      if (currentSort === 'size_asc') return (a.size || 0) - (b.size || 0);
       return 0;
     });
     return result;

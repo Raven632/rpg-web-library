@@ -110,6 +110,8 @@ const Toolbar = ({
         <option value="recent">{t.sort_rec}</option>
         <option value="rating_desc">{t.sort_rat}</option>
         <option value="name">{t.sort_alp}</option>
+        <option value="size_desc">{t.sort_size_desc}</option>
+        <option value="size_asc">{t.sort_size_asc}</option>
       </select>
 
       <div 

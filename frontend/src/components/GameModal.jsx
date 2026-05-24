@@ -204,7 +204,14 @@ const GameModal = ({ game, index, onClose, onUpdateGame, t, lang, showToast }) =
 
   const handlePlay = () => {
     setIsPlaying(true);
-    setTimeout(() => { window.location.href = game.url; }, 500);
+    
+    // Динамически подставляем протокол (http/https) и IP-адрес/домен твоего сервера,
+    // с которого зашёл пользователь, меняя в DEV-режиме только порт на бэкенд (3000)
+    const playUrl = import.meta.env.DEV 
+      ? `${window.location.protocol}//${window.location.hostname}${game.url}` 
+      : game.url;
+
+    setTimeout(() => { window.location.href = playUrl; }, 500);
   };
 
   // --- НОВАЯ ЛОГИКА ОПРЕДЕЛЕНИЯ САЙТА ДЛЯ ССЫЛКИ ---

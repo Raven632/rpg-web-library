@@ -3,8 +3,15 @@
 // ============================================================================
 window.process = window.process || {};
 window.process.platform = window.process.platform || 'browser';
-window.process.mainModule = { filename: '' };
-window.process.versions = {};
+
+// ВОТ ЭТА СТРОЧКА СПАСЕТ ОТ КРАША process.argv[0]
+window.process.argv = window.process.argv || ['/']; 
+
+const mockPath = window.location.pathname || '/';
+window.process.mainModule = { 
+    filename: mockPath.endsWith('index.html') ? mockPath : mockPath + 'index.html' 
+};
+window.process.versions = window.process.versions || {};
 
 // Бронежилет для process.env
 let _env = { USER: 'Player' };
@@ -59,6 +66,15 @@ window.ExternalStorage = {
     writeFile: function(id) { this._reply(id, "true"); return false; }
 };
 window.Android = { showToast: function(){}, getVersion: function(){return "1.0";} };
+// ============================================================================
+// 0b. ADV_System stub — до загрузки TS_ADVsystem.js
+// TS_ADVsystem.js строка 9: if(ADV_System == null) — без typeof!
+// ============================================================================
+if (typeof ADV_System === 'undefined') {
+    window.ADV_System = null;
+}
+
+
 
 // ============================================================================
 // 2. БЛОКИРОВЩИК ПЛАГИНОВ И ЛЕКАРЬ ПРОМИСОВ (Перехватчик)
@@ -151,7 +167,7 @@ if (!window.__rpgPluginHookInstalled) {
         if (orgSetTextAlign && orgSetTextAlign.set) {
             Object.defineProperty(CanvasRenderingContext2D.prototype, 'textAlign', {
                 set: function(value) {
-                    var safeValue = (value === 'undefined' || !value) ? 'left' : value;
+                    var safeValue = (value === 'undefined' || !value) ? 'left' : String(value).toLowerCase();
                     orgSetTextAlign.set.call(this, safeValue);
                 }
             });
@@ -163,6 +179,30 @@ if (!window.__rpgPluginHookInstalled) {
                 if (arguments[0].indexOf('Unsupported skeleton data') > -1) return;
             }
             orgWarn.apply(console, arguments);
+        };
+        // ====================================================================
+        // ФИКС КРАША СНИМКОВ ЭКРАНА (getImageData non-finite / type 'long')
+        // ====================================================================
+        var origGetImageData = CanvasRenderingContext2D.prototype.getImageData;
+        CanvasRenderingContext2D.prototype.getImageData = function(sx, sy, sw, sh) {
+            // Строгая проверка: если это Бесконечность (Infinity) или NaN -> превращаем в 0
+            var x = (isFinite(sx) && !isNaN(sx)) ? Math.round(sx) : 0;
+            var y = (isFinite(sy) && !isNaN(sy)) ? Math.round(sy) : 0;
+            var w = (isFinite(sw) && !isNaN(sw)) ? Math.round(sw) : 1;
+            var h = (isFinite(sh) && !isNaN(sh)) ? Math.round(sh) : 1;
+            
+            // Canvas ненавидит нулевую ширину или высоту
+            if (w === 0) w = 1;
+            if (h === 0) h = 1;
+
+            try {
+                // Пытаемся сделать снимок с отфильтрованными координатами
+                return origGetImageData.call(this, x, y, w, h);
+            } catch (e) {
+                // Если Canvas всё равно недоволен, отдаем пустой прозрачный квадрат
+                console.warn('[RPG Fixes] 🛡️ Перехвачен краш getImageData:', e.message);
+                return this.createImageData(Math.abs(w) || 1, Math.abs(h) || 1);
+            }
         };
     }
 
@@ -245,7 +285,6 @@ if (!window.__rpgPluginHookInstalled) {
         const pixi_t = setInterval(() => {
             if (typeof PIXI === 'undefined') return;
             clearInterval(pixi_t);
-            try { PIXI.settings.RESOLUTION = TARGET; PIXI.settings.GC_MAX_IDLE = 60; PIXI.settings.GC_MAX_CHECK_COUNT = 20; PIXI.settings.SPRITE_MAX_TEXTURES = 16; } catch(e) {}
             const gfx_t = setInterval(() => {
                 if (typeof Graphics === 'undefined') return;
                 const r = (Graphics._app && Graphics._app.renderer) || Graphics._renderer;
@@ -1050,21 +1089,7 @@ if (!window.__rpgPluginHookInstalled) {
             AudioManager.checkErrors = function () { try { if (orig) orig.apply(this, arguments); } catch (e) {} };
         }
 
-        const decTimer = setInterval(() => {
-            if (typeof Decrypter !== 'undefined' && !Decrypter.__smartPatched) {
-                Decrypter.__smartPatched = true;
-                const _decrypt = Decrypter.decryptArrayBuffer;
-                Decrypter.decryptArrayBuffer = function(arrayBuffer, ...rest) {
-                    try {
-                        if (!arrayBuffer || arrayBuffer.byteLength < 4) return arrayBuffer;
-                        const header = new Uint8Array(arrayBuffer, 0, 4);
-                        if (header[0] !== 0x52 || header[1] !== 0x50 || header[2] !== 0x47 || header[3] !== 0x4D) return arrayBuffer;
-                    } catch (e) {}
-                    return _decrypt.call(this, arrayBuffer, ...rest);
-                };
-                clearInterval(decTimer);
-            }
-        }, 50);
+        // Блок decTimer отсюда удален, чтобы не ломать картинки!
 
         const formatTimer = setInterval(() => {
             if (typeof WebAudio !== 'undefined' && typeof AudioManager !== 'undefined') {
@@ -1216,6 +1241,54 @@ if (!window.__rpgPluginHookInstalled) {
         setTimeout(() => clearInterval(pluginTimer), 15000);
     }
 
+    // ============================================================================
+    // ФИКС КРАША СНИМКОВ ЭКРАНА (Броня на уровне движка RPG Maker)
+    // ============================================================================
+    const bitmapShieldTimer = setInterval(() => {
+        // Ждем, пока движок загрузит класс Bitmap
+        if (typeof Bitmap !== 'undefined' && Bitmap.prototype && Bitmap.prototype.getPixel) {
+            clearInterval(bitmapShieldTimer);
+            
+            // 1. Защита функции getPixel (Часто ломается при определении клика по картинке)
+            const origGetPixel = Bitmap.prototype.getPixel;
+            Bitmap.prototype.getPixel = function(x, y) {
+                x = (isFinite(x) && !isNaN(x)) ? Math.round(x) : 0;
+                y = (isFinite(y) && !isNaN(y)) ? Math.round(y) : 0;
+                try {
+                    return origGetPixel.call(this, x, y);
+                } catch(e) {
+                    return '#000000'; // Возвращаем черный цвет при ошибке
+                }
+            };
+
+            // 2. Защита функции getAlphaPixel (Проверка прозрачности)
+            const origGetAlphaPixel = Bitmap.prototype.getAlphaPixel;
+            Bitmap.prototype.getAlphaPixel = function(x, y) {
+                x = (isFinite(x) && !isNaN(x)) ? Math.round(x) : 0;
+                y = (isFinite(y) && !isNaN(y)) ? Math.round(y) : 0;
+                try {
+                    return origGetAlphaPixel.call(this, x, y);
+                } catch(e) {
+                    return 0; // Возвращаем полную прозрачность при ошибке
+                }
+            };
+            
+            // 3. Защита функции clearRect (Очистка экрана)
+            const origClearRect = Bitmap.prototype.clearRect;
+            Bitmap.prototype.clearRect = function(x, y, width, height) {
+                x = (isFinite(x) && !isNaN(x)) ? Math.round(x) : 0;
+                y = (isFinite(y) && !isNaN(y)) ? Math.round(y) : 0;
+                width = (isFinite(width) && !isNaN(width)) ? Math.round(width) : 1;
+                height = (isFinite(height) && !isNaN(height)) ? Math.round(height) : 1;
+                try {
+                    origClearRect.call(this, x, y, width, height);
+                } catch(e) {}
+            };
+
+            console.log('[RPG Fixes] 🛡️ Броня Bitmap (getPixel/clearRect) активирована!');
+        }
+    }, 100);
+
     // ВОССТАНОВЛЕНО: Отдельный и надежный анти-спам фильтр
     function setupNetworkAntiSpam() {
         const patchTimer = setInterval(() => {
@@ -1239,6 +1312,119 @@ if (!window.__rpgPluginHookInstalled) {
     }
 
     // ============================================================================
+    // 9. АБСОЛЮТНАЯ БРОНЯ ДЛЯ СПРАЙТОВ (Защита от reading 'width')
+    // ============================================================================
+    function setupSpriteArmor() {
+        const spriteArmorTimer = setInterval(() => {
+            if (typeof Sprite_Picture !== 'undefined' && typeof Sprite_Character !== 'undefined') {
+                clearInterval(spriteArmorTimer);
+                
+                const safeBitmap = typeof Bitmap !== 'undefined' ? new Bitmap(1, 1) : { width: 1, height: 1, isReady: () => true };
+                
+                const origPicUpdate = Sprite_Picture.prototype.update;
+                Sprite_Picture.prototype.update = function() {
+                    if (!this.bitmap) this.bitmap = safeBitmap;
+                    try { origPicUpdate.call(this); } catch(e) { console.warn('[RPG Fixes] Перехвачен краш картинки:', e); }
+                };
+
+                const origCharUpdate = Sprite_Character.prototype.update;
+                Sprite_Character.prototype.update = function() {
+                    if (!this.bitmap) this.bitmap = safeBitmap;
+                    try { origCharUpdate.call(this); } catch(e) { console.warn('[RPG Fixes] Перехвачен краш персонажа:', e); }
+                };
+                
+                console.log('[RPG Fixes] 🛡️ Броня спрайтов активирована!');
+            }
+        }, 100);
+    }
+
+    // ============================================================================
+    // 10. СОВРЕМЕННЫЙ ДЕШИФРАТОР (Идеальный фикс загрузки .rpgmvp)
+    // ============================================================================
+    function setupModernDecrypter() {
+        var decrypterPatchTimer = setInterval(function() {
+            if (typeof Decrypter === 'undefined' || !Decrypter.decryptImg) return;
+            clearInterval(decrypterPatchTimer);
+
+            Decrypter.decryptImg = function(url, bitmap) {
+                var self = this;
+                var encUrl = this.extToEncryptExt(url);
+
+                fetch(encUrl, { cache: 'no-store' })
+                    .then(function(response) {
+                        if (!response.ok) throw new Error('HTTP ' + response.status + ': ' + encUrl);
+                        return response.arrayBuffer();
+                    })
+                    .then(function(arrayBuffer) {
+                        var decrypted = self.decryptArrayBuffer(arrayBuffer);
+                        var blob      = new Blob([decrypted], { type: 'image/png' });
+                        var blobUrl   = URL.createObjectURL(blob);
+
+                        var freshImage = new Image();
+
+                        freshImage.onload = function() {
+                            bitmap._image.onload = function() {
+                                if (bitmap._baseTexture) {
+                                    bitmap._baseTexture.hasLoaded = true;
+                                    bitmap._baseTexture.width  = bitmap._image.naturalWidth  || bitmap._image.width  || 1;
+                                    bitmap._baseTexture.height = bitmap._image.naturalHeight || bitmap._image.height || 1;
+                                    bitmap._baseTexture.source = bitmap._image;
+                                    bitmap._baseTexture.dirty();
+                                    if (bitmap._baseTexture.emit) {
+                                        bitmap._baseTexture.emit('loaded', bitmap._baseTexture);
+                                    }
+                                }
+                                bitmap._url       = url;
+                                bitmap._isLoading = false;
+                                bitmap.width  = bitmap._image.naturalWidth  || bitmap._image.width  || 1;
+                                bitmap.height = bitmap._image.naturalHeight || bitmap._image.height || 1;
+
+                                if (Array.isArray(bitmap._loadListeners)) {
+                                    var listeners = bitmap._loadListeners.slice();
+                                    bitmap._loadListeners = [];
+                                    for (var li = 0; li < listeners.length; li++) {
+                                        try { listeners[li](bitmap); } catch(e) {}
+                                    }
+                                }
+                                if (typeof bitmap._onLoad === 'function') {
+                                    try { bitmap._onLoad(); } catch(e) {}
+                                }
+                                setTimeout(function() { URL.revokeObjectURL(blobUrl); }, 5000);
+                            };
+                            bitmap._image.onerror = function() {
+                                console.warn('[RPG Fixes] Blob onerror:', url);
+                                bitmap._isLoading = false;
+                                if (Array.isArray(bitmap._loadListeners)) bitmap._loadListeners = [];
+                                if (typeof bitmap._onError === 'function') { try { bitmap._onError(); } catch(e) {} }
+                            };
+                            bitmap._image.src = blobUrl;
+                            if (bitmap._image.complete && bitmap._image.naturalWidth > 0) {
+                                bitmap._image.onload();
+                            }
+                        };
+                        freshImage.onerror = function() {
+                            console.warn('[RPG Fixes] Blob freshImage error:', url);
+                            bitmap._isLoading = false;
+                            if (Array.isArray(bitmap._loadListeners)) bitmap._loadListeners = [];
+                        };
+                        freshImage.src = blobUrl;
+                        if (freshImage.complete && freshImage.naturalWidth > 0) {
+                            freshImage.onload();
+                        }
+                    })
+                    .catch(function(e) {
+                        console.warn('[RPG Fixes] Decrypter fetch error:', url, e);
+                        bitmap._isLoading = false;
+                        if (Array.isArray(bitmap._loadListeners)) bitmap._loadListeners = [];
+                        if (typeof bitmap._onError === 'function') { try { bitmap._onError(); } catch(e2) {} }
+                    });
+            };
+            console.log('[RPG Fixes] Bulletproof Decrypter MV 1.5.1 activated!');
+        }, 100);
+        setTimeout(function() { clearInterval(decrypterPatchTimer); }, 15000);
+    }
+
+    // ============================================================================
     // ИНИЦИАЛИЗАЦИЯ
     // ============================================================================
 
@@ -1259,10 +1445,84 @@ if (!window.__rpgPluginHookInstalled) {
         
         // Наши восстановленные функции
         setupGlobalCrashProtection();
-        setupNetworkAntiSpam();
-        
+        setupSpriteArmor();
         console.log('✅ RPG-Fixes Ultimate v4.1 успешно загружен!');
     }
+
+    // ============================================================================
+    // ПАТЧ ДЛЯ ПЛАГИНА TS_ADVsystem / TS_Decode (ПРАВИЛЬНЫЙ PROTOTYPE)
+    // ============================================================================
+    var aggressiveAdvPatch = setInterval(function() {
+        if (typeof ADV_System === 'undefined' || !ADV_System || !ADV_System.prototype) return;
+        clearInterval(aggressiveAdvPatch);
+        console.log('[RPG Fixes] ADV_System.prototype patch activated!');
+
+        // 1. localFileDirectoryPath — всегда возвращает 'scenario/'
+        Object.defineProperty(ADV_System.prototype, 'localFileDirectoryPath', {
+            value: function() { return 'scenario/'; },
+            writable: false,
+            configurable: false
+        });
+
+        // 2. УМНЫЙ fileLoad: перебор расширений, XHR и XOR-дешифровка
+        ADV_System.prototype.fileLoad = function(filename) {
+            // На веб-серверах важен регистр и точное расширение
+            var variants = [
+                'scenario/' + filename + '.txt',
+                'scenario/' + filename + '.sl',
+                'Scenario/' + filename + '.txt',
+                'Scenario/' + filename + '.sl'
+            ];
+            
+            var file_data = '';
+            var successUrl = '';
+            
+            // Пробуем найти файл по всем вариантам путей
+            for (var i = 0; i < variants.length; i++) {
+                var xhr = new XMLHttpRequest();
+                xhr.open('GET', variants[i], false); 
+                xhr.overrideMimeType('text/plain; charset=utf-8');
+                try {
+                    xhr.send();
+                    // Сервер по IPv4 может вернуть статус 200 (ОК) или 0 (если CORS/локалка)
+                    if (xhr.status === 200 || xhr.status === 0) {
+                        if (xhr.responseText) {
+                            file_data = xhr.responseText;
+                            successUrl = variants[i];
+                            break; // Файл найден!
+                        }
+                    }
+                } catch(e) { }
+            }
+            
+            if (!file_data) {
+                console.error('[RPG Fixes] 🔴 Сценарий не найден (404) ни в одном из форматов:', filename);
+                return '';
+            }
+            
+            console.log('[RPG Fixes] 🟢 Сценарий скачан:', successUrl);
+            
+            // Восстанавливаем логику TS_Decode.js для расшифровки текста!
+            if (typeof PluginManager !== 'undefined') {
+                var parameters = PluginManager.parameters('TS_Decode');
+                var argTsDecodeDebug = eval(parameters['Decode'] || 'false');
+                var argTsDecodeKey = parseInt(parameters['Key'] || '255');
+                
+                if (argTsDecodeDebug) {
+                    var text_ary = file_data.split('');
+                    for (var j = 0; j < text_ary.length; j++) {
+                        text_ary[j] = String.fromCharCode(text_ary[j].charCodeAt(0) ^ argTsDecodeKey);
+                    }
+                    file_data = text_ary.join('');
+                    console.log('[RPG Fixes] 🔓 Текст сценария успешно расшифрован!');
+                }
+            }
+            
+            return file_data;
+        };
+        console.log('[RPG Fixes] ADV_System.fileLoad + localFileDirectoryPath patched!');
+    }, 10);
+    setTimeout(function() { clearInterval(aggressiveAdvPatch); }, 15000);
 
     initUltimateFixes();
 

@@ -50,7 +50,9 @@ export const locales = {
     burn_err: "Магия дала сбой (Ошибка сети)",
     saving: "Сохранение...",
     saving_rj: "Связь с серверами... (~15 сек)",
-    err_net: "Магия отвергла вас"
+    err_net: "Магия отвергла вас",
+    "sort_size_desc": "Сначала тяжелые",
+    "sort_size_asc": "Сначала легкие"
   },
   en: {
     subtitle: "Your personal adventure collection",
@@ -103,7 +105,9 @@ export const locales = {
     burn_err: "Magic failed (Network error)",
     saving: "Saving...",
     saving_rj: "Contacting servers... (~15 sec)",
-    err_net: "Magic rejected you"
+    err_net: "Magic rejected you",
+    "sort_size_desc": "Largest first",
+    "sort_size_asc": "Smallest first"
   },
   de: {
     subtitle: "Deine persönliche Abenteuersammlung",
@@ -156,6 +160,8 @@ export const locales = {
     burn_err: "Magie fehlgeschlagen (Netzwerkfehler)",
     saving: "Speichern...",
     saving_rj: "Verbindung zu den Servern... (~15 Sek)",
-    err_net: "Die Magie hat dich abgelehnt"
+    err_net: "Die Magie hat dich abgelehnt",
+    "sort_size_desc": "Größte zuerst",
+    "sort_size_asc": "Kleinste zuerst"
   }
 };
