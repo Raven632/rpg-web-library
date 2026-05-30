@@ -19,7 +19,7 @@ const storage = multer.diskStorage({
 
 const upload = multer({
     storage,
-    limits: { fileSize: 10 * 1024 * 1024 * 1024 }, // 10 GB limit
+    limits: { fileSize: 20 * 1024 * 1024 * 1024 }, // 10 GB limit
     fileFilter: (req, file, cb) => {
         if (file.originalname.match(/\.(zip|7z|rar)$/i)) cb(null, true);
         else cb(new Error('Поддерживаются только ZIP, 7z и RAR!'));

@@ -241,13 +241,15 @@ class ScraperService {
             ];
             for (const gateway of gateways) {
                 try {
-                    const controller = new AbortController();
-                    const timeoutId = setTimeout(() => controller.abort(), 8000); 
                     const res = await fetch(gateway, { signal: controller.signal });
                     clearTimeout(timeoutId);
-                    const data = await res.json();
+                    const text = await res.text(); // сначала text, не json
+                    console.log(`[DLsite] Gateway ${gateway} → status ${res.status}, body начало: ${text.slice(0, 200)}`);
+                    const data = JSON.parse(text);
                     if (data?.[0]?.work_name) return await this.processParsedData(data[0], rjCode);
-                } catch (e) {}
+                } catch (e) {
+                    console.log(`[DLsite] Gateway FAIL:`, e.message);
+                }
             }
         }
         const jpUrl = `https://www.dlsite.com/maniax/api/=/product.json?workno=${rjCode}&locale=en_US`;
@@ -275,8 +277,8 @@ class ScraperService {
                 // УМНАЯ СТРОГАЯ ПРОВЕРКА: удаляем все спецсимволы и пробелы
                 if (!/^v\d+$/.test(query)) {
                     // Оставляем только буквы (в т.ч. русские) и цифры
-                    const vnTitle = vn.title.toLowerCase().replace(/[^a-z0-9а-я]/gi, '');
-                    const searchTitle = query.toLowerCase().replace(/[^a-z0-9а-я]/gi, '');
+                    const vnTitle = vn.title.toLowerCase().replace(/[^a-z0-9а-яぁ-んァ-ン一-龯]/gi, '')
+                    const searchTitle = query.toLowerCase().replace(/[^a-z0-9а-яぁ-んァ-ン一-龯]/gi, '')
                     if (!vnTitle.includes(searchTitle) && !searchTitle.includes(vnTitle)) {
                         return null; // Защита от левых новелл
                     }
@@ -308,8 +310,8 @@ class ScraperService {
                     const item = searchData.items[0];
                     
                     // УМНАЯ СТРОГАЯ ПРОВЕРКА: удаляем все пробелы, апострофы и дефисы
-                    const steamTitle = item.name.toLowerCase().replace(/[^a-z0-9а-я]/gi, '');
-                    const searchTitle = query.toLowerCase().replace(/[^a-z0-9а-я]/gi, '');
+                    const steamTitle = item.name.toLowerCase().replace(/[^a-z0-9а-яぁ-んァ-ン一-龯]/gi, '')
+                    const searchTitle = query.toLowerCase().replace(/[^a-z0-9а-яぁ-んァ-ン一-龯]/gi, '')
                     
                     if (!steamTitle.includes(searchTitle) && !searchTitle.includes(steamTitle)) {
                         return null; // Название не совпадает - это ложное срабатывание, отменяем!
