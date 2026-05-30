@@ -30,6 +30,7 @@ RUN apt-get update && apt-get install -y \
     ffmpeg \
     python3 \
     build-essential \
+    ca-certificates \
     --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && wget -q https://github.com/ip7z/7zip/releases/download/26.00/7z2600-linux-x64.tar.xz \
