@@ -77,7 +77,8 @@ const GameModal = ({ game, index, onClose, onUpdateGame, t, lang, showToast }) =
   }, [isEditing, game]);
 
   const handleBackup = () => {
-    window.location.href = `/api/saves/backup/${game.id}`;
+    // Бэкенд ждет путь /export/:id (с учетом префикса роутера это /api/saves/export/)
+    window.location.href = `/api/saves/export/${game.id}`; 
   };
 
   const handleImportSelect = async (e) => {
@@ -85,7 +86,7 @@ const GameModal = ({ game, index, onClose, onUpdateGame, t, lang, showToast }) =
     if (!file) return;
     setIsImporting(true);
     const formData = new FormData();
-    formData.append('file', file);
+    formData.append('saves', file);
     try {
       const res = await fetch(`/api/saves/import/${game.id}`, { method: 'POST', body: formData });
       const data = await res.json();

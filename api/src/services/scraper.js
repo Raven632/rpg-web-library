@@ -3,7 +3,6 @@ const path = require('path');
 const util = require('util');
 const { execFile } = require('child_process');
 const execFilePromise = util.promisify(execFile);
-const dbService = require('../db/database.js');
 
 const TAGS_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const dlsiteTagCache = new Map();
@@ -15,11 +14,13 @@ class ScraperService {
         this.isBackgroundScraping = false;
         this.io = null;
         this.GAMES_DIR = '';
+        this.dbService = null; // <-- Добавили слот для базы
     }
 
-    setDependencies(io, gamesDir) {
+    setDependencies(io, gamesDir, dbService) { // <-- Принимаем базу
         this.io = io;
         this.GAMES_DIR = gamesDir;
+        this.dbService = dbService; // <-- Сохраняем
     }
 
     queueScrape(folder) {
@@ -55,13 +56,14 @@ class ScraperService {
                     const tagsJson = JSON.stringify(scrapedData.tags || []);
                     const desc = scrapedData.description || '';
 
-                    await dbService.get().run('UPDATE games SET tags = ?, description = ?, scraped = 1 WHERE id = ?', [tagsJson, desc, folder]);
+                    // Используем this.dbService вместо глобального импорта
+                    await this.dbService.get().run('UPDATE games SET tags = ?, description = ?, scraped = 1 WHERE id = ?', [tagsJson, desc, folder]);
                     
                     if (scrapedData.coverUrl) {
-                        const current = await dbService.get().get('SELECT cover FROM games WHERE id = ?', [folder]);
+                        const current = await this.dbService.get().get('SELECT cover FROM games WHERE id = ?', [folder]);
                         if (!current?.cover) {
                             if (await this.downloadRemoteCover(scrapedData.coverUrl, path.join(gamePath, 'cover.jpg'))) {
-                                await dbService.get().run('UPDATE games SET cover = ? WHERE id = ?', [`${folder}/cover.jpg`, folder]);
+                                await this.dbService.get().run('UPDATE games SET cover = ? WHERE id = ?', [`${folder}/cover.jpg`, folder]);
                             }
                         }
                     }
@@ -69,7 +71,7 @@ class ScraperService {
                     if (this.io) this.io.emit('scrape-success', { message: `✅ Данные для "${title}" успешно загружены!` });
                     console.log(`[Queue] ✅ Успешно обновлено: ${folder}`);
                 } else {
-                    await dbService.get().run('UPDATE games SET scraped = 1 WHERE id = ?', [folder]);
+                    await this.dbService.get().run('UPDATE games SET scraped = 1 WHERE id = ?', [folder]);
                     console.log(`[Queue] ⚠️ Данные не найдены для: ${folder}`);
                 }
             } catch (e) {
@@ -204,23 +206,20 @@ class ScraperService {
         const tags = gameData.genres ? gameData.genres.map(g => g.name) : [];
         let description = (gameData.intro_s || gameData.intro || '').replace(/<[^>]*>?/gm, '').trim();
 
-        // --- НОВЫЕ ДАННЫЕ ИЗ API DLSITE ---
         const developer = gameData.maker_name || '';
-        //regist_date приходит в виде "2020-03-07 10:00:00", забираем только дату до пробела
         const releaseDate = gameData.regist_date ? gameData.regist_date.split(' ')[0] : '';
         const link = `https://www.dlsite.com/home/work/=/product_id/${rjCode}.html`;
-        const language = 'Japanese'; // DLsite по умолчанию
+        const language = 'Japanese';
 
-        // Я убрал жесткое условие "только если есть теги", чтобы данные сохранялись всегда
         if (tags.length > 0 || description || developer) {
             const translatedDesc = await this.translateText(description, 'en');
             const finalData = { 
                 tags: [...new Set(tags)], 
                 description: translatedDesc,
-                developer,     // Добавили
-                releaseDate,   // Добавили
-                language,      // Добавили
-                link           // Добавили
+                developer,
+                releaseDate,
+                language,
+                link
             };
             dlsiteTagCache.set(rjCode, { data: finalData, expiresAt: Date.now() + TAGS_CACHE_TTL_MS }); 
             return finalData;
@@ -272,7 +271,7 @@ class ScraperService {
                     coverUrl: vn.image ? vn.image.url : null, 
                     description: desc, 
                     tags: vn.tags ? vn.tags.map(t => t.name) : [],
-                    releaseDate: vn.released ? vn.released.substring(0, 4) : '', // Берем год
+                    releaseDate: vn.released ? vn.released.substring(0, 4) : '',
                     link: `https://vndb.org/${vn.id}`,
                     developer: '',
                     language: ''

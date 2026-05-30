@@ -11,12 +11,12 @@ services:
       # Ювелирно прокидываем только один скрипт из папки public
       - ./api/public/rpg-fixes.js:/app/api/public/rpg-fixes.js
       
-    restart: "no"
     environment:
       - NODE_ENV=development
       
   frontend:
       image: node:20
+      restart: unless-stopped
       working_dir: /app/frontend
       # Устанавливаем модули (если надо) и запускаем Vite с доступом по локалке
       command: sh -c "npm install && npm run dev -- --host 0.0.0.0"

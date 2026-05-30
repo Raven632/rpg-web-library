@@ -4,6 +4,22 @@
 window.process = window.process || {};
 window.process.platform = window.process.platform || 'browser';
 
+// ============================================================================
+// --- ВЗЛОМЩИК STEAM  И АЧИВОК ---
+// ============================================================================
+window.CycloneSteam = {
+    isSteamRunning: true,
+    active: true,
+    isSubscribedApp: function(appId) { 
+        return true; // <-- Вот эта строчка ломает антипиратскую защиту
+    },
+    registerAchievement: function(){},
+    getAchievement: function(){ return false; },
+    setAchievement: function(){},
+    clearAchievement: function(){}
+};
+window.Greenworks = { initAPI: function(){ return true; } };
+
 // ВОТ ЭТА СТРОЧКА СПАСЕТ ОТ КРАША process.argv[0]
 window.process.argv = window.process.argv || ['/']; 
 
@@ -88,7 +104,7 @@ if (!window.__rpgPluginHookInstalled) {
             set: function(val) {
                 if (val && typeof val === 'string') {
                     var lowerVal = val.toLowerCase();
-                    if (lowerVal.indexOf('auramz/mobile') > -1 || lowerVal.indexOf('toggle_save_dir') > -1 || lowerVal.indexOf('elimz_mobilecontrols') > -1) {
+                    if (lowerVal.indexOf('auramz/mobile') > -1 || lowerVal.indexOf('toggle_save_dir') > -1 || lowerVal.indexOf('elimz_mobilecontrols') > -1 || lowerVal.indexOf('cyclone-steam') > -1) {
                         console.log('[RPG Fixes] 🛑 Заблокирован конфликтный плагин: ' + val);
                         val = 'data:application/javascript,console.log("Blocked by RPG-Fixes!");';
                     }
@@ -1444,8 +1460,8 @@ if (!window.__rpgPluginHookInstalled) {
         injectEmeraldCheatMenu();
         
         // Наши восстановленные функции
-        setupGlobalCrashProtection();
-        setupSpriteArmor();
+        //setupGlobalCrashProtection();
+        //setupSpriteArmor();
         console.log('✅ RPG-Fixes Ultimate v4.1 успешно загружен!');
     }
 

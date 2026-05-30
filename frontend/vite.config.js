@@ -6,6 +6,7 @@ export default defineConfig({
   server: {
     host: true,
     port: 5173,
+    allowedHosts: ['docker', '.ts.net', 'localhost'],
     watch: {
       // КРИТИЧЕСКИ ВАЖНО: Заставит Vite проверять файлы каждую секунду, 
       // что обязательно при работе через сетевой диск Y:
@@ -14,15 +15,15 @@ export default defineConfig({
     },
     proxy: {
       '/api': {
-        target: 'http://rpg-library:3000', 
+        target: 'http://rpg-library-v2:3000', 
         changeOrigin: true,
       },
       '/socket.io': {
-        target: 'http://rpg-library:3000',
+        target: 'http://rpg-library-v2:3000',
         ws: true, 
       },
       '/media': {
-        target: 'http://rpg-library:3000',
+        target: 'http://rpg-library-v2:3000',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/media/, '') 
       }
