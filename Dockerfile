@@ -1,15 +1,15 @@
 # ==========================================
 # ЭТАП 1: Сборка фронтенда (React/Vite)
 # ==========================================
-FROM node:20 AS builder
+# Используем ультра-легкий Alpine Linux (весит 5МБ) для быстрой сборки
+FROM node:20-alpine AS builder
 
 WORKDIR /app/frontend
 
-# Копируем конфиги и ставим зависимости фронтенда
 COPY frontend/package*.json ./
-RUN npm install
+# npm ci собирает пакеты строго по lock-файлу, это быстрее и надежнее в Docker
+RUN npm ci || npm install
 
-# Копируем весь исходный код React и собираем статику
 COPY frontend/ ./
 RUN npm run build
 # На выходе получаем готовую папку /app/frontend/dist
@@ -17,14 +17,13 @@ RUN npm run build
 # ==========================================
 # ЭТАП 2: Сборка Бэкенда и финальный релиз
 # ==========================================
-FROM node:20
+# Используем slim-версию (весит ~200МБ вместо 1.1ГБ стандартного node:20)
+FROM node:20-slim
 
-WORKDIR /app
+WORKDIR /app/api
 
-# Подключаем нужные репозитории (из твоего старого конфига)
-RUN sed -i 's/Components: main/Components: main contrib non-free non-free-firmware/g' /etc/apt/sources.list.d/debian.sources || true
-
-# Устанавливаем системные зависимости: wget, curl, ffmpeg, python3, build-essential
+# Устанавливаем системные пакеты
+# Примечание: curl оставлен, так как он нужен scraper.js для прокси!
 RUN apt-get update && apt-get install -y \
     wget \
     curl \
@@ -38,21 +37,19 @@ RUN apt-get update && apt-get install -y \
     && mv 7zz /usr/local/bin/7zz \
     && rm -f 7z2600-linux-x64.tar.xz
 
-# Переходим в рабочую папку API
-WORKDIR /app/api
-
-# Копируем конфиги бэкенда и ставим зависимости
+# Копируем package.json бэкенда
 COPY --chown=node:node api/package*.json ./
-RUN npm install --omit=dev
-RUN npm install sqlite3 --build-from-source
-RUN npm install sqlite
-RUN npm install -g nodemon
 
-# Копируем весь исходный код бэкенда (включая api/public/rpg-fixes.js)
+# Объединяем все установки NPM в один слой (RUN) для экономии места.
+# nodemon оставляем глобально, чтобы работал твой docker-compose.dev.yml
+RUN npm install --omit=dev && \
+    npm install sqlite3 sqlite --build-from-source && \
+    npm install -g nodemon
+
+# Копируем исходники бэкенда
 COPY --chown=node:node api/ ./
 
-# МАГИЯ: Забираем собранный сайт из первого этапа 
-# и кладем его ВНУТРЬ папки public нашего бэкенда!
+# МАГИЯ: Забираем собранный сайт из первого этапа
 COPY --chown=node:node --from=builder /app/frontend/dist/ ./public/
 
 USER node
