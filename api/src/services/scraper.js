@@ -308,20 +308,81 @@ class ScraperService {
     }
 
     async fetchUniversalMetadata(title, rjCode) {
+        // Создаем "каркас" для итоговых данных
+        const aggregatedData = {
+            tags: [],
+            description: '',
+            coverUrl: '',
+            developer: '',
+            releaseDate: '',
+            link: '',
+            language: ''
+        };
+
+        let foundAny = false;
+
+        // 1. DLsite (Наивысший приоритет для японских игр)
         if (rjCode) {
             const dlsiteData = await this.executeFetchDLsiteTags(rjCode);
-            if (dlsiteData?.tags?.length > 0) return dlsiteData;
+            if (dlsiteData) {
+                foundAny = true;
+                // Добавляем теги
+                if (dlsiteData.tags) aggregatedData.tags.push(...dlsiteData.tags);
+                // Заполняем основные поля
+                aggregatedData.description = dlsiteData.description || '';
+                aggregatedData.developer = dlsiteData.developer || '';
+                aggregatedData.releaseDate = dlsiteData.releaseDate || '';
+                aggregatedData.link = dlsiteData.link || '';
+                aggregatedData.language = dlsiteData.language || '';
+            }
         }
+
+        // Очищаем название для поиска по VNDB и Steam
         const cleanTitle = title.replace(/v\d+\.\d+/gi, '').replace(/\[.*?\]/g, '').replace(/\(.*?\)/g, '').trim();
-        if (!cleanTitle || cleanTitle.length < 3) return null;
+        
+        if (cleanTitle && cleanTitle.length >= 3) {
+            
+            // 2. VNDB (База визуальных новелл)
+            const vndbData = await this.fetchVNDBMetadata(cleanTitle);
+            if (vndbData) {
+                foundAny = true;
+                if (vndbData.tags) aggregatedData.tags.push(...vndbData.tags);
+                
+                // Дополняем пустые поля (если DLsite их не нашел, используем VNDB)
+                aggregatedData.coverUrl = aggregatedData.coverUrl || vndbData.coverUrl || '';
+                aggregatedData.description = aggregatedData.description || vndbData.description || '';
+                aggregatedData.developer = aggregatedData.developer || vndbData.developer || '';
+                aggregatedData.releaseDate = aggregatedData.releaseDate || vndbData.releaseDate || '';
+                aggregatedData.link = aggregatedData.link || vndbData.link || '';
+            }
 
-        const vndbData = await this.fetchVNDBMetadata(cleanTitle);
-        if (vndbData) return vndbData;
+            // 3. Steam (Самая большая база игр)
+            const steamData = await this.fetchSteamMetadata(cleanTitle);
+            if (steamData) {
+                foundAny = true;
+                if (steamData.tags) aggregatedData.tags.push(...steamData.tags);
+                
+                // Дополняем пустые поля (если ни DLsite, ни VNDB их не нашли)
+                aggregatedData.coverUrl = aggregatedData.coverUrl || steamData.coverUrl || '';
+                aggregatedData.description = aggregatedData.description || steamData.description || '';
+                aggregatedData.developer = aggregatedData.developer || steamData.developer || '';
+                aggregatedData.releaseDate = aggregatedData.releaseDate || steamData.releaseDate || '';
+                aggregatedData.link = aggregatedData.link || steamData.link || '';
+                aggregatedData.language = aggregatedData.language || steamData.language || '';
+            }
+            
+            // Здесь в будущем можно добавить шаг 4: IGDB или RAWG API, 
+            // они будут так же докидывать свои данные в aggregatedData.
+        }
 
-        const steamData = await this.fetchSteamMetadata(cleanTitle);
-        if (steamData) return steamData;
+        // Если ни одна из трех баз ничего не нашла
+        if (!foundAny) return null;
 
-        return null;
+        // МАГИЯ АГРЕГАЦИИ: Убираем дубликаты тегов (например, если и Steam, и DLsite выдали тег "RPG")
+        // Используем Set (множество), которое физически не может хранить одинаковые значения
+        aggregatedData.tags = [...new Set(aggregatedData.tags)];
+        
+        return aggregatedData;
     }
 }
 
