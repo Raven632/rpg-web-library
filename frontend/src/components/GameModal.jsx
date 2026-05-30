@@ -53,6 +53,13 @@ const GameModal = ({ game, index, onClose, onUpdateGame, t, lang, showToast }) =
     else alert(msg);
   };
 
+  const handleRjChange = (e) => {
+    const val = e.target.value;
+    // Ищем паттерн RJ-кода в любом вставленном тексте или ссылке
+    const match = val.match(/RJ\d{6,8}/i);
+    setEditRj(match ? match[0].toUpperCase() : val); // Используем твой setEditRj
+  };
+
   const [isEditing, setIsEditing] = useState(false);
   const [editTitle, setEditTitle] = useState(game.title || '');
   const [editRj, setEditRj] = useState('');
@@ -185,11 +192,16 @@ const GameModal = ({ game, index, onClose, onUpdateGame, t, lang, showToast }) =
           developer: editDeveloper,
           language: editLanguage,
           releaseDate: editReleaseDate,
-          link: editLink,
+          
+          // ИСПРАВЛЕНО: Сначала берем агрегированные ссылки от сервера!
+          link: data.game?.link || editLink, 
+          
           ...(data.game?.cover && { cover: data.game.cover }),
           ...(data.game?.tags && { tags: data.game.tags }),
-          ...(data.game?.description && { description: data.game.description })
+          ...(data.game?.description && { description: data.game.description }),
+          updatedAt: Date.now()
         });
+        
         setIsEditing(false);
         setEditRj('');
         notify(t.save + ' Успешно!', 'success');
@@ -218,37 +230,31 @@ const GameModal = ({ game, index, onClose, onUpdateGame, t, lang, showToast }) =
   // --- НОВАЯ ЛОГИКА ОПРЕДЕЛЕНИЯ САЙТА ДЛЯ ССЫЛКИ ---
   const renderSourceLink = () => {
     if (!game.link) return null;
-
-    let logoSrc = null;
-    let title = 'Перейти на сайт источника';
-
-    if (game.link.includes('steampowered.com') || game.link.includes('steamcommunity.com')) {
-      logoSrc = STEAM_LOGO;
-      title = 'Посмотреть в Steam';
-    } else if (game.link.includes('dlsite.com')) {
-      logoSrc = DLSITE_LOGO;
-      title = 'Посмотреть на DLsite';
-    }
-
+    
+    // Разбиваем строку по запятым на массив ссылок
+    const links = game.link.split(/[, ]+/).filter(Boolean);
+    
     return (
-      <a 
-        href={game.link} 
-        target="_blank" 
-        rel="noreferrer" 
-        className="grimoire-source-link" 
-        title={title}
-      >
-        {logoSrc ? (
-          <img src={logoSrc} alt="Source logo" className="grimoire-source-logo" />
-        ) : (
-          <span className="rune">🔗</span>
-        )}
-      </a>
+      <div style={{ display: 'flex', gap: '10px' }}>
+        {links.map((url, idx) => {
+          let iconSrc = '';
+          if (url.includes('dlsite.com')) iconSrc = '/dlsite-logo.png';
+          else if (url.includes('vndb.org')) iconSrc = '/vndb-logo.png';
+          else if (url.includes('steampowered.com')) iconSrc = '/steam-logo.png';
+
+          return (
+            <a key={idx} href={url} target="_blank" rel="noopener noreferrer" className="grimoire-source-link" title={url}>
+              {iconSrc ? <img src={iconSrc} alt="Source" className="grimoire-source-logo" /> : '🔗'}
+            </a>
+          );
+        })}
+      </div>
     );
   };
 
   const coverBase = game.cover ? (import.meta.env.DEV ? `/media/${game.cover}` : `/${game.cover}`) : null;
-  const coverUrl = coverBase ? `${coverBase}?v=${game.addedAt || Date.now()}` : null;
+  // Теперь React всегда будет видеть, что картинка новая!
+  const coverUrl = coverBase ? `${coverBase}?v=${game.updatedAt || game.addedAt || Date.now()}` : null;
   const roman = ROMAN_NUMERALS[index % ROMAN_NUMERALS.length] || String(index + 1);
 
   return (
@@ -283,7 +289,7 @@ const GameModal = ({ game, index, onClose, onUpdateGame, t, lang, showToast }) =
                 <input type="text" value={editReleaseDate} onChange={e => setEditReleaseDate(e.target.value)} placeholder="Дата выпуска (ГГГГ-ММ-ДД)..." />
                 <input type="text" value={editLanguage} onChange={e => setEditLanguage(e.target.value)} placeholder="Язык (RU, EN, JP)..." />
                 <input type="text" value={editLink} onChange={e => setEditLink(e.target.value)} placeholder="Ссылка на источник..." />
-                <input type="text" value={editRj} onChange={e => setEditRj(e.target.value)} placeholder="RJ-код для автозаполнения..." />
+                <input type="text" value={editRj} onChange={handleRjChange} placeholder="RJ код или полная ссылка на игру" />
                 
                 <div className="form-actions">
                   <button onClick={handleSave} disabled={isSaving} className="save-btn">{isSaving ? '⏳...' : t.save}</button>

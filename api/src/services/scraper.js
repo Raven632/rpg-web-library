@@ -256,16 +256,32 @@ class ScraperService {
         return null;
     }
 
-    async fetchVNDBMetadata(title) {
+    async fetchVNDBMetadata(query) {
         try {
+            let filter = ["search", "=", query];
+            // Если передан точный ID (например v1234)
+            if (/^v\d+$/.test(query)) {
+                filter = ["id", "=", query]; 
+            }
             const res = await fetch('https://api.vndb.org/kana/vn', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ filters: ["search", "=", title], fields: "title, description, image.url, tags.name" })
+                body: JSON.stringify({ filters: filter, fields: "title, description, image.url, tags.name" })
             });
             const data = await res.json();
             if (data.results && data.results.length > 0) {
                 const vn = data.results[0];
+                
+                // УМНАЯ СТРОГАЯ ПРОВЕРКА: удаляем все спецсимволы и пробелы
+                if (!/^v\d+$/.test(query)) {
+                    // Оставляем только буквы (в т.ч. русские) и цифры
+                    const vnTitle = vn.title.toLowerCase().replace(/[^a-z0-9а-я]/gi, '');
+                    const searchTitle = query.toLowerCase().replace(/[^a-z0-9а-я]/gi, '');
+                    if (!vnTitle.includes(searchTitle) && !searchTitle.includes(vnTitle)) {
+                        return null; // Защита от левых новелл
+                    }
+                }
+
                 let desc = (vn.description || '').replace(/\[\/?(b|i|u|url|spoiler|quote)[^\]]*\]/gi, '').trim();
                 return { 
                     coverUrl: vn.image ? vn.image.url : null, 
@@ -281,106 +297,122 @@ class ScraperService {
         return null;
     }
 
-    async fetchSteamMetadata(title) {
+    async fetchSteamMetadata(query) {
         try {
-            const searchRes = await fetch(`https://store.steampowered.com/api/storesearch/?term=${encodeURIComponent(title)}&l=english&cc=US`);
-            const searchData = await searchRes.json();
-            if (searchData.total > 0 && searchData.items?.length > 0) {
-                const appId = searchData.items[0].id;
-                const detailRes = await fetch(`https://store.steampowered.com/api/appdetails?appids=${appId}`);
-                const detailData = await detailRes.json();
-                if (detailData[appId]?.success) {
-                    const game = detailData[appId].data;
-                    const desc = (game.short_description || game.about_the_game || '').replace(/<[^>]*>?/gm, '').trim();
-                    return { 
-                        coverUrl: game.header_image, 
-                        description: desc, 
-                        tags: game.genres ? game.genres.map(g => g.description) : [],
-                        developer: game.developers ? game.developers.join(', ') : '',
-                        releaseDate: game.release_date?.date ? (game.release_date.date.match(/\d{4}/)?.[0] || '') : '',
-                        link: `https://store.steampowered.com/app/${appId}`,
-                        language: 'Multi'
-                    };
+            let appId = query;
+            // Если передан не просто ID (цифры), а название игры - ищем через поиск
+            if (!/^\d+$/.test(query)) {
+                const searchRes = await fetch(`https://store.steampowered.com/api/storesearch/?term=${encodeURIComponent(query)}&l=english&cc=US`);
+                const searchData = await searchRes.json();
+                if (searchData.total > 0 && searchData.items?.length > 0) {
+                    const item = searchData.items[0];
+                    
+                    // УМНАЯ СТРОГАЯ ПРОВЕРКА: удаляем все пробелы, апострофы и дефисы
+                    const steamTitle = item.name.toLowerCase().replace(/[^a-z0-9а-я]/gi, '');
+                    const searchTitle = query.toLowerCase().replace(/[^a-z0-9а-я]/gi, '');
+                    
+                    if (!steamTitle.includes(searchTitle) && !searchTitle.includes(steamTitle)) {
+                        return null; // Название не совпадает - это ложное срабатывание, отменяем!
+                    }
+                    appId = item.id;
+                } else {
+                    return null;
                 }
+            }
+            
+            const detailRes = await fetch(`https://store.steampowered.com/api/appdetails?appids=${appId}`);
+            const detailData = await detailRes.json();
+            if (detailData[appId]?.success) {
+                const game = detailData[appId].data;
+                const desc = (game.short_description || game.about_the_game || '').replace(/<[^>]*>?/gm, '').trim();
+                return { 
+                    coverUrl: game.header_image, 
+                    description: desc, 
+                    tags: game.genres ? game.genres.map(g => g.description) : [],
+                    developer: game.developers ? game.developers.join(', ') : '',
+                    releaseDate: game.release_date?.date ? (game.release_date.date.match(/\d{4}/)?.[0] || '') : '',
+                    link: `https://store.steampowered.com/app/${appId}`,
+                    language: 'Multi'
+                };
             }
         } catch (e) {}
         return null;
     }
 
-    async fetchUniversalMetadata(title, rjCode) {
-        // Создаем "каркас" для итоговых данных
+    async fetchUniversalMetadata(title, inputQuery) {
         const aggregatedData = {
-            tags: [],
-            description: '',
-            coverUrl: '',
-            developer: '',
-            releaseDate: '',
-            link: '',
-            language: ''
+            tags: [], description: '', coverUrl: '', developer: '', releaseDate: '', language: '',
+            links: []
         };
-
         let foundAny = false;
 
-        // 1. DLsite (Наивысший приоритет для японских игр)
-        if (rjCode) {
-            const dlsiteData = await this.executeFetchDLsiteTags(rjCode);
+        let explicitRj = null;
+        let explicitSteam = null;
+        let explicitVndb = null;
+
+        if (inputQuery) {
+            if (inputQuery.match(/RJ\d{6,8}/i)) explicitRj = inputQuery.match(/RJ\d{6,8}/i)[0].toUpperCase();
+            if (inputQuery.match(/app\/(\d+)/i)) explicitSteam = inputQuery.match(/app\/(\d+)/i)[1];
+            if (inputQuery.match(/v(\d+)/i) && inputQuery.includes('vndb')) explicitVndb = 'v' + inputQuery.match(/v(\d+)/i)[1];
+        }
+
+        const cleanTitle = title.replace(/v\d+\.\d+/gi, '').replace(/\[.*?\]/g, '').replace(/\(.*?\)/g, '').trim();
+
+        // 1. DLSITE (Король метаданных)
+        if (explicitRj) {
+            const dlsiteData = await this.executeFetchDLsiteTags(explicitRj);
             if (dlsiteData) {
                 foundAny = true;
-                // Добавляем теги
-                if (dlsiteData.tags) aggregatedData.tags.push(...dlsiteData.tags);
-                // Заполняем основные поля
+                aggregatedData.tags = dlsiteData.tags || []; 
                 aggregatedData.description = dlsiteData.description || '';
                 aggregatedData.developer = dlsiteData.developer || '';
                 aggregatedData.releaseDate = dlsiteData.releaseDate || '';
-                aggregatedData.link = dlsiteData.link || '';
                 aggregatedData.language = dlsiteData.language || '';
+                if (dlsiteData.link) aggregatedData.links.push(dlsiteData.link);
             }
         }
 
-        // Очищаем название для поиска по VNDB и Steam
-        const cleanTitle = title.replace(/v\d+\.\d+/gi, '').replace(/\[.*?\]/g, '').replace(/\(.*?\)/g, '').trim();
-        
-        if (cleanTitle && cleanTitle.length >= 3) {
-            
-            // 2. VNDB (База визуальных новелл)
-            const vndbData = await this.fetchVNDBMetadata(cleanTitle);
-            if (vndbData) {
-                foundAny = true;
-                if (vndbData.tags) aggregatedData.tags.push(...vndbData.tags);
-                
-                // Дополняем пустые поля (если DLsite их не нашел, используем VNDB)
-                aggregatedData.coverUrl = aggregatedData.coverUrl || vndbData.coverUrl || '';
-                aggregatedData.description = aggregatedData.description || vndbData.description || '';
-                aggregatedData.developer = aggregatedData.developer || vndbData.developer || '';
-                aggregatedData.releaseDate = aggregatedData.releaseDate || vndbData.releaseDate || '';
-                aggregatedData.link = aggregatedData.link || vndbData.link || '';
-            }
-
-            // 3. Steam (Самая большая база игр)
-            const steamData = await this.fetchSteamMetadata(cleanTitle);
+        // 2. STEAM (Ищем ВСЕГДА, чтобы забрать ссылку)
+        const steamQuery = explicitSteam || cleanTitle; 
+        if (steamQuery && steamQuery.length >= 3) {
+            const steamData = await this.fetchSteamMetadata(steamQuery);
             if (steamData) {
                 foundAny = true;
-                if (steamData.tags) aggregatedData.tags.push(...steamData.tags);
+                // Ссылку забираем в любом случае!
+                if (steamData.link) aggregatedData.links.push(steamData.link);
                 
-                // Дополняем пустые поля (если ни DLsite, ни VNDB их не нашли)
+                // А вот теги берем, ТОЛЬКО если DLsite их не нашел
+                if (aggregatedData.tags.length === 0 && steamData.tags) aggregatedData.tags = steamData.tags;
+                
                 aggregatedData.coverUrl = aggregatedData.coverUrl || steamData.coverUrl || '';
                 aggregatedData.description = aggregatedData.description || steamData.description || '';
                 aggregatedData.developer = aggregatedData.developer || steamData.developer || '';
                 aggregatedData.releaseDate = aggregatedData.releaseDate || steamData.releaseDate || '';
-                aggregatedData.link = aggregatedData.link || steamData.link || '';
                 aggregatedData.language = aggregatedData.language || steamData.language || '';
             }
-            
-            // Здесь в будущем можно добавить шаг 4: IGDB или RAWG API, 
-            // они будут так же докидывать свои данные в aggregatedData.
         }
 
-        // Если ни одна из трех баз ничего не нашла
+        // 3. VNDB (Ищем ВСЕГДА, чтобы забрать ссылку)
+        const vndbQuery = explicitVndb || cleanTitle;
+        if (vndbQuery && vndbQuery.length >= 3) {
+            const vndbData = await this.fetchVNDBMetadata(vndbQuery);
+            if (vndbData) {
+                foundAny = true;
+                // Ссылку забираем в любом случае!
+                if (vndbData.link) aggregatedData.links.push(vndbData.link);
+                
+                if (aggregatedData.tags.length === 0 && vndbData.tags) aggregatedData.tags = vndbData.tags;
+                aggregatedData.coverUrl = aggregatedData.coverUrl || vndbData.coverUrl || '';
+                aggregatedData.description = aggregatedData.description || vndbData.description || '';
+                aggregatedData.developer = aggregatedData.developer || vndbData.developer || '';
+                aggregatedData.releaseDate = aggregatedData.releaseDate || vndbData.releaseDate || '';
+            }
+        }
+
         if (!foundAny) return null;
 
-        // МАГИЯ АГРЕГАЦИИ: Убираем дубликаты тегов (например, если и Steam, и DLsite выдали тег "RPG")
-        // Используем Set (множество), которое физически не может хранить одинаковые значения
         aggregatedData.tags = [...new Set(aggregatedData.tags)];
+        aggregatedData.link = [...new Set(aggregatedData.links)].join(',');
         
         return aggregatedData;
     }

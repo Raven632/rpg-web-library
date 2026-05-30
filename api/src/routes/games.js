@@ -122,30 +122,27 @@ router.delete('/:id/cover', async (req, res) => {
 // --- 4. РЕДАКТИРОВАНИЕ МЕТАДАННЫХ (ОБНОВЛЕНО С ГОДОМ И РАЗРАБОМ) ---
 router.post('/:id/edit', async (req, res) => {
     const folder = path.basename(req.params.id);
-    // Достаем новые поля из тела запроса
     const { title, rjCode, developer, language, releaseDate, link } = req.body;
     const gamePath = path.join(GAMES_DIR, folder);
 
     try {
         let scrapeWarning = null;
         
-        // 1. Сначала сохраняем то, что пользователь ввел вручную
         await dbService.get().run(
             `UPDATE games SET title = ?, developer = ?, language = ?, releaseDate = ?, link = ? WHERE id = ?`,
             [title || '', developer || '', language || '', releaseDate || '', link || '', folder]
         );
 
-        const searchRj = (rjCode && rjCode.match(/RJ\d+/i)) ? rjCode.match(/RJ\d+/i)[0].toUpperCase() : null;
+        const rawQuery = rjCode || link; 
+        const actualRjCode = (rawQuery && rawQuery.match(/RJ\d{6,8}/i)) ? rawQuery.match(/RJ\d{6,8}/i)[0].toUpperCase() : null;
         let coverUpdated = false;
 
-        // Ищем обложку по RJ коду
-        if (searchRj && await scraperService.fetchDLsiteCover(searchRj, path.join(gamePath, 'cover.jpg'))) {
+        if (actualRjCode && await scraperService.fetchDLsiteCover(actualRjCode, path.join(gamePath, 'cover.jpg'))) {
             await dbService.get().run('UPDATE games SET cover = ? WHERE id = ?', [`${folder}/cover.jpg`, folder]);
             coverUpdated = true;
         }
 
-        // Запускаем парсер
-        const scrapedData = await scraperService.fetchUniversalMetadata(title, searchRj);
+        const scrapedData = await scraperService.fetchUniversalMetadata(title, rawQuery);
         
         if (scrapedData) {
             if (scrapedData.coverUrl && !coverUpdated && await scraperService.downloadRemoteCover(scrapedData.coverUrl, path.join(gamePath, 'cover.jpg'))) {
@@ -153,7 +150,6 @@ router.post('/:id/edit', async (req, res) => {
                 coverUpdated = true;
             }
             
-            // Если парсер нашел данные, они имеют приоритет. Если нет - оставляем ручной ввод.
             const t_tags = scrapedData.tags?.length > 0 ? JSON.stringify(scrapedData.tags) : '[]';
             const t_desc = scrapedData.description || '';
             const t_dev = scrapedData.developer || developer || '';
@@ -169,11 +165,16 @@ router.post('/:id/edit', async (req, res) => {
             if (!scrapedData.tags?.length && coverUpdated) {
                 scrapeWarning = 'Обложка обновлена, но теги не найдены.';
             }
-        } else if (searchRj) {
-            scrapeWarning = 'Данные не найдены (DLsite/VNDB/Steam).';
+        } else {
+            await dbService.get().run(
+                `UPDATE games SET tags = '[]', description = '', scraped = 0 WHERE id = ?`,
+                [folder]
+            );
+            if (rawQuery) {
+                scrapeWarning = 'Данные на внешних сервисах не найдены. Старые метаданные очищены.';
+            }
         }
 
-        // 3. Возвращаем обновленную игру фронтенду
         const updatedGame = await dbService.get().get('SELECT * FROM games WHERE id = ?', [folder]);
         res.json({
             success: true, 
