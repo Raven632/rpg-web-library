@@ -11,12 +11,12 @@ jobs:
     name: Auto Deploy
     # Проверяем, что тесты прошли успешно (зеленая галочка)
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
-    # Выполнять НА ТВОЕМ ДОМАШНЕМ СЕРВЕРЕ
     runs-on: self-hosted
 
     defaults:
       run:
-        working-directory: root/rpgm
+        # ИСПРАВЛЕНО: Добавлен слеш в начале, чтобы путь был абсолютным
+        working-directory: /root/rpgm
         
     steps:
     - name: Получение свежего кода с GitHub
@@ -24,5 +24,11 @@ jobs:
 
     - name: Перезапуск Docker
       run: |
+        # Включаем современный параллельный сборщик для скорости
+        export DOCKER_BUILDKIT=1
+        
+        # 1. Собираем новый образ в фоне (сайт в это время РАБОТАЕТ)
         docker compose build
-        docker compose up -d
+        
+        # 2. Мгновенно перезапускаем контейнер (downtime ~2 секунды) и удаляем старые хвосты
+        docker compose up -d --remove-orphans
