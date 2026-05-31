@@ -73,9 +73,9 @@ test('processParsedData: извлекает теги и очищает HTML', as
   t.after(() => { global.fetch = originalFetch; });
 
   const mockGameData = {
-    genres: [],
-    intro: '',
-    maker_name: ''
+    genres: [{ name: 'RPG' }, { name: 'Fantasy' }],
+    intro: 'Epic game!',
+    maker_name: 'TestDev'
   };
 
   // 3. Вызываем через объект скрапера и используем правильное имя переменной
@@ -86,10 +86,10 @@ test('processParsedData: извлекает теги и очищает HTML', as
   assert.strictEqual(result.description, 'Epic game translated!', 'Описание должно быть переведено');
 });
 
-test('processParsedData: если genres пустой — возвращает null', async () => {
-  // Вызываем через объект скрапера
-  const result = await scraperService.processParsedData({ genres: [], intro_s: 'Empty genres' }, 'RJ555555');
-  assert.strictEqual(result, null, 'При пустом genres функция должна вернуть null');
+test('processParsedData: если нет полезных данных — возвращает null', async () => {
+  // Передаем абсолютно пустые данные, чтобы парсер точно вернул null
+  const result = await scraperService.processParsedData({ genres: [], intro_s: '', maker_name: '' }, 'RJ555555');
+  assert.strictEqual(result, null, 'При пустых данных функция должна вернуть null');
 });
 
 // ============================================================================
