@@ -1540,6 +1540,45 @@ if (!window.__rpgPluginHookInstalled) {
     }, 10);
     setTimeout(function() { clearInterval(aggressiveAdvPatch); }, 15000);
 
+    // ============================================================================
+    // --- УЛЬТИМАТИВНЫЙ ФИКС ВИДЕО ДЛЯ IOS ---
+    // ============================================================================
+
+    // 1. Перехватываем само рождение видео-элемента (самый надежный способ для iPhone)
+    const _origCreateElement = document.createElement;
+    document.createElement = function(tagName, options) {
+        const el = _origCreateElement.call(this, tagName, options);
+        if (tagName && tagName.toLowerCase() === 'video') {
+            // Намертво прибиваем атрибуты до того, как Safari о них узнает
+            el.setAttribute('playsinline', 'playsinline');
+            el.setAttribute('webkit-playsinline', 'playsinline');
+            el.setAttribute('disablePictureInPicture', 'true');
+            el.controls = false; // Отключаем элементы управления плеера
+        }
+        return el;
+    };
+
+    // 2. Защита от зависаний при NotAllowedError (оставляем из прошлого фикса)
+    const _originalVideoPlay = HTMLVideoElement.prototype.play;
+    HTMLVideoElement.prototype.play = function() {
+        // Дублируем защиту на всякий случай
+        this.setAttribute('playsinline', 'playsinline');
+        this.setAttribute('webkit-playsinline', 'playsinline');
+        
+        const promise = _originalVideoPlay.apply(this, arguments);
+        
+        if (promise !== undefined) {
+            promise.catch(error => {
+                console.warn('[RPG-Fixes] Видео заблокировано политикой Apple:', error);
+                // Если Safari всё же убил видео, имитируем его завершение, чтобы игра не зависла
+                setTimeout(() => {
+                    this.dispatchEvent(new Event('ended'));
+                }, 100);
+            });
+        }
+        return promise;
+    };
+
     initUltimateFixes();
 
 })();
