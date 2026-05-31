@@ -16,7 +16,7 @@ jobs:
 
     defaults:
       run:
-        working-directory: /home/raven/docker/rpgm_v2
+        working-directory: root/rpgm
         
     steps:
     - name: Получение свежего кода с GitHub
