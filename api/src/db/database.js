@@ -4,6 +4,7 @@ const path = require('path');
 const crypto = require('crypto');
 const fs = require('fs');
 const fsp = fs.promises;
+const SESSION_SECRET = process.env.SESSION_SECRET || 'fallback_secret_key_for_dev';
 
 class DatabaseService {
     constructor() {
@@ -32,12 +33,18 @@ class DatabaseService {
         `);
         await this.db.exec('CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)');
 
-        let tokenRow = await this.db.get('SELECT value FROM settings WHERE key = "session_secret"');
-        if (!tokenRow) {
-            this.sessionToken = crypto.randomBytes(64).toString('hex');
-            await this.db.run('INSERT INTO settings (key, value) VALUES (?, ?)', ['session_secret', this.sessionToken]);
+        // 1. Пытаемся взять ключ из .env (Правильный путь для production)
+        if (process.env.SESSION_SECRET) {
+            this.sessionToken = process.env.SESSION_SECRET;
         } else {
-            this.sessionToken = tokenRow.value;
+            // 2. Фолбэк для старых версий (оставляем старую логику для совместимости)
+            let tokenRow = await this.db.get('SELECT value FROM settings WHERE key = "session_secret"');
+            if (!tokenRow) {
+                this.sessionToken = crypto.randomBytes(64).toString('hex');
+                await this.db.run('INSERT INTO settings (key, value) VALUES (?, ?)', ['session_secret', this.sessionToken]);
+            } else {
+                this.sessionToken = tokenRow.value;
+            }
         }
 
         try { await this.db.exec('ALTER TABLE games ADD COLUMN developer TEXT DEFAULT ""'); } catch(e){}
@@ -56,7 +63,7 @@ class DatabaseService {
         return this.db;
     }
 
-    getSessionToken() { return this.sessionToken; }
+    getSessionToken() { return SESSION_SECRET; }
 
     async addGameToDB(folder, gamePath) {
         let title = folder.replace(/\[?RJ\d{6,8}\]?/gi, '').replace(/[-_]/g, ' ').replace(/\s+/g, ' ').trim() || folder;

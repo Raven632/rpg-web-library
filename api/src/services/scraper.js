@@ -4,8 +4,17 @@ const util = require('util');
 const { execFile } = require('child_process');
 const execFilePromise = util.promisify(execFile);
 
-const TAGS_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
-const dlsiteTagCache = new Map();
+const { createClient } = require('redis');
+
+// Инициализируем подключение к Redis
+const redisClient = createClient({
+    url: process.env.REDIS_URL || 'redis://redis:6379'
+});
+
+redisClient.on('error', (err) => console.error('❌ [Redis] Ошибка кэша:', err));
+redisClient.connect()
+    .then(() => console.log('📦 [Redis] Кэш парсера успешно подключен!'))
+    .catch(console.error);
 
 class ScraperService {
     constructor() {
@@ -221,15 +230,23 @@ class ScraperService {
                 language,
                 link
             };
-            dlsiteTagCache.set(rjCode, { data: finalData, expiresAt: Date.now() + TAGS_CACHE_TTL_MS }); 
+            
+            // Сохраняем в Redis. EX: 86400 означает удаление через 24 часа (в секундах)
+            await redisClient.set(`dlsite:${rjCode}`, JSON.stringify(finalData), {
+                EX: 86400 
+            }); 
+            
             return finalData;
         }
         return null;
     }
 
     async executeFetchDLsiteTags(rjCode) {
-        const cached = dlsiteTagCache.get(rjCode);
-        if (cached && cached.expiresAt > Date.now()) return cached.data;
+        const cached = await redisClient.get(`dlsite:${rjCode}`);
+        if (cached) {
+            console.log(`[Redis] ⚡ Кэш найден для ${rjCode}`);
+            return JSON.parse(cached); // Мгновенный ответ!
+        }
 
         const locales = ['en_US', 'ja_JP'];
         for (const loc of locales) {

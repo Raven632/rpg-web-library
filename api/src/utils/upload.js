@@ -28,7 +28,7 @@ const upload = multer({
 
 const coverUpload = multer({
     dest: UPLOAD_TMP, // Временная папка
-    limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB лимит
+    limits: { fileSize: 100 * 1024 * 1024 }, // 10 MB лимит
     fileFilter: (req, file, cb) => {
         if (!file.mimetype.startsWith('image/')) {
             return cb(new Error('Разрешены только изображения!'));

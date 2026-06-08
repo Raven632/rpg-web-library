@@ -277,8 +277,9 @@ if (require.main === module) {
         await dbService.syncDatabase();
 
         // Запуск HTTP и WebSocket сервера
-        const srv = server.listen(3000, () => {
-            console.log('🚀 RPG API: SQLite и WebSockets подключены, сервер готов!');
+        const PORT = process.env.PORT || 3000;
+        const srv = server.listen(PORT, () => {
+            console.log(`🚀 RPG API: Сервер запущен на порту ${PORT}`);
         });
         
         // Отключаем таймауты для поддержки долгих загрузок больших архивов

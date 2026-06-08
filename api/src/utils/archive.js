@@ -26,24 +26,21 @@ async function findGameFolder(dir, depth = 0) {
     return null;
 }
 
-// --- НОВОЕ: Функция подсчета размера папки ---
+// Добавь эти импорты в самый верх файла archive.js, если их там нет:
+const util = require('util');
+const { execFile } = require('child_process');
+const execFilePromise = util.promisify(execFile);
+
+// ================= СТАЛО =================
+// Нативный и мгновенный Linux-метод подсчета размера
 async function getFolderSize(dirPath) {
-    let totalSize = 0;
     try {
-        const items = await fsp.readdir(dirPath, { withFileTypes: true });
-        for (const item of items) {
-            const fullPath = path.join(dirPath, item.name);
-            if (item.isDirectory()) {
-                totalSize += await getFolderSize(fullPath); // Рекурсия для подпапок
-            } else {
-                const stat = await fsp.stat(fullPath);
-                totalSize += stat.size; // Плюсуем байты
-            }
-        }
+        const { stdout } = await execFilePromise('du', ['-sb', dirPath]);
+        return parseInt(stdout.split('\t')[0], 10);
     } catch (e) {
-        // Игнорируем системные файлы, к которым нет доступа
+        console.error('[Size] Ошибка нативного подсчета:', e);
+        return 0;
     }
-    return totalSize;
 }
 
 module.exports = { spawnExtract, findGameFolder, getFolderSize };

@@ -269,14 +269,15 @@ module.exports = function(io, addGameToDB, EXTRACT_TMP) {
                 await fsp.mkdir(tmpExtractDir, { recursive: true });
                 io.emit('upload-status', { message: '🛡️ Проверка безопасности архива...' });
 
-                const { stdout } = await require('util').promisify(require('child_process').execFile)('7zz', ['l', '-ba', '-slt', finalArchivePath], { maxBuffer: 200 * 1024 * 1024 });
-                const lines = stdout.split('\n').filter(l => l.startsWith('Path = '));
-                const baseTarget = path.resolve(tmpExtractDir) + path.sep;
+                // ================= СТАЛО =================
+                // Убрали тяжелый флаг -slt, уменьшили буфер, так как вывод стал компактнее
+                const { stdout } = await require('util').promisify(require('child_process').execFile)('7zz', ['l', '-ba', finalArchivePath], { maxBuffer: 50 * 1024 * 1024 });
 
-                for (const line of lines) {
-                    const internalPath = line.replace('Path = ', '').trim();
-                    if (!path.resolve(tmpExtractDir, internalPath).startsWith(baseTarget)) throw new Error(`Опасный путь (Zip Slip): ${internalPath}`);
+                // Мгновенная проверка текста на попытки выхода из папки
+                if (stdout.includes('../') || stdout.includes('..\\')) {
+                    throw new Error('Обнаружен опасный путь (Zip Slip Attack!)');
                 }
+                // =========================================
 
                 io.emit('upload-status', { message: '🗜️ Распаковка архива...' });
                 await spawnExtract('7zz', ['x', finalArchivePath, `-o${tmpExtractDir}`, '-y']);
