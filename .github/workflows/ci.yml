@@ -27,3 +27,4 @@ jobs:
     - name: Запуск тестов
       working-directory: ./api
       run: npm test
+  
