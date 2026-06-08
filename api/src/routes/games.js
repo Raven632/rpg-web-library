@@ -6,36 +6,51 @@ const scraperService = require('../services/scraper.js');
 const { GAMES_DIR } = require('../config/index.js');
 const { upload, uploadLimiter, coverUpload } = require('../utils/upload.js');
 const { spawnExtract, findGameFolder, getFolderSize } = require('../utils/archive.js');
+const { createClient } = require('redis');
+
+// Подключение к Redis
+const redisClient = createClient({ url: process.env.REDIS_URL || 'redis://redis:6379' });
+redisClient.connect().catch(console.error);
 
 const router = express.Router();
 
 let isCalculatingSizes = false; // Глобальный замок
 
-// --- 1. ПОЛУЧЕНИЕ ВСЕХ ИГР (ТЕПЕРЬ С НОВЫМИ ПОЛЯМИ) ---
+// --- 1. ПОЛУЧЕНИЕ ВСЕХ ИГР (С КЭШИРОВАНИЕМ REDIS) ---
 router.get('/', async (req, res) => {
     try {
+        // [REDIS] 1. Проверяем кэш. Если есть — отдаем мгновенно!
+        const cachedGames = await redisClient.get('api:games:list');
+        if (cachedGames) {
+            return res.json(JSON.parse(cachedGames));
+        }
+
         const rows = await dbService.get().all('SELECT * FROM games WHERE ready = 1');
 
         // =========================================================
-        // НОВОЕ: БЕЗОПАСНОЕ ФОНОВОЕ ВЗВЕШИВАНИЕ (С ЗАЩИТОЙ ОТ ГОНКИ)
+        // БЕЗОПАСНОЕ ФОНОВОЕ ВЗВЕШИВАНИЕ (С ЗАЩИТОЙ ОТ ГОНКИ)
         // =========================================================
         const gamesWithoutSize = rows.filter(r => !r.size || r.size === 0);
         if (gamesWithoutSize.length > 0 && !isCalculatingSizes) {
-            isCalculatingSizes = true; // Вешаем замок (другие запросы игнорируют этот блок)
+            isCalculatingSizes = true; 
             
             setTimeout(async () => {
                 try {
+                    let sizeUpdated = false;
                     for (const g of gamesWithoutSize) {
                         const gamePath = path.join(GAMES_DIR, g.id);
                         const s = await getFolderSize(gamePath);
                         if (s > 0) {
                             await dbService.get().run('UPDATE games SET size = ? WHERE id = ?', [s, g.id]);
+                            sizeUpdated = true;
                         }
                     }
+                    // [REDIS] Сбрасываем кэш, если размеры обновились, чтобы UI увидел изменения
+                    if (sizeUpdated) await redisClient.del('api:games:list');
                 } catch (e) {
                     console.error('[Background] Ошибка взвешивания:', e);
                 } finally {
-                    isCalculatingSizes = false; // Снимаем замок только когда всё закончили
+                    isCalculatingSizes = false; 
                 }
             }, 1000); 
         }
@@ -58,8 +73,12 @@ router.get('/', async (req, res) => {
             addedAt: row.addedAt, 
             lastPlayed: row.lastPlayed, 
             rating: row.rating
-        })).sort((a, b) => b.addedAt - a.addedAt); // Новые сверху
+        })).sort((a, b) => b.addedAt - a.addedAt); 
         games.forEach((g, i) => g.number = i + 1);
+
+        // [REDIS] 2. Сохраняем собранный список в кэш на 5 минут (300 секунд)
+        await redisClient.set('api:games:list', JSON.stringify(games), { EX: 300 });
+
         res.json(games);
     } catch (e) { res.status(500).json({ error: 'DB Error' }); }
 });
@@ -85,6 +104,9 @@ router.post('/:id/cover', coverUpload.single('cover'), async (req, res) => {
 
         await fsp.rename(req.file.path, finalCoverPath);
         await dbService.get().run('UPDATE games SET cover = ? WHERE id = ?', [dbCoverPath, gameId]);
+        
+        // [REDIS] Сбрасываем кэш, так как обложка изменилась
+        await redisClient.del('api:games:list');
         
         res.json({ success: true, coverPath: dbCoverPath });
     } catch (e) {
@@ -113,13 +135,17 @@ router.delete('/:id/cover', async (req, res) => {
             newDbCover = ''; 
         }
         await dbService.get().run('UPDATE games SET cover = ? WHERE id = ?', [newDbCover, gameId]);
+        
+        // [REDIS] Сбрасываем кэш
+        await redisClient.del('api:games:list');
+        
         res.json({ success: true, coverPath: newDbCover });
     } catch (e) {
         res.status(500).json({ error: 'Ошибка при сбросе обложки' });
     }
 });
 
-// --- 4. РЕДАКТИРОВАНИЕ МЕТАДАННЫХ (ОБНОВЛЕНО С ГОДОМ И РАЗРАБОМ) ---
+// --- 4. РЕДАКТИРОВАНИЕ МЕТАДАННЫХ ---
 router.post('/:id/edit', async (req, res) => {
     const folder = path.basename(req.params.id);
     const { title, rjCode, developer, language, releaseDate, link } = req.body;
@@ -175,6 +201,9 @@ router.post('/:id/edit', async (req, res) => {
             }
         }
 
+        // [REDIS] Сбрасываем кэш, так как метаданные игры изменились
+        await redisClient.del('api:games:list');
+
         const updatedGame = await dbService.get().get('SELECT * FROM games WHERE id = ?', [folder]);
         res.json({
             success: true, 
@@ -212,6 +241,9 @@ router.post('/:id/meta', async (req, res) => {
         if (updates.length > 0) {
             params.push(folder);
             await dbService.get().run(`UPDATE games SET ${updates.join(', ')} WHERE id = ?`, params);
+            
+            // [REDIS] Сбрасываем кэш, так как рейтинг или время игры обновились
+            await redisClient.del('api:games:list');
         }
         res.json({ success: true });
     } catch (e) { res.status(500).json({ error: 'Ошибка сохранения метаданных' }); }
@@ -226,13 +258,17 @@ router.delete('/:id', async (req, res) => {
         await fsp.access(gamePath);
         await fsp.rm(gamePath, { recursive: true, force: true });
         await dbService.get().run('DELETE FROM games WHERE id = ?', [id]);
+        
+        // [REDIS] Сбрасываем кэш после удаления
+        await redisClient.del('api:games:list');
+        
         res.json({ success: true });
     } catch(e) { 
         res.status(404).json({ error: 'Игра не найдена' }); 
     }
 });
 
-// --- 7. ЧАНКОВАЯ ЗАГРУЗКА АРХИВОВ (ОСТАЛАСЬ БЕЗ ИЗМЕНЕНИЙ) ---
+// --- 7. ЧАНКОВАЯ ЗАГРУЗКА АРХИВОВ ---
 module.exports = function(io, addGameToDB, EXTRACT_TMP) {
     router.post('/upload-chunk', uploadLimiter, upload.single('chunk'), async (req, res) => {
         if (!req.file) return res.status(400).json({ error: 'Чанк не получен' });
@@ -269,15 +305,11 @@ module.exports = function(io, addGameToDB, EXTRACT_TMP) {
                 await fsp.mkdir(tmpExtractDir, { recursive: true });
                 io.emit('upload-status', { message: '🛡️ Проверка безопасности архива...' });
 
-                // ================= СТАЛО =================
-                // Убрали тяжелый флаг -slt, уменьшили буфер, так как вывод стал компактнее
+                // Улучшенная защита от Zip Slip
                 const { stdout } = await require('util').promisify(require('child_process').execFile)('7zz', ['l', '-ba', finalArchivePath], { maxBuffer: 50 * 1024 * 1024 });
-
-                // Мгновенная проверка текста на попытки выхода из папки
                 if (stdout.includes('../') || stdout.includes('..\\')) {
                     throw new Error('Обнаружен опасный путь (Zip Slip Attack!)');
                 }
-                // =========================================
 
                 io.emit('upload-status', { message: '🗜️ Распаковка архива...' });
                 await spawnExtract('7zz', ['x', finalArchivePath, `-o${tmpExtractDir}`, '-y']);
@@ -300,18 +332,19 @@ module.exports = function(io, addGameToDB, EXTRACT_TMP) {
                 // Запись базовых данных игры в базу данных
                 await addGameToDB(finalDestFolder, finalPath);
 
-                // 1. СРАЗУ отдаем ответ браузеру, чтобы фронтенд мгновенно показал успех и закрыл окно загрузки
                 io.emit('upload-status', { message: '✨ Готово!' });
                 res.json({ success: true, finished: true, folder: finalDestFolder, message: `Игра добавлена!` });
 
-                // 2. А тяжелый и долгий подсчет размера уводим в фоновый процесс, чтобы он не блокировал роут
+                // Фоновый процесс подсчета размера
                 setTimeout(async () => {
                     try {
                         io.emit('upload-status', { message: '📏 Подсчет размера...' });
                         const gameSize = await getFolderSize(finalPath);
                         await dbService.get().run('UPDATE games SET size = ? WHERE id = ?', [gameSize, finalDestFolder]);
                         
-                        // Даем сигнал фронтенду обновить данные в интерфейсе, когда размер посчитан
+                        // [REDIS] Сбрасываем кэш, так как у новой игры появился размер
+                        await redisClient.del('api:games:list');
+
                         io.emit('scrape-success', { message: `Размер игры успешно определен!` });
                     } catch (e) {
                         console.error('[Upload] Ошибка фонового подсчета размера:', e);
@@ -323,7 +356,6 @@ module.exports = function(io, addGameToDB, EXTRACT_TMP) {
                 await fsp.unlink(finalArchivePath).catch(() => {});
                 io.emit('upload-status', { message: '❌ Ошибка: ' + e.message });
                 
-                // Проверяем, не отправили ли мы уже ответ, чтобы сервер не упал при ошибке в фоне
                 if (!res.headersSent) {
                     return res.status(500).json({ error: 'Сбой: ' + e.message });
                 }

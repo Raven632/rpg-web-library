@@ -3,95 +3,109 @@ const path = require('path');
 const util = require('util');
 const { execFile } = require('child_process');
 const execFilePromise = util.promisify(execFile);
-
 const { createClient } = require('redis');
 
-// Инициализируем подключение к Redis
-const redisClient = createClient({
-    url: process.env.REDIS_URL || 'redis://redis:6379'
-});
-
-redisClient.on('error', (err) => console.error('❌ [Redis] Ошибка кэша:', err));
-redisClient.connect()
-    .then(() => console.log('📦 [Redis] Кэш парсера успешно подключен!'))
-    .catch(console.error);
+// Подключаем Redis
+const redisClient = createClient({ url: process.env.REDIS_URL || 'redis://redis:6379' });
+redisClient.on('error', (err) => console.error('❌ [Redis Scraper] Ошибка:', err));
+redisClient.connect().then(() => console.log('📦 [Redis] Парсер успешно подключен!')).catch(console.error);
 
 class ScraperService {
     constructor() {
-        this.backgroundScrapeQueue = [];
-        this.queuedScrapes = new Set();
         this.isBackgroundScraping = false;
         this.io = null;
         this.GAMES_DIR = '';
-        this.dbService = null; // <-- Добавили слот для базы
+        this.dbService = null; 
     }
 
-    setDependencies(io, gamesDir, dbService) { // <-- Принимаем базу
+    setDependencies(io, gamesDir, dbService) { 
         this.io = io;
         this.GAMES_DIR = gamesDir;
-        this.dbService = dbService; // <-- Сохраняем
+        this.dbService = dbService; 
     }
 
-    queueScrape(folder) {
-        if (!this.queuedScrapes.has(folder)) {
-            this.queuedScrapes.add(folder);
-            this.backgroundScrapeQueue.push(folder);
-            this.processBackgroundScrape();
+    // --- НОВОЕ: Очередь на базе Redis ---
+    async queueScrape(folder) {
+        try {
+            // Защита от дубликатов (sAdd вернет 1, если элемента не было)
+            const isAdded = await redisClient.sAdd('scrape:queued_set', folder);
+            
+            if (isAdded) {
+                // Добавляем задачу в конец очереди
+                await redisClient.rPush('scrape:queue', folder);
+                this.processBackgroundScrape();
+            }
+        } catch (e) {
+            console.error('[Queue] Ошибка добавления в Redis:', e);
         }
     }
 
     async processBackgroundScrape() {
-        if (this.isBackgroundScraping || this.backgroundScrapeQueue.length === 0) return;
+        if (this.isBackgroundScraping) return;
+        
+        // Проверяем, есть ли задачи в очереди
+        const queueLength = await redisClient.lLen('scrape:queue').catch(() => 0);
+        if (queueLength === 0) return;
+
         this.isBackgroundScraping = true;
         
-        while (this.backgroundScrapeQueue.length > 0) {
-            const folder = this.backgroundScrapeQueue.shift();
-            
-            try {
-                console.log(`[Queue] ⏳ Фоновый парсинг для: ${folder}`);
-                const gamePath = path.join(this.GAMES_DIR, folder);
+        try {
+            while (await redisClient.lLen('scrape:queue') > 0) {
+                // Берем самую старую задачу из начала списка
+                const folder = await redisClient.lPop('scrape:queue');
+                if (!folder) break;
                 
-                const rjCode = await this.findRJCode(folder, gamePath);
-                
-                let title = folder.replace(/\[?RJ\d{6,8}\]?/gi, '').replace(/[-_]/g, ' ').replace(/\s+/g, ' ').trim() || folder;
                 try {
-                    const sys = JSON.parse(await fsp.readFile(path.join(gamePath, 'data', 'System.json'), 'utf8'));
-                    if (sys.gameTitle && !sys.gameTitle.toLowerCase().includes('rmmz')) title = sys.gameTitle;
-                } catch(e) {}
-
-                const scrapedData = await this.fetchUniversalMetadata(title, rjCode);
-                
-                if (scrapedData && (scrapedData.tags?.length > 0 || scrapedData.description)) {
-                    const tagsJson = JSON.stringify(scrapedData.tags || []);
-                    const desc = scrapedData.description || '';
-
-                    // Используем this.dbService вместо глобального импорта
-                    await this.dbService.get().run('UPDATE games SET tags = ?, description = ?, scraped = 1 WHERE id = ?', [tagsJson, desc, folder]);
+                    console.log(`[Queue] ⏳ Фоновый парсинг для: ${folder}`);
+                    const gamePath = path.join(this.GAMES_DIR, folder);
                     
-                    if (scrapedData.coverUrl) {
-                        const current = await this.dbService.get().get('SELECT cover FROM games WHERE id = ?', [folder]);
-                        if (!current?.cover) {
-                            if (await this.downloadRemoteCover(scrapedData.coverUrl, path.join(gamePath, 'cover.jpg'))) {
-                                await this.dbService.get().run('UPDATE games SET cover = ? WHERE id = ?', [`${folder}/cover.jpg`, folder]);
+                    const rjCode = await this.findRJCode(folder, gamePath);
+                    
+                    let title = folder.replace(/\[?RJ\d{6,8}\]?/gi, '').replace(/[-_]/g, ' ').replace(/\s+/g, ' ').trim() || folder;
+                    try {
+                        const sys = JSON.parse(await fsp.readFile(path.join(gamePath, 'data', 'System.json'), 'utf8'));
+                        if (sys.gameTitle && !sys.gameTitle.toLowerCase().includes('rmmz')) title = sys.gameTitle;
+                    } catch(e) {}
+
+                    const scrapedData = await this.fetchUniversalMetadata(title, rjCode);
+                    
+                    if (scrapedData && (scrapedData.tags?.length > 0 || scrapedData.description)) {
+                        const tagsJson = JSON.stringify(scrapedData.tags || []);
+                        const desc = scrapedData.description || '';
+
+                        await this.dbService.get().run('UPDATE games SET tags = ?, description = ?, scraped = 1 WHERE id = ?', [tagsJson, desc, folder]);
+                        
+                        if (scrapedData.coverUrl) {
+                            const current = await this.dbService.get().get('SELECT cover FROM games WHERE id = ?', [folder]);
+                            if (!current?.cover) {
+                                if (await this.downloadRemoteCover(scrapedData.coverUrl, path.join(gamePath, 'cover.jpg'))) {
+                                    await this.dbService.get().run('UPDATE games SET cover = ? WHERE id = ?', [`${folder}/cover.jpg`, folder]);
+                                }
                             }
                         }
-                    }
 
-                    if (this.io) this.io.emit('scrape-success', { message: `✅ Данные для "${title}" успешно загружены!` });
-                    console.log(`[Queue] ✅ Успешно обновлено: ${folder}`);
-                } else {
-                    await this.dbService.get().run('UPDATE games SET scraped = 1 WHERE id = ?', [folder]);
-                    console.log(`[Queue] ⚠️ Данные не найдены для: ${folder}`);
+                        // Сбрасываем кэш UI, так как игра получила новые теги!
+                        await redisClient.del('api:games:list');
+
+                        if (this.io) this.io.emit('scrape-success', { message: `✅ Данные для "${title}" успешно загружены!` });
+                        console.log(`[Queue] ✅ Успешно обновлено: ${folder}`);
+                    } else {
+                        await this.dbService.get().run('UPDATE games SET scraped = 1 WHERE id = ?', [folder]);
+                        console.log(`[Queue] ⚠️ Данные не найдены для: ${folder}`);
+                    }
+                } catch (e) {
+                    console.error(`[Queue] ❌ Ошибка для ${folder}:`, e.message);
+                } finally {
+                    // Удаляем защиту от дубликатов ТОЛЬКО когда закончили обработку
+                    await redisClient.sRem('scrape:queued_set', folder).catch(() => {});
                 }
-            } catch (e) {
-                console.error(`[Queue] ❌ Ошибка для ${folder}:`, e.message);
-            } finally {
-                this.queuedScrapes.delete(folder); 
+                
+                // Пауза, чтобы не получить бан от API
+                await new Promise(r => setTimeout(r, 4000));
             }
-            
-            await new Promise(r => setTimeout(r, 4000));
+        } finally {
+            this.isBackgroundScraping = false;
         }
-        this.isBackgroundScraping = false;
     }
 
     async findRJCode(folderName, gamePath) {
@@ -231,10 +245,8 @@ class ScraperService {
                 link
             };
             
-            // Сохраняем в Redis. EX: 86400 означает удаление через 24 часа (в секундах)
-            await redisClient.set(`dlsite:${rjCode}`, JSON.stringify(finalData), {
-                EX: 86400 
-            }); 
+            // --- НОВОЕ: Сохраняем теги в Redis на 24 часа ---
+            await redisClient.set(`dlsite:${rjCode}`, JSON.stringify(finalData), { EX: 86400 }).catch(()=>{}); 
             
             return finalData;
         }
@@ -242,11 +254,14 @@ class ScraperService {
     }
 
     async executeFetchDLsiteTags(rjCode) {
-        const cached = await redisClient.get(`dlsite:${rjCode}`);
-        if (cached) {
-            console.log(`[Redis] ⚡ Кэш найден для ${rjCode}`);
-            return JSON.parse(cached); // Мгновенный ответ!
-        }
+        // --- НОВОЕ: Проверяем наличие ключа в Redis ---
+        try {
+            const cached = await redisClient.get(`dlsite:${rjCode}`);
+            if (cached) {
+                console.log(`[Redis] ⚡ Кэш DLsite найден для ${rjCode}`);
+                return JSON.parse(cached);
+            }
+        } catch (e) {}
 
         const locales = ['en_US', 'ja_JP'];
         for (const loc of locales) {
@@ -258,15 +273,15 @@ class ScraperService {
             ];
             for (const gateway of gateways) {
                 try {
+                    const controller = new AbortController();
+                    const timeoutId = setTimeout(() => controller.abort(), 10000);
                     const res = await fetch(gateway, { signal: controller.signal });
                     clearTimeout(timeoutId);
-                    const text = await res.text(); // сначала text, не json
-                    console.log(`[DLsite] Gateway ${gateway} → status ${res.status}, body начало: ${text.slice(0, 200)}`);
+                    
+                    const text = await res.text();
                     const data = JSON.parse(text);
                     if (data?.[0]?.work_name) return await this.processParsedData(data[0], rjCode);
-                } catch (e) {
-                    console.log(`[DLsite] Gateway FAIL:`, e.message);
-                }
+                } catch (e) {}
             }
         }
         const jpUrl = `https://www.dlsite.com/maniax/api/=/product.json?workno=${rjCode}&locale=en_US`;
@@ -278,7 +293,6 @@ class ScraperService {
     async fetchVNDBMetadata(query) {
         try {
             let filter = ["search", "=", query];
-            // Если передан точный ID (например v1234)
             if (/^v\d+$/.test(query)) {
                 filter = ["id", "=", query]; 
             }
@@ -291,13 +305,11 @@ class ScraperService {
             if (data.results && data.results.length > 0) {
                 const vn = data.results[0];
                 
-                // УМНАЯ СТРОГАЯ ПРОВЕРКА: удаляем все спецсимволы и пробелы
                 if (!/^v\d+$/.test(query)) {
-                    // Оставляем только буквы (в т.ч. русские) и цифры
                     const vnTitle = vn.title.toLowerCase().replace(/[^a-z0-9а-яぁ-んァ-ン一-龯]/gi, '')
                     const searchTitle = query.toLowerCase().replace(/[^a-z0-9а-яぁ-んァ-ン一-龯]/gi, '')
                     if (!vnTitle.includes(searchTitle) && !searchTitle.includes(vnTitle)) {
-                        return null; // Защита от левых новелл
+                        return null; 
                     }
                 }
 
@@ -319,19 +331,17 @@ class ScraperService {
     async fetchSteamMetadata(query) {
         try {
             let appId = query;
-            // Если передан не просто ID (цифры), а название игры - ищем через поиск
             if (!/^\d+$/.test(query)) {
                 const searchRes = await fetch(`https://store.steampowered.com/api/storesearch/?term=${encodeURIComponent(query)}&l=english&cc=US`);
                 const searchData = await searchRes.json();
                 if (searchData.total > 0 && searchData.items?.length > 0) {
                     const item = searchData.items[0];
                     
-                    // УМНАЯ СТРОГАЯ ПРОВЕРКА: удаляем все пробелы, апострофы и дефисы
                     const steamTitle = item.name.toLowerCase().replace(/[^a-z0-9а-яぁ-んァ-ン一-龯]/gi, '')
                     const searchTitle = query.toLowerCase().replace(/[^a-z0-9а-яぁ-んァ-ン一-龯]/gi, '')
                     
                     if (!steamTitle.includes(searchTitle) && !searchTitle.includes(steamTitle)) {
-                        return null; // Название не совпадает - это ложное срабатывание, отменяем!
+                        return null; 
                     }
                     appId = item.id;
                 } else {
@@ -377,7 +387,6 @@ class ScraperService {
 
         const cleanTitle = title.replace(/v\d+\.\d+/gi, '').replace(/\[.*?\]/g, '').replace(/\(.*?\)/g, '').trim();
 
-        // 1. DLSITE (Король метаданных)
         if (explicitRj) {
             const dlsiteData = await this.executeFetchDLsiteTags(explicitRj);
             if (dlsiteData) {
@@ -391,16 +400,12 @@ class ScraperService {
             }
         }
 
-        // 2. STEAM (Ищем ВСЕГДА, чтобы забрать ссылку)
         const steamQuery = explicitSteam || cleanTitle; 
         if (steamQuery && steamQuery.length >= 3) {
             const steamData = await this.fetchSteamMetadata(steamQuery);
             if (steamData) {
                 foundAny = true;
-                // Ссылку забираем в любом случае!
                 if (steamData.link) aggregatedData.links.push(steamData.link);
-                
-                // А вот теги берем, ТОЛЬКО если DLsite их не нашел
                 if (aggregatedData.tags.length === 0 && steamData.tags) aggregatedData.tags = steamData.tags;
                 
                 aggregatedData.coverUrl = aggregatedData.coverUrl || steamData.coverUrl || '';
@@ -411,15 +416,12 @@ class ScraperService {
             }
         }
 
-        // 3. VNDB (Ищем ВСЕГДА, чтобы забрать ссылку)
         const vndbQuery = explicitVndb || cleanTitle;
         if (vndbQuery && vndbQuery.length >= 3) {
             const vndbData = await this.fetchVNDBMetadata(vndbQuery);
             if (vndbData) {
                 foundAny = true;
-                // Ссылку забираем в любом случае!
                 if (vndbData.link) aggregatedData.links.push(vndbData.link);
-                
                 if (aggregatedData.tags.length === 0 && vndbData.tags) aggregatedData.tags = vndbData.tags;
                 aggregatedData.coverUrl = aggregatedData.coverUrl || vndbData.coverUrl || '';
                 aggregatedData.description = aggregatedData.description || vndbData.description || '';
