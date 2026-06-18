@@ -105,7 +105,13 @@ if (!window.__rpgPluginHookInstalled) {
             set: function(val) {
                 if (val && typeof val === 'string') {
                     var lowerVal = val.toLowerCase();
-                    if (lowerVal.indexOf('auramz/mobile') > -1 || lowerVal.indexOf('toggle_save_dir') > -1 || lowerVal.indexOf('elimz_mobilecontrols') > -1 || lowerVal.indexOf('cyclone-steam') > -1) {
+                    // Список вредных и дев-плагинов, которые нужно заблокировать
+                    var blockedPlugins = [
+                        'auramz/mobile', 'toggle_save_dir', 'elimz_mobilecontrols', 
+                        'cyclone-steam', 'drs_alldataextractor', 'ge_devonlymessageskipkey'
+                    ];
+                    
+                    if (blockedPlugins.some(function(p) { return lowerVal.indexOf(p) > -1; })) {
                         console.log('[RPG Fixes] 🛑 Заблокирован конфликтный плагин: ' + val);
                         val = 'data:application/javascript,console.log("Blocked by RPG-Fixes!");';
                     }
@@ -262,7 +268,9 @@ if (!window.__rpgPluginHookInstalled) {
                     join: (...a) => a.join('/'), 
                     basename: p => p ? p.split(/[/\\]/).pop() : '', 
                     extname: p => { const b = (p||'').split(/[/\\]/).pop(); const i = b.lastIndexOf('.'); return i > 0 ? b.slice(i) : ''; },
-                    resolve: function() { return Array.prototype.slice.call(arguments).join('/').replace(/\\/g, '/').replace(/\/+/g, '/'); }
+                    resolve: function() { return Array.prototype.slice.call(arguments).join('/').replace(/\\/g, '/').replace(/\/+/g, '/'); },
+                    // 👇 ВОТ ЭТА СТРОЧКА СПАСЕТ DKTools 👇
+                    normalize: p => p ? p.replace(/\\/g, '/').replace(/\/+/g, '/') : '' 
                 };
                 if (m === 'util') return {
                     promisify: function(fn) { 
@@ -274,7 +282,8 @@ if (!window.__rpgPluginHookInstalled) {
                     }
                 };
                 if (m === 'fs') return { 
-                    readFileSync: () => '', writeFileSync: () => {}, mkdirSync: () => {}, 
+                    readFileSync: () => '[]', // <-- Квадратные скобки вместо фигурных!
+                    writeFileSync: () => {}, mkdirSync: () => {}, 
                     existsSync: () => false, readdirSync: () => [], unlinkSync: () => {}, 
                     statSync: () => ({ isDirectory: () => false }) 
                 };
@@ -1580,8 +1589,8 @@ if (!window.__rpgPluginHookInstalled) {
         return promise;
     };
 
-    // ============================================================================
-    // 🛡️ БРОНЯ ОТ ПОВРЕЖДЕННЫХ СЕЙВОВ И ОШИБОК ПЛАГИНОВ (V4 ULTIMATE)
+   // ============================================================================
+    // 🛡️ БРОНЯ ОТ ПОВРЕЖДЕННЫХ СЕЙВОВ И ОШИБОК ПЛАГИНОВ (V5 HYPER-SPEED)
     // ============================================================================
     const saveFixInterval = setInterval(() => {
         
@@ -1617,11 +1626,9 @@ if (!window.__rpgPluginHookInstalled) {
         }
 
         // 3. Железобетонная защита от краша NUUN_SaveScreen (Восстанавливающийся щит)
-        // Патчим DataManager.loadBackground (специфичный метод NUUN)
         if (window.DataManager && window.DataManager.loadBackground && !window.DataManager.loadBackground._isSafe) {
             const origLoadBg = window.DataManager.loadBackground;
             window.DataManager.loadBackground = function(savefileId) {
-                // Если сейва еще нет, не даем плагину прочитать .background
                 if (!this._globalInfo || !this._globalInfo[savefileId]) return null;
                 try { return origLoadBg.apply(this, arguments); } catch(e) { return null; }
             };
@@ -1638,7 +1645,7 @@ if (!window.__rpgPluginHookInstalled) {
                 } catch(e) {
                     console.warn('[RPG Fixes] 🛡️ Предотвращен краш фона меню сохранений:', e);
                     if (!this._backgroundSprite) {
-                        this._backgroundSprite = new window.Sprite(); // Создаем пустой фон, чтобы игра не зависла
+                        this._backgroundSprite = new window.Sprite(); 
                         this.addChild(this._backgroundSprite);
                     }
                 }
@@ -1647,7 +1654,84 @@ if (!window.__rpgPluginHookInstalled) {
             console.log('[RPG Fixes] 🛡️ Scene_File.createBackground защищен');
         }
 
-    }, 500); // Проверяем каждые полсекунды. Даже если плагин перезапишет функцию, мы ее снова поймаем!
+        // 4. ЯДЕРНАЯ ЗАЩИТА от вечной загрузки при пропавших шрифтах (Для старых игр MV)
+        if (window.Graphics && typeof window.Graphics.isFontLoaded === 'function' && !window.Graphics._fontPatchActive) {
+            const _origIsFontLoaded = window.Graphics.isFontLoaded;
+            window.Graphics._fontLoadStartTime = Date.now();
+            
+            window.Graphics.isFontLoaded = function(name) {
+                if (_origIsFontLoaded.apply(this, arguments)) return true;
+                if (Date.now() - window.Graphics._fontLoadStartTime > 1000) {
+                    console.warn(`[RPG Fixes] 🛡️ Шрифт ${name} мертв. Принудительный старт игры!`);
+                    return true; 
+                }
+                return false;
+            };
+            window.Graphics._fontPatchActive = true;
+            console.log('[RPG Fixes] 🛡️ Ядерная защита шрифтов (MV) активирована');
+        }
+
+        // 5. Защита от вечной загрузки при пропавших шрифтах (Для новых игр MZ)
+        if (window.FontManager && window.FontManager.startLoading && !window.FontManager._fontPatchActive) {
+            const _origStartLoading = window.FontManager.startLoading;
+            window.FontManager.startLoading = function(family, url) {
+                const source = "url(" + url + ")";
+                const font = new FontFace(family, source);
+                this._urls[family] = url;
+                this._states[family] = "loading";
+                font.load()
+                    .then(() => {
+                        document.fonts.add(font);
+                        this._states[family] = "loaded";
+                    })
+                    .catch((e) => {
+                        console.warn(`[RPG Fixes] 🛡️ Пропущен сломанный шрифт: ${url}`);
+                        this._states[family] = "loaded"; // Обманываем движок MZ
+                    });
+            };
+            window.FontManager._fontPatchActive = true;
+            console.log('[RPG Fixes] 🛡️ Защита от вечной загрузки шрифтов (MZ) активирована');
+        }
+
+    }, 5); // <-- КРИТИЧНОЕ ИЗМЕНЕНИЕ: проверяем каждые 5 миллисекунд!
+
+    // ============================================================================
+    // 🛡️ БРОНЯ ОТ КРИВЫХ ПЛАГИНОВ (ГЛОБАЛЬНЫЙ ПАТЧ JSON.parse - ТИХИЙ РЕЖИМ)
+    // ============================================================================
+    if (!window._jsonPatchActive) {
+        const _origJSONParse = JSON.parse;
+        JSON.parse = function(text, reviver) {
+            try {
+                return _origJSONParse.apply(this, arguments);
+            } catch (e) {
+                if (typeof text === 'string') {
+                    const trimmed = text.trim();
+                    
+                    // 1. Игнорируем пустые строки (возвращаем оригинальную ошибку, чтобы плагины сами ее тихо обработали)
+                    if (trimmed === '') {
+                        return text; 
+                    }
+                    
+                    // 2. Спасаем математические формулы (типа "816 / 1000")
+                    if (/^[\d\s\.\/\*\+\-\(\)]+$/.test(trimmed) && trimmed.length > 0) {
+                        try {
+                            const result = eval(trimmed);
+                            console.warn(`[RPG Fixes] 🛡️ Спасен JSON (формула): "${text}" -> ${result}`);
+                            return result;
+                        } catch (err) {}
+                    }
+                    
+                    // 3. Спасаем простой текст без кавычек (возвращаем текст БЕЗ лога, чтобы не спамить консоль)
+                    if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
+                        return text;
+                    }
+                }
+                throw e; // Если это реально сломанный объект, кидаем ошибку дальше
+            }
+        };
+        window._jsonPatchActive = true;
+        console.log('[RPG Fixes] 🛡️ Глобальная защита JSON.parse активирована (Тихий режим)');
+    }
 
     initUltimateFixes();
 

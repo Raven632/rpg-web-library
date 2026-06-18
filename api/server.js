@@ -262,6 +262,30 @@ app.get('*', requireAuth, async (req, res, next) => {
     } catch(e) {
         // Ошибки ФС просто прокидываем дальше (к 404 странице)
     }
+
+    // === ИСПРАВЛЕНИЕ БАГА "ПРОПАВШИЕ ФАЙЛЫ И ШРИФТЫ" (404) ===
+    const reqExt = path.extname(reqPath).toLowerCase();
+    
+    // 1. Сейвы и конфиги -> отдаем пустой объект, чтобы не ломать плагины
+    if (['.json', '.rpgsave', '.rmmzsave'].includes(reqExt)) {
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Content-Type', 'application/json');
+        return res.status(404).send('{}'); 
+    }
+    
+    // 2. Стили (шрифты) -> отдаем пустой CSS, чтобы браузер не ругался на MIME type
+    if (reqExt === '.css') {
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Content-Type', 'text/css');
+        return res.status(404).send(''); 
+    }
+    
+    // 3. Остальные файлы (картинки, аудио, шрифты) -> просто отдаем пустоту
+    if (['.js', '.png', '.jpg', '.m4a', '.ogg', '.ttf', '.woff', '.woff2'].includes(reqExt)) {
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        return res.status(404).send(''); 
+    }
+    // ===========================================
     next();
 });
 
