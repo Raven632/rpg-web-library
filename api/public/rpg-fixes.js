@@ -3,6 +3,7 @@
 // ============================================================================
 window.process = window.process || {};
 window.process.platform = window.process.platform || 'browser';
+window.process.cwd = function() { return '/'; };
 
 // ============================================================================
 // --- ВЗЛОМЩИК STEAM  И АЧИВОК ---
@@ -1578,6 +1579,75 @@ if (!window.__rpgPluginHookInstalled) {
         }
         return promise;
     };
+
+    // ============================================================================
+    // 🛡️ БРОНЯ ОТ ПОВРЕЖДЕННЫХ СЕЙВОВ И ОШИБОК ПЛАГИНОВ (V4 ULTIMATE)
+    // ============================================================================
+    const saveFixInterval = setInterval(() => {
+        
+        // 1. Лечим ядро StorageManager (global -> array)
+        if (window.StorageManager && window.StorageManager.loadObject && !window.StorageManager.loadObject._isSafe) {
+            const origLoad = window.StorageManager.loadObject;
+            window.StorageManager.loadObject = function(saveName) {
+                return origLoad.apply(this, arguments).then(contents => {
+                    if (saveName === 'global') return (contents && Array.isArray(contents)) ? contents : [];
+                    return contents || {}; 
+                }).catch(e => {
+                    return saveName === 'global' ? [] : {};
+                });
+            };
+            window.StorageManager.loadObject._isSafe = true;
+            console.log('[RPG Fixes] 🛡️ Ядро StorageManager защищено (global -> array)');
+        }
+
+        // 2. Лечим плагин UTA_CommonSaveMZ
+        if (window.utakata && window.utakata.CommonSave && !window.utakata.CommonSave._isSafe) {
+            const origLoadS = window.utakata.CommonSave.loadCommonSaveSwitches;
+            window.utakata.CommonSave.loadCommonSaveSwitches = function(contents) {
+                if (!contents) return;
+                return origLoadS.apply(this, arguments);
+            };
+            const origLoadV = window.utakata.CommonSave.loadCommonSaveVariables;
+            window.utakata.CommonSave.loadCommonSaveVariables = function(contents) {
+                if (!contents) return;
+                return origLoadV.apply(this, arguments);
+            };
+            window.utakata.CommonSave._isSafe = true;
+            console.log('[RPG Fixes] 🛡️ Плагин UTA_CommonSaveMZ вылечен');
+        }
+
+        // 3. Железобетонная защита от краша NUUN_SaveScreen (Восстанавливающийся щит)
+        // Патчим DataManager.loadBackground (специфичный метод NUUN)
+        if (window.DataManager && window.DataManager.loadBackground && !window.DataManager.loadBackground._isSafe) {
+            const origLoadBg = window.DataManager.loadBackground;
+            window.DataManager.loadBackground = function(savefileId) {
+                // Если сейва еще нет, не даем плагину прочитать .background
+                if (!this._globalInfo || !this._globalInfo[savefileId]) return null;
+                try { return origLoadBg.apply(this, arguments); } catch(e) { return null; }
+            };
+            window.DataManager.loadBackground._isSafe = true;
+            console.log('[RPG Fixes] 🛡️ DataManager.loadBackground (NUUN) вылечен');
+        }
+
+        // Патчим отрисовку фона
+        if (window.Scene_File && window.Scene_File.prototype.createBackground && !window.Scene_File.prototype.createBackground._isSafe) {
+            const origCreateBg = window.Scene_File.prototype.createBackground;
+            window.Scene_File.prototype.createBackground = function() {
+                try {
+                    origCreateBg.apply(this, arguments);
+                } catch(e) {
+                    console.warn('[RPG Fixes] 🛡️ Предотвращен краш фона меню сохранений:', e);
+                    if (!this._backgroundSprite) {
+                        this._backgroundSprite = new window.Sprite(); // Создаем пустой фон, чтобы игра не зависла
+                        this.addChild(this._backgroundSprite);
+                    }
+                }
+            };
+            window.Scene_File.prototype.createBackground._isSafe = true;
+            console.log('[RPG Fixes] 🛡️ Scene_File.createBackground защищен');
+        }
+
+    }, 500); // Проверяем каждые полсекунды. Даже если плагин перезапишет функцию, мы ее снова поймаем!
 
     initUltimateFixes();
 

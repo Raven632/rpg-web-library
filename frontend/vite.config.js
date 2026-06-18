@@ -11,7 +11,13 @@ export default defineConfig({
       // КРИТИЧЕСКИ ВАЖНО: Заставит Vite проверять файлы каждую секунду, 
       // что обязательно при работе через сетевой диск Y:
       usePolling: true, 
-      interval: 500
+      interval: 500,
+      ignored: [
+        '**/games/**', 
+        '**/_tmp_uploads/**', 
+        '**/.audio-cache/**',
+        '**/_saves/**'
+      ]
     },
     proxy: {
       '/api': {

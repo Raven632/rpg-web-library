@@ -1,22 +1,5 @@
 services:
   # ====================================
-  # 1. База Данных (PostgreSQL)
-  # ====================================
-  postgres:
-    image: postgres:15-alpine
-    container_name: rpg-postgres
-    restart: unless-stopped
-    # Докер сам прочитает эти переменные из твоего .env файла!
-    environment:
-      POSTGRES_USER: ${DB_USER:-rpg_admin}
-      POSTGRES_PASSWORD: ${DB_PASS:-supersecret}
-      POSTGRES_DB: ${DB_NAME:-rpg_library}
-    volumes:
-      - pg_data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432" # Оставляем для удобства, чтобы ты мог подключиться через DBeaver/DataGrip
-
-  # ====================================
   # 2. Кэш и Очереди (Redis)
   # ====================================
   redis:
@@ -48,7 +31,6 @@ services:
     restart: unless-stopped
     # Говорим Докеру: "Не запускай бэкенд, пока не поднимутся базы!"
     depends_on:
-      - postgres
       - redis
 
 # Объявляем жесткий диск для базы данных

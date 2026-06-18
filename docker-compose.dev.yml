@@ -2,7 +2,7 @@
 services:
   rpg-library:
     # Заставляем сервер автоматически перезагружаться при изменениях
-    command: nodemon server.js
+    command: nodemon --ignore 'games/*' --ignore '_tmp_uploads/*' --ignore '.audio-cache/*' --ignore '_saves/*' server.js
     volumes:
       # Прокидываем всю папку src разом (там лежат db, routes, services)
       - ./api/src:/app/api/src
