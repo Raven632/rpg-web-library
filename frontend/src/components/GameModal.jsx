@@ -218,10 +218,10 @@ const GameModal = ({ game, index, onClose, onUpdateGame, t, lang, showToast }) =
   const handlePlay = () => {
     setIsPlaying(true);
     
-    // Динамически подставляем протокол (http/https) и IP-адрес/домен твоего сервера,
-    // с которого зашёл пользователь, меняя в DEV-режиме только порт на бэкенд (3000)
-    const playUrl = import.meta.env.DEV 
-      ? `${window.location.protocol}//${window.location.hostname}${game.url}` 
+    // В dev страницу отдаёт Vite (:5173), а игры — dev-бэкенд на своём порту.
+    // Без порта ссылка вела бы на :80, то есть на прод.
+    const playUrl = import.meta.env.DEV
+      ? `${window.location.protocol}//${window.location.hostname}:${import.meta.env.VITE_BACKEND_PORT}${game.url}`
       : game.url;
 
     setTimeout(() => { window.location.href = playUrl; }, 500);

@@ -27,5 +27,6 @@ services:
         - "5173:5173" # Открываем порт Vite
       environment:
         - NODE_ENV=development
+        - VITE_BACKEND_PORT=${HTTP_PORT:-8080}
       depends_on:
         - rpg-library

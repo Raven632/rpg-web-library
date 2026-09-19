@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const dbService = require('../db/database.js');
 
 const router = express.Router();
+const COOKIE_NAME = process.env.AUTH_COOKIE_NAME || 'auth_token';
 
 function tokensEqual(a, b) {
     const bufA = Buffer.from(a);
@@ -14,7 +15,7 @@ function tokensEqual(a, b) {
 // Middleware для защиты маршрутов токеном
 function requireAuth(req, res, next) {
     const expected = dbService.getSessionToken();
-    const provided = req.cookies && req.cookies.auth_token;
+    const provided = req.cookies && req.cookies[COOKIE_NAME];
     if (!expected || typeof provided !== 'string' || !tokensEqual(provided, expected)) {
         return res.status(401).json({ error: 'Требуется авторизация' });
     }
@@ -49,7 +50,7 @@ router.post('/login', async (req, res) => {
     if (dbUser && dbPass && username === dbUser.value) {
         if (await bcrypt.compare(password, dbPass.value)) {
             // Выдаем куку сессии на 30 дней
-            res.cookie('auth_token', dbService.getSessionToken(), { httpOnly: true, sameSite: 'lax', maxAge: 30 * 24 * 60 * 60 * 1000 });
+            res.cookie(COOKIE_NAME, dbService.getSessionToken(), { httpOnly: true, sameSite: 'lax', maxAge: 30 * 24 * 60 * 60 * 1000 });
             return res.json({ success: true });
         }
     }
@@ -57,7 +58,7 @@ router.post('/login', async (req, res) => {
 });
 
 router.post('/logout', (req, res) => {
-    res.clearCookie('auth_token');
+    res.clearCookie(COOKIE_NAME);
     res.json({ success: true });
 });
 
