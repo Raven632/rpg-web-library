@@ -4,7 +4,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test --experimental-test-coverage server.test.js"
+    "test": "node --test --test-force-exit --experimental-test-coverage server.test.js"
   },
   "dependencies": {
     "express": "^4.18.2",
