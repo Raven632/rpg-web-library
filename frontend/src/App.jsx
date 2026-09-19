@@ -35,6 +35,8 @@ function App() {
   const [socketMessage, setSocketMessage] = useState('');
   const [selectedGame, setSelectedGame] = useState(null);
   const [authMode, setAuthMode] = useState(null);
+    // Вошёл ли пользователь: виджеты, которым нужен вход (StorageMonitor), показываем только после него
+  const [isAuthed, setIsAuthed] = useState(false);
 
   // --- ЛЕНИВАЯ ЗАГРУЗКА (PAGINATION) ---
   const [page, setPage] = useState(1);
@@ -65,6 +67,7 @@ function App() {
 
       if (!statusData.initialized) {
         setAuthMode('setup');
+        setIsAuthed(false);
         setLoading(false);
         return;
       }
@@ -72,6 +75,7 @@ function App() {
       const response = await fetch('/api/games');
       if (response.status === 401) {
         setAuthMode('login');
+        setIsAuthed(false);
         setLoading(false);
         return;
       }
@@ -79,6 +83,7 @@ function App() {
       const data = await response.json();
       setGames(data);
       setAuthMode(null);
+      setIsAuthed(true);
     } catch (error) {
       console.error("Ошибка загрузки игр:", error);
     } finally {
@@ -207,7 +212,7 @@ function App() {
     <div className="app-container">
       <Header currentLang={lang} onLangChange={setLang} t={t} />
 
-      <StorageMonitor />
+      {isAuthed && <StorageMonitor />}
       
       <Toolbar 
         searchQuery={searchQuery} setSearchQuery={setSearchQuery} 

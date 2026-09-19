@@ -262,6 +262,8 @@ if (!window.__rpgPluginHookInstalled) {
         window.__import_meta = { url: location.href, env: {} };
 
         if (typeof require === 'undefined') {
+            // Кэш для fs: файлы игры во время игры не меняются, повторно не спрашиваем
+            const fsCache = new Map();
             window.require = function (m) {
                 if (m === 'path') return { 
                     dirname: p => p ? p.replace(/[/\\][^/\\]*$/, '') || '.' : '.', 
@@ -281,12 +283,33 @@ if (!window.__rpgPluginHookInstalled) {
                         }; 
                     }
                 };
-                if (m === 'fs') return { 
-                    readFileSync: () => '[]', // <-- Квадратные скобки вместо фигурных!
-                    writeFileSync: () => {}, mkdirSync: () => {}, 
-                    existsSync: () => false, readdirSync: () => [], unlinkSync: () => {}, 
-                    statSync: () => ({ isDirectory: () => false }) 
-                };
+                if (m === 'fs') {
+                    // Читаем файлы игры с сервера синхронным запросом — так же синхронно, как fs.*Sync
+                    // в NW.js. Относительный путь считается от папки игры (адреса страницы).
+                    // Нужно плагинам, которые читают свои файлы через fs (Hendrix_Localization: game_messages.csv).
+                    const fetchSync = (p, method) => {
+                        const key = method + ' ' + p;
+                        if (fsCache.has(key)) return fsCache.get(key);
+                        let result = { status: 0, text: '' };
+                        try {
+                            const xhr = new XMLHttpRequest();
+                            xhr.open(method, String(p).replace(/\\/g, '/'), false);
+                            xhr.overrideMimeType('text/plain; charset=utf-8');
+                            xhr.send();
+                            result = { status: xhr.status, text: xhr.responseText };
+                        } catch (e) {}
+                        fsCache.set(key, result);
+                        return result;
+                    };
+                    return {
+                        // Файла нет — по-прежнему '[]': на это рассчитывают старые плагины
+                        readFileSync: p => { const r = fetchSync(p, 'GET'); return r.status === 200 ? r.text : '[]'; },
+                        existsSync: p => fetchSync(p, 'HEAD').status === 200,
+                        writeFileSync: () => {}, mkdirSync: () => {},
+                        readdirSync: () => [], unlinkSync: () => {},
+                        statSync: () => ({ isDirectory: () => false })
+                    };
+                }
                 if (m === 'nw.gui' || m === 'nw') return { 
                     Window: { get: () => ({ on() {}, maximize() {}, restore() {}, removeAllListeners() {}, close() {} }) }, 
                     App: { quit() {}, argv: [], manifest: {} }, 
