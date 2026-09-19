@@ -1,12 +1,21 @@
 const express = require('express');
 const bcrypt = require('bcrypt');
+const crypto = require('crypto');
 const dbService = require('../db/database.js');
 
 const router = express.Router();
 
+function tokensEqual(a, b) {
+    const bufA = Buffer.from(a);
+    const bufB = Buffer.from(b);
+    return bufA.length === bufB.length && crypto.timingSafeEqual(bufA, bufB);
+}
+
 // Middleware для защиты маршрутов токеном
 function requireAuth(req, res, next) {
-    if (req.cookies.auth_token !== dbService.getSessionToken()) {
+    const expected = dbService.getSessionToken();
+    const provided = req.cookies && req.cookies.auth_token;
+    if (!expected || typeof provided !== 'string' || !tokensEqual(provided, expected)) {
         return res.status(401).json({ error: 'Требуется авторизация' });
     }
     next();

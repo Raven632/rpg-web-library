@@ -6,13 +6,19 @@ const scraperService = require('../services/scraper.js');
 const { GAMES_DIR } = require('../config/index.js');
 const { upload, uploadLimiter, coverUpload } = require('../utils/upload.js');
 const { spawnExtract, findGameFolder, getFolderSize } = require('../utils/archive.js');
+const { validateIdParam } = require('../utils/validate.js');
 const { createClient } = require('redis');
 
 // Подключение к Redis
 const redisClient = createClient({ url: process.env.REDIS_URL || 'redis://redis:6379' });
+// Без обработчика 'error' любой разрыв связи с Redis роняет весь процесс
+redisClient.on('error', (err) => console.error('❌ [Redis Games] Ошибка:', err.message));
 redisClient.connect().catch(console.error);
 
 const router = express.Router();
+
+// Все роуты с :id — только безопасное имя папки (без "." / ".." / слэшей)
+router.param('id', validateIdParam);
 
 let isCalculatingSizes = false; // Глобальный замок
 
@@ -255,6 +261,10 @@ router.delete('/:id', async (req, res) => {
     const gamePath = path.join(GAMES_DIR, id);
     
     try {
+        // Удаляем только то, что есть в библиотеке (не _saves, не library.db и т.п.)
+        const game = await dbService.get().get('SELECT id FROM games WHERE id = ?', [id]);
+        if (!game) return res.status(404).json({ error: 'Игра не найдена' });
+
         await fsp.access(gamePath);
         await fsp.rm(gamePath, { recursive: true, force: true });
         await dbService.get().run('DELETE FROM games WHERE id = ?', [id]);

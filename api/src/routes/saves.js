@@ -8,12 +8,17 @@ const execFilePromise = util.promisify(execFile);
 const { SAVES_DIR } = require('../config/index.js');
 const { spawnExtract } = require('../utils/archive.js');
 const { upload, uploadLimiter } = require('../utils/upload.js');
-const { requireAuth } = require('./auth.js'); 
+const { validateIdParam } = require('../utils/validate.js');
+const { requireAuth } = require('./auth.js');
 
 module.exports = function(EXTRACT_TMP) {
     const router = express.Router();
 
     router.use(requireAuth);
+
+    // Иначе "/import/.." распаковал бы архив прямо в GAMES_DIR и снёс бы там все папки
+    router.param('id', validateIdParam);
+    router.param('gameId', validateIdParam);
 
     // --- 1. АРХИВЫ (Должны быть вверху) ---
     router.get('/export/:id', async (req, res) => {

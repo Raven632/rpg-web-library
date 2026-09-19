@@ -2,7 +2,9 @@ const test = require('node:test');
 const assert = require('node:assert');
 
 // 1. Правильный импорт мидлвары (она обычная функция)
-const { requireAuth } = require('./src/routes/auth.js'); 
+const { requireAuth } = require('./src/routes/auth.js');
+const dbService = require('./src/db/database.js');
+const { isSafeSegment } = require('./src/utils/validate.js');
 
 // 2. Правильный импорт скрапера (это ЭКЗЕМПЛЯР КЛАССА, импортируем целиком)
 const scraperService = require('./src/services/scraper.js');
@@ -49,14 +51,62 @@ test('requireAuth: запрос с неверным токеном возвра�
   assert.strictEqual(statusCode, 401, 'Ожидается HTTP 401');
 });
 
-test('requireAuth: запрос с правильным токеном пропускается', () => {
-  const req = { method: 'POST', cookies: { auth_token: '' } };
+test('requireAuth: запрос с правильным токеном пропускается', (t) => {
+  const originalToken = dbService.sessionToken;
+  dbService.sessionToken = 'test_token_123';
+  t.after(() => { dbService.sessionToken = originalToken; });
+
+  const req = { method: 'POST', cookies: { auth_token: 'test_token_123' } };
   const res = {};
   let nextCalled = false;
 
   requireAuth(req, res, () => { nextCalled = true; });
 
   assert.strictEqual(nextCalled, true, 'Запрос с валидным токеном должен проходить');
+});
+
+test('requireAuth: пустой токен сервера (до init) не пропускает пустую куку', (t) => {
+  const originalToken = dbService.sessionToken;
+  dbService.sessionToken = '';
+  t.after(() => { dbService.sessionToken = originalToken; });
+
+  const req = { method: 'GET', cookies: { auth_token: '' } };
+  let statusCode;
+  let nextCalled = false;
+  const res = { status(code) { statusCode = code; return { json() {} }; } };
+
+  requireAuth(req, res, () => { nextCalled = true; });
+
+  assert.strictEqual(nextCalled, false, 'next() не должен вызываться');
+  assert.strictEqual(statusCode, 401, 'Ожидается HTTP 401');
+});
+
+test('requireAuth: старый захардкоженный fallback-токен больше не работает', () => {
+  const req = { method: 'GET', cookies: { auth_token: 'fallback_secret_key_for_dev' } };
+  let statusCode;
+  let nextCalled = false;
+  const res = { status(code) { statusCode = code; return { json() {} }; } };
+
+  requireAuth(req, res, () => { nextCalled = true; });
+
+  assert.strictEqual(nextCalled, false, 'next() не должен вызываться');
+  assert.strictEqual(statusCode, 401, 'Ожидается HTTP 401');
+});
+
+// ============================================================================
+// isSafeSegment tests (Защита id игры от "." / ".." / слэшей)
+// ============================================================================
+
+test('isSafeSegment: отбивает опасные значения', () => {
+  for (const bad of ['', '.', '..', '../x', 'a/b', '/etc', 'x/..', undefined, null, 42]) {
+    assert.strictEqual(isSafeSegment(bad), false, `Должен отбить: ${JSON.stringify(bad)}`);
+  }
+});
+
+test('isSafeSegment: пропускает реальные имена папок игр', () => {
+  for (const good of ['RJ01364780', 'Kubel\'s Pillory RJ255342', 'Cornelica_ Town of Succubi', 'Roseliam-1.08', '...json']) {
+    assert.strictEqual(isSafeSegment(good), true, `Должен пропустить: ${good}`);
+  }
 });
 
 // ============================================================================

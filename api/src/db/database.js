@@ -4,7 +4,6 @@ const path = require('path');
 const crypto = require('crypto');
 const fs = require('fs');
 const fsp = fs.promises;
-const SESSION_SECRET = process.env.SESSION_SECRET || 'fallback_secret_key_for_dev';
 
 class DatabaseService {
     constructor() {
@@ -37,7 +36,7 @@ class DatabaseService {
         if (process.env.SESSION_SECRET) {
             this.sessionToken = process.env.SESSION_SECRET;
         } else {
-            // 2. Фолбэк для старых версий (оставляем старую логику для совместимости)
+            // 2. Иначе — случайный ключ, один раз сгенерированный и сохраненный в БД
             let tokenRow = await this.db.get('SELECT value FROM settings WHERE key = "session_secret"');
             if (!tokenRow) {
                 this.sessionToken = crypto.randomBytes(64).toString('hex');
@@ -63,7 +62,8 @@ class DatabaseService {
         return this.db;
     }
 
-    getSessionToken() { return SESSION_SECRET; }
+    // До init() токен пустой — requireAuth в этом случае никого не пускает
+    getSessionToken() { return this.sessionToken; }
 
     async addGameToDB(folder, gamePath) {
         let title = folder.replace(/\[?RJ\d{6,8}\]?/gi, '').replace(/[-_]/g, ' ').replace(/\s+/g, ' ').trim() || folder;
