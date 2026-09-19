@@ -28,9 +28,9 @@
 
 ## 🛠 Технологический стек
 
-- **Backend:** Node.js, Express, Socket.io (для realtime-уведомлений).
+- **Backend:** Node.js, Express, Socket.io (для realtime-уведомлений), Redis.
 - **Database:** SQLite (`sqlite3` с предкомпиляцией) и Zero-Config безопасность.
-- **Frontend:** Чистый Vanilla JS / CSS. Без тяжелых фреймворков.
+- **Frontend:** React 19 + Vite.
 - **Infrastructure:** Docker Engine, `7zip`, системный `curl`.
 
 ## 🚀 Установка и запуск
