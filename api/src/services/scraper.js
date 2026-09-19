@@ -161,11 +161,30 @@ class ScraperService {
 
     async translateText(text, targetLang = 'en') {
         if (!text) return '';
+        // В адрес запроса помещается около 1300 символов, поэтому длинный текст режем на куски
+        const chunks = String(text).match(/[\s\S]{1,1200}/g) || [];
+        const parts = [];
         try {
-            const res = await fetch(`https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${targetLang}&dt=t&q=${encodeURIComponent(text)}`);
-            const data = await res.json();
-            return data[0].map(item => item[0]).join('');
-        } catch (e) { return text; }
+            for (const chunk of chunks) {
+                // client=dict-chrome-ex вместо gtx: gtx с нашего адреса отвечает 429 (нас ограничивают)
+                const url = `https://translate.googleapis.com/translate_a/t?client=dict-chrome-ex&sl=auto&tl=${targetLang}&q=${encodeURIComponent(chunk)}`;
+                const controller = new AbortController();
+                const timer = setTimeout(() => controller.abort(), 8000);
+                try {
+                    const res = await fetch(url, { signal: controller.signal, headers: { 'User-Agent': 'Mozilla/5.0' } });
+                    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                    const data = await res.json();
+                    // Ответ бывает двух видов: [["перевод","ja"]] и ["перевод"]
+                    parts.push(data.map(item => (Array.isArray(item) ? item[0] : item)).join(''));
+                } finally {
+                    clearTimeout(timer);
+                }
+            }
+            return parts.join('');
+        } catch (e) {
+            console.warn('[Translate] Не удалось перевести:', e.message);
+            return text; // отдаём оригинал, как и раньше
+        }
     }
 
     async fetchViaJapanProxy(url) {
