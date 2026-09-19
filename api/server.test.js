@@ -115,9 +115,10 @@ test('isSafeSegment: пропускает реальные имена папок
 
 test('processParsedData: извлекает теги и очищает HTML', async (t) => {
   const originalFetch = global.fetch;
-  // Мокаем переводчик Google
+  // Мокаем переводчик Google (формат ответа client=dict-chrome-ex: [["перевод","ja"]])
   global.fetch = async () => ({
-    json: async () => [[['Epic game translated!', 'Epic game!', null, null]]]
+    ok: true,
+    json: async () => [['Epic game translated!', 'ja']]
   });
 
   t.after(() => { global.fetch = originalFetch; });
