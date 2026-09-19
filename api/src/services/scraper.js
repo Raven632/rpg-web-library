@@ -253,8 +253,24 @@ class ScraperService {
         return null;
     }
 
+    // Один запрос к посреднику: DLsite блокирует наш регион (прямой запрос уводит на google.com)
+    async fetchDLsiteJson(url, timeoutMs = 5000) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+        try {
+            const res = await fetch(url, { signal: controller.signal, headers: { 'User-Agent': 'Mozilla/5.0' } });
+            const text = await res.text();
+            // r.jina.ai отдаёт JSON внутри текста, поэтому вырезаем массив из ответа
+            const match = text.match(/\[\s*\{[\s\S]*\}\s*\]/);
+            const data = JSON.parse(match ? match[0] : text);
+            if (!data?.[0]?.work_name) throw new Error('пустой ответ');
+            return data;
+        } finally {
+            clearTimeout(timer);
+        }
+    }
+
     async executeFetchDLsiteTags(rjCode) {
-        // --- НОВОЕ: Проверяем наличие ключа в Redis ---
         try {
             const cached = await redisClient.get(`dlsite:${rjCode}`);
             if (cached) {
@@ -263,29 +279,20 @@ class ScraperService {
             }
         } catch (e) {}
 
-        const locales = ['en_US', 'ja_JP'];
-        for (const loc of locales) {
-            const targetUrl = `https://www.dlsite.com/maniax/api/=/product.json?workno=${rjCode}&locale=${loc}`;
-            const gateways = [
-                `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`,
-                `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetUrl)}`,
-                `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`
-            ];
-            for (const gateway of gateways) {
-                try {
-                    const controller = new AbortController();
-                    const timeoutId = setTimeout(() => controller.abort(), 10000);
-                    const res = await fetch(gateway, { signal: controller.signal });
-                    clearTimeout(timeoutId);
-                    
-                    const text = await res.text();
-                    const data = JSON.parse(text);
-                    if (data?.[0]?.work_name) return await this.processParsedData(data[0], rjCode);
-                } catch (e) {}
-            }
-        }
-        const jpUrl = `https://www.dlsite.com/maniax/api/=/product.json?workno=${rjCode}&locale=en_US`;
-        const jpData = await this.fetchViaJapanProxy(jpUrl);
+        const targetUrl = `https://www.dlsite.com/maniax/api/=/product.json?workno=${rjCode}&locale=en_US`;
+        const gateways = [
+            `https://r.jina.ai/${targetUrl}`,
+            `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`
+        ];
+
+        // Пробуем посредников ОДНОВРЕМЕННО: побеждает первый ответивший, а не сумма таймаутов
+        try {
+            const data = await Promise.any(gateways.map(url => this.fetchDLsiteJson(url)));
+            return await this.processParsedData(data[0], rjCode);
+        } catch (e) {}
+
+        // Не вышло — платный ScraperAPI и бесплатные японские прокси: надёжно, но медленно
+        const jpData = await this.fetchViaJapanProxy(targetUrl);
         if (jpData?.[0]?.work_name) return await this.processParsedData(jpData[0], rjCode);
         return null;
     }
