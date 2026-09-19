@@ -21,15 +21,15 @@ export default defineConfig({
     },
     proxy: {
       '/api': {
-        target: 'http://rpg-library-v2:3000', 
+        target: 'http://rpg-library:3000', 
         changeOrigin: true,
       },
       '/socket.io': {
-        target: 'http://rpg-library-v2:3000',
+        target: 'http://rpg-library:3000',
         ws: true, 
       },
       '/media': {
-        target: 'http://rpg-library-v2:3000',
+        target: 'http://rpg-library:3000',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/media/, '') 
       }

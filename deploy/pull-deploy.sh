@@ -3,7 +3,7 @@
 # Запускается таймером rpg-deploy.timer; вручную: systemctl start rpg-deploy
 set -euo pipefail
 
-REPO_DIR=/root/rpgm
+REPO_DIR=$(cd "$(dirname "$0")/.." && pwd)
 BRANCH=main
 GITHUB_REPO=Raven632/rpg-web-library
 CI_WORKFLOW=.github/workflows/ci.yml

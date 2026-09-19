@@ -4,7 +4,6 @@ services:
   # ====================================
   redis:
     image: redis:7-alpine
-    container_name: rpg-redis
     restart: unless-stopped
     # Порт наружу не публикуем: Redis без пароля, бэкенд ходит к нему
     # по внутренней сети Docker (redis://redis:6379)
@@ -16,11 +15,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: rpg-library-v2
     ports:
-      - "80:3000"
+      - "${HTTP_PORT:-80}:3000"
     volumes:
-      - ./games:/games
+      - ${GAMES_HOST_DIR:-./games}:/games
     # Подключаем наш файл с секретами
     env_file:
       - .env
@@ -32,7 +30,3 @@ services:
     # Говорим Докеру: "Не запускай бэкенд, пока не поднимутся базы!"
     depends_on:
       - redis
-
-# Объявляем жесткий диск для базы данных
-volumes:
-  pg_data:
