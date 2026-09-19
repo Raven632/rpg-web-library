@@ -33,3 +33,19 @@ services:
         - VITE_BACKEND_PORT=${HTTP_PORT:-8080}
       depends_on:
         - rpg-library
+        
+  # Проверка совместимости игр (Playwright). С остальными сервисами не стартует —
+  # только вручную: docker compose run --rm --build compat
+  compat:
+    build: ./tests/compat
+    profiles: ["test"]
+    init: true
+    # Chromium держит данные страниц в /dev/shm, а у Docker там по умолчанию всего 64 МБ
+    shm_size: "1gb"
+    environment:
+      - RPG_USER=${COMPAT_USER}
+      - RPG_PASS=${COMPAT_PASS}
+    volumes:
+      - ./tests/compat/report:/work/report
+    depends_on:
+      - rpg-library

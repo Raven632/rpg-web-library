@@ -1720,11 +1720,6 @@ if (!window.__rpgPluginHookInstalled) {
                             return result;
                         } catch (err) {}
                     }
-                    
-                    // 3. Спасаем простой текст без кавычек (возвращаем текст БЕЗ лога, чтобы не спамить консоль)
-                    if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
-                        return text;
-                    }
                 }
                 throw e; // Если это реально сломанный объект, кидаем ошибку дальше
             }
