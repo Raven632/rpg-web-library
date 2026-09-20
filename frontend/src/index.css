@@ -196,8 +196,8 @@ h1 {
 .sort-box option { background: var(--bg-deep); color: var(--text); }
 
 .upload-btn { 
-  flex: 1; 
-  min-width: 180px; 
+  flex: 1 1 100%;          /* всегда занимает отдельную строку целиком */
+  white-space: nowrap;
   padding: 16px; 
   background: rgba(201,168,76,0.08); 
   border: 1px dashed rgba(201,168,76,0.4); 
@@ -214,6 +214,33 @@ h1 {
   text-transform: uppercase; 
   transition: all 0.3s ease; 
 }
+
+/* Переключатель «скрыть обложки» — в одном стиле с панелью, но узкий */
+.cover-toggle {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 18px;
+  background: rgba(19, 17, 26, 0.6);
+  border: 1px solid rgba(201, 168, 76, 0.3);
+  border-radius: 6px;
+  color: var(--gold-dim);
+  font-family: 'Cinzel', serif;
+  font-size: 0.8rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  min-width: 230px;        /* одинаковая ширина при «Скрыть» и «Показать» — вёрстка не прыгает */
+  justify-content: center;
+  white-space: nowrap;
+}
+
+.cover-toggle:hover { border-color: var(--gold); color: var(--gold); box-shadow: 0 0 15px rgba(201, 168, 76, 0.15); }
+.cover-toggle.active { background: rgba(201, 168, 76, 0.12); border-color: var(--gold); color: var(--gold-light); }
+.cover-toggle:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
+.cover-toggle svg { width: 18px; height: 18px; fill: currentColor; flex-shrink: 0; }
 
 .upload-btn:hover { 
   background: rgba(201,168,76,0.15); 
@@ -719,7 +746,7 @@ footer {
   header .lang-switcher { position: static; display: block; margin: 12px auto 0; width: auto; min-width: auto; }
   h1 { font-size: clamp(1.4rem, 8vw, 2rem); }
   .storage-monitor { gap: 14px; margin-top: 14px; font-size: 0.7rem; padding: 8px 12px; }
-  .search-box, .sort-box, .upload-btn { min-width: 100%; }
+  .search-box, .sort-box, .upload-btn, .cover-toggle { min-width: 100%; }
   .controls-zone { gap: 10px; margin-bottom: 20px; }
   .modal-overlay { padding: 10px; align-items: center; justify-content: center; } 
   .modal-content { width: 100%; max-width: calc(100vw - 20px); max-height: 90vh; border-radius: 12px; margin: 0; }
@@ -740,4 +767,17 @@ footer {
   
   .modal-description { font-size: 0.95rem; padding-left: 10px; padding-right: 5px; margin-bottom: 60px; border-left-width: 1px; }
   #modal-play-btn { font-size: 1rem; padding: 14px; position: sticky; bottom: 0; width: 100%; }
+} 
+
+/* ========================================================= */
+/* 7. СКРЫТИЕ ОБЛОЖЕК                                        */
+/* ========================================================= */
+/* Класс висит на корневом контейнере, поэтому одно правило накрывает
+   и карточки, и модальное окно. Наведение блюр не снимает. */
+.covers-hidden .card-cover img,
+.covers-hidden .game-card:hover .card-cover img,
+.covers-hidden #modal-cover {
+  filter: blur(18px) brightness(0.55) saturate(0.7);
+  /* размытие «съедает» края — увеличиваем, чтобы не было прозрачной кромки */
+  transform: scale(1.1);
 }

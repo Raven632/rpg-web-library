@@ -64,7 +64,9 @@ export const locales = {
     storage_games: "Игры",
     storage_free: "Свободно",
     storage_scan: "Сканирование диска...",
-    storage_err: "Нет связи с диском"
+    storage_err: "Нет связи с диском",
+    covers_hide: "Скрыть обложки",
+    covers_show: "Показать обложки",
   },
   en: {
     subtitle: "Your personal adventure collection",
@@ -131,7 +133,9 @@ export const locales = {
     storage_games: "Games",
     storage_free: "Free",
     storage_scan: "Scanning disk...",
-    storage_err: "No connection to disk"
+    storage_err: "No connection to disk",
+    covers_hide: "Hide covers",
+    covers_show: "Show covers",
   },
   de: {
     subtitle: "Deine persönliche Abenteuersammlung",
@@ -198,6 +202,8 @@ export const locales = {
     storage_games: "Spiele",
     storage_free: "Frei",
     storage_scan: "Festplatte wird gescannt...",
-    storage_err: "Keine Verbindung zur Festplatte"
+    storage_err: "Keine Verbindung zur Festplatte",
+    covers_hide: "Cover verbergen",
+    covers_show: "Cover anzeigen",
   }
 };

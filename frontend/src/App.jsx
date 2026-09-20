@@ -15,10 +15,16 @@ function App() {
   const [games, setGames] = useState([]);
   const [loading, setLoading] = useState(true);
   const [lang, setLang] = useState(localStorage.getItem('rpg_lang') || 'ru');
+  // Скрытие обложек: помним выбор между заходами, как и язык
+  const [blurCovers, setBlurCovers] = useState(() => localStorage.getItem('rpg_blur') === '1');
   
   useEffect(() => {
     localStorage.setItem('rpg_lang', lang);
   }, [lang]);
+  
+  useEffect(() => {
+    localStorage.setItem('rpg_blur', blurCovers ? '1' : '0');
+  }, [blurCovers]);
 
   const t = locales[lang] || locales['ru'];
 
@@ -224,12 +230,13 @@ function App() {
   }, [processedGames.length, page, itemsPerPage]);
 
   return (
-    <div className="app-container">
+    <div className={`app-container${blurCovers ? ' covers-hidden' : ''}`}>
       <Header currentLang={lang} onLangChange={setLang} t={t} />
 
       {isAuthed && <StorageMonitor t={t} />}
       
       <Toolbar 
+        blurCovers={blurCovers} setBlurCovers={setBlurCovers}
         searchQuery={searchQuery} setSearchQuery={setSearchQuery} 
         availableTags={availableTags} selectedTag={selectedTag} setSelectedTag={setSelectedTag}
         currentSort={currentSort} setCurrentSort={setCurrentSort}
