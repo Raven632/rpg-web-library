@@ -14,7 +14,7 @@
 
 A self-hosted web service designed to catalog, store, and play browser-based RPG Maker games (MV/MZ) directly from your home server. Engineered for high performance, I/O resilience, and fully automated metadata scraping.
 
-![App Screenshot](/rest/img/Example.png)
+![App Screenshot — covers hidden with the built-in toggle](/rest/img/Example.png)
 
 ## ✨ Key Features
 

@@ -14,7 +14,7 @@
 
 Ein Self-Hosted Webdienst zur Katalogisierung, Speicherung und Ausführung von RPG Maker-Spielen (MV/MZ) direkt über den Browser deines Heimservers. Entwickelt mit Fokus auf hohe Leistung, I/O-Stabilität und intelligente automatische Metadatenerfassung.
 
-![App Screenshot](/rest/img/Example.png)
+![App-Screenshot — Cover mit dem eingebauten Schalter ausgeblendet](/rest/img/Example.png)
 
 ## ✨ Hauptfunktionen
 
