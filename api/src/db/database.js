@@ -53,6 +53,8 @@ class DatabaseService {
         try { await this.db.exec('ALTER TABLE games ADD COLUMN link TEXT DEFAULT ""'); } catch(e){}
         try { await this.db.exec('ALTER TABLE games ADD COLUMN size INTEGER DEFAULT 0'); } catch(e){}
         try { await this.db.exec('ALTER TABLE games ADD COLUMN version TEXT DEFAULT "1.0.0"'); } catch(e){}
+        try { await this.db.exec('ALTER TABLE games ADD COLUMN status TEXT DEFAULT ""'); } catch(e){}
+        try { await this.db.exec('ALTER TABLE games ADD COLUMN favorite INTEGER DEFAULT 0'); } catch(e){}
         
         console.log('🗄️ [DB] База данных инициализирована.');
         return this.db;

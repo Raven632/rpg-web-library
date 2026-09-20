@@ -18,6 +18,7 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const cookieParser = require('cookie-parser');
 const { Server } = require('socket.io');
+const { setIo } = require('./src/utils/cache.js');
 
 // Локальные сервисы и утилиты
 const dbService = require('./src/db/database.js');
@@ -39,6 +40,7 @@ const io = new Server(server, { cors: { origin: '*' } });
 // Внедрение зависимостей в сервисы
 scraperService.setDependencies(io, GAMES_DIR, dbService);
 dbService.setDependencies(io, scraperService, GAMES_DIR);
+setIo(io);
 
 // ============================================================================
 // [3] ГЛОБАЛЬНЫЕ MIDDLEWARE И НАСТРОЙКА ПАПОК

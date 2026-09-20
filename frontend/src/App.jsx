@@ -31,12 +31,14 @@ function App() {
   const [searchQuery, setSearchQuery] = useState(() => sessionStorage.getItem('rpg_search') || '');
   const [selectedTag, setSelectedTag] = useState(() => sessionStorage.getItem('rpg_tag') || 'all');
   const [currentSort, setCurrentSort] = useState(() => sessionStorage.getItem('rpg_sort') || 'newest');
+  const [statusFilter, setStatusFilter] = useState(() => sessionStorage.getItem('rpg_status') || 'all');
 
   useEffect(() => {
     sessionStorage.setItem('rpg_search', searchQuery);
     sessionStorage.setItem('rpg_tag', selectedTag);
     sessionStorage.setItem('rpg_sort', currentSort);
-  }, [searchQuery, selectedTag, currentSort]);
+    sessionStorage.setItem('rpg_status', statusFilter);
+  }, [searchQuery, selectedTag, currentSort, statusFilter]);
 
   const [socketMessage, setSocketMessage] = useState('');
   const [selectedGame, setSelectedGame] = useState(null);
@@ -52,7 +54,7 @@ function App() {
   // Сбрасываем страницу на первую при любом изменении фильтров
   useEffect(() => {
     setPage(1);
-  }, [searchQuery, selectedTag, currentSort]);
+  }, [searchQuery, selectedTag, currentSort, statusFilter]);
 
   const [toast, setToast] = useState({ message: '', type: 'success', visible: false });
   const toastTimerRef = useRef(null);
@@ -89,6 +91,12 @@ function App() {
 
       const data = await response.json();
       setGames(data);
+      // Игру могли изменить или удалить с другого устройства, пока окно открыто
+      setSelectedGame(prev => {
+        if (!prev) return null;
+        const fresh = data.find(g => g.id === prev.game.id);
+        return fresh ? { ...prev, game: fresh } : null;
+      });
       setAuthMode(null);
       setIsAuthed(true);
     } catch (error) {
@@ -114,6 +122,9 @@ function App() {
       scheduleRefetch();
     });
 
+    // Кто-то изменил библиотеку с другого устройства — тихо подтягиваем список
+    socket.on('library-changed', () => scheduleRefetch());
+
     const handleVisibilityChange = () => {
       if (!document.hidden) fetchGames({ silent: true });
     };
@@ -130,6 +141,7 @@ function App() {
       socket.off('scrape-success');
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('pageshow', handlePageShow);
+      socket.off('library-changed');      
     };
   }, []);
 
@@ -160,6 +172,22 @@ function App() {
         body: JSON.stringify({ rating: ratingValue })
       });
     } catch (err) {}
+  };
+
+  // Правим поле сразу на экране и следом отправляем на сервер.
+  // Ждать ответ нельзя: звезда «моргала» бы на каждый клик.
+  const patchGame = async (id, patch) => {
+    setGames(prev => prev.map(g => g.id === id ? { ...g, ...patch } : g));
+    setSelectedGame(prev => prev && prev.game.id === id ? { ...prev, game: { ...prev.game, ...patch } } : prev);
+    try {
+      await fetch(`/api/games/${encodeURIComponent(id)}/meta`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch)
+      });
+    } catch (err) {
+      showToast(t.err_net, 'error');
+    }
   };
 
   const handleUpdateGame = (index, updatedGame) => {
@@ -195,6 +223,13 @@ function App() {
     if (selectedTag !== 'all') {
       result = result.filter(g => g.tags && g.tags.includes(selectedTag));
     }
+
+    // Фильтруем по статусу
+    if (statusFilter === 'fav') {
+      result = result.filter(g => g.favorite);
+    } else if (statusFilter !== 'all') {
+      result = result.filter(g => g.status === statusFilter);
+    }
         // При равных значениях упорядочиваем по id: иначе порядок одинаковых игр «прыгает»
     const byId = (a, b) => a.id.localeCompare(b.id);
     result = [...result].sort((a, b) => {
@@ -210,7 +245,7 @@ function App() {
       }
     });
     return result;
-  }, [games, searchQuery, selectedTag, currentSort]);
+  }, [games, searchQuery, selectedTag, currentSort, statusFilter]);
 
   // Высчитываем, какие игры показывать на текущей странице
   const visibleGames = processedGames.slice(0, page * itemsPerPage);
@@ -244,6 +279,7 @@ function App() {
         socketMessage={socketMessage}
         t={t}
         showToast={showToast}
+        statusFilter={statusFilter} setStatusFilter={setStatusFilter}
       />
       
       <main className="content">
@@ -260,6 +296,7 @@ function App() {
                   key={game.id} game={game} index={index}
                   onClick={() => setSelectedGame({ game, index })} 
                   onDelete={handleDeleteGame} onRate={handleRateGame}
+                  onToggleFavorite={(id, value) => patchGame(id, { favorite: value })}
                   t={t}
                 />
               ))}
@@ -295,6 +332,7 @@ function App() {
           onClose={() => setSelectedGame(null)} onUpdateGame={handleUpdateGame}
           t={t} lang={lang}
           showToast={showToast}
+          onPatch={patchGame}
         />
       )}
 

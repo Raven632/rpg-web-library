@@ -75,7 +75,9 @@ router.get('/', async (req, res) => {
             number: 0,
             addedAt: row.addedAt, 
             lastPlayed: row.lastPlayed, 
-            rating: row.rating
+            rating: row.rating,
+            status: row.status || '',
+            favorite: !!row.favorite
         })).sort((a, b) => b.addedAt - a.addedAt); 
         games.forEach((g, i) => g.number = i + 1);
 
@@ -231,7 +233,7 @@ router.post('/:id/edit', async (req, res) => {
 // --- 5. СОХРАНЕНИЕ РЕЙТИНГА И ВРЕМЕНИ ИГРЫ ---
 router.post('/:id/meta', async (req, res) => {
     const folder = path.basename(req.params.id);
-    const { rating, lastPlayed } = req.body;
+    const { rating, lastPlayed, status, favorite } = req.body;
 
     try {
         const game = await dbService.get().get('SELECT id FROM games WHERE id = ?', [folder]);
@@ -240,6 +242,15 @@ router.post('/:id/meta', async (req, res) => {
         const updates = [], params = [];
         if (rating !== undefined) { updates.push('rating = ?'); params.push(rating); }
         if (lastPlayed !== undefined) { updates.push('lastPlayed = ?'); params.push(lastPlayed); }
+
+        // Статус приходит из браузера — принимаем только известные значения.
+        // Иначе в базе окажется любой текст, который пришлёт клиент.
+        const STATUSES = ['', 'playing', 'done', 'dropped', 'wish'];
+        if (status !== undefined) {
+            if (!STATUSES.includes(status)) return res.status(400).json({ error: 'Неизвестный статус' });
+            updates.push('status = ?'); params.push(status);
+        }
+        if (favorite !== undefined) { updates.push('favorite = ?'); params.push(favorite ? 1 : 0); }
 
         if (updates.length > 0) {
             params.push(folder);

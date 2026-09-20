@@ -8,6 +8,11 @@ redisClient.connect().then(() => console.log('📦 [Redis] Подключён'))
 
 const GAMES_LIST_KEY = 'api:games:list';
 
+// Сокет отдаёт сюда server.js. Сброс кэша и рассылка «список изменился» —
+// это одно и то же событие, поэтому живут в одном месте.
+let io = null;
+function setIo(instance) { io = instance; }
+
 // Список игр закэширован на 5 минут. Любое изменение библиотеки обязано сбросить кэш,
 // иначе изменение увидят с задержкой до 5 минут.
 async function invalidateGamesList() {
@@ -16,6 +21,10 @@ async function invalidateGamesList() {
     } catch (e) {
         console.error('❌ [Redis] Не удалось сбросить кэш списка:', e.message);
     }
+    // Рассылаем событие о том, что список игр изменился
+    if (io) {
+        io.emit('library-changed');
+    }
 }
 
-module.exports = { redisClient, invalidateGamesList, GAMES_LIST_KEY };
+module.exports = { redisClient, invalidateGamesList, GAMES_LIST_KEY, setIo };

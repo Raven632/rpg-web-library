@@ -237,11 +237,37 @@ h1 {
   white-space: nowrap;
 }
 
-.cover-toggle:hover { border-color: var(--gold); color: var(--gold); box-shadow: 0 0 15px rgba(201, 168, 76, 0.15); }
 .cover-toggle.active { background: rgba(201, 168, 76, 0.12); border-color: var(--gold); color: var(--gold-light); }
 .cover-toggle:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
 .cover-toggle svg { width: 18px; height: 18px; fill: currentColor; flex-shrink: 0; }
 
+/* Фильтр по статусу — своя строка в панели, и те же «таблетки» в модалке */
+.filter-chips { flex: 1 1 100%; display: flex; flex-wrap: wrap; gap: 8px; }
+.status-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
+.chip {
+  padding: 8px 16px;
+  background: rgba(19, 17, 26, 0.6);
+  border: 1px solid rgba(201, 168, 76, 0.25);
+  border-radius: 20px;
+  color: var(--text-dim);
+  font-family: 'Cinzel', serif;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: all 0.25s ease;
+}
+
+.chip.active { background: rgba(201, 168, 76, 0.12); border-color: var(--gold); color: var(--gold-light); }
+.chip:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
+
+/* Наведение — только там, где есть настоящий курсор.
+   На тапе iOS вешает :hover на кнопку и снимает его лишь при тапе в другом месте,
+   из-за чего последняя нажатая кнопка продолжает светиться. */
+@media (hover: hover) {
+  .cover-toggle:hover { border-color: var(--gold); color: var(--gold); box-shadow: 0 0 15px rgba(201, 168, 76, 0.15); }
+  .chip:hover { border-color: var(--gold); color: var(--gold); }
+}
 .upload-btn:hover { 
   background: rgba(201,168,76,0.15); 
   border-color: rgba(201,168,76,0.7); 
@@ -427,6 +453,29 @@ h1 {
 .game-card:hover .card-delete { opacity: 1; transform: rotate(90deg); }
 .card-delete:hover { background: rgba(220,50,50,0.9); transform: rotate(90deg) scale(1.1) !important; box-shadow: 0 0 10px rgba(220,50,50,0.5);}
 .card-delete svg { width: 16px; height: 16px; fill: white; }
+
+/* Звезда избранного: рядом с корзиной, но видна всегда, если игра отмечена */
+.card-fav {
+  position: absolute; top: 12px; right: 52px; z-index: 10; width: 32px; height: 32px;
+  background: rgba(20, 17, 10, 0.8); border: 1px solid rgba(201, 168, 76, 0.4); border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  color: rgba(255, 255, 255, 0.35); font-size: 15px; line-height: 1;
+  opacity: 0; transition: all 0.3s; cursor: pointer; backdrop-filter: blur(4px);
+}
+.game-card:hover .card-fav, .card-fav.active { opacity: 1; }
+.card-fav.active { color: var(--gold); text-shadow: 0 0 8px var(--gold); border-color: var(--gold); }
+@media (hover: hover) { .card-fav:hover { transform: scale(1.15); border-color: var(--gold); } }
+/* На телефоне наведения нет — иначе звезду не нажать */
+@media (hover: none) { .card-fav { opacity: 1; } }
+
+.status-badge {
+  font-size: 0.6rem; letter-spacing: 0.08em; text-transform: uppercase;
+  padding: 2px 8px; border-radius: 10px; border: 1px solid currentColor; opacity: 0.85;
+}
+.status-badge.playing { color: #7fc7a5; }
+.status-badge.done    { color: var(--gold); }
+.status-badge.dropped { color: #b06a6a; }
+.status-badge.wish    { color: #8f9ec7; }
 
 .card-info { padding: 10px 20px 24px; position: relative; z-index: 1; }
 .card-number { 

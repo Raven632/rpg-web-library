@@ -8,7 +8,7 @@ const DLSITE_LOGO = 'dlsite_logo.png';
 
 const ROMAN_NUMERALS = ['Ⅰ','Ⅱ','Ⅲ','Ⅳ','Ⅴ','Ⅵ','Ⅶ','Ⅷ','Ⅸ','Ⅹ','Ⅺ','Ⅻ'];
 
-const GameModal = ({ game, index, onClose, onUpdateGame, t, lang, showToast }) => {
+const GameModal = ({ game, index, onClose, onUpdateGame, onPatch, t, lang, showToast }) => {
   const [isActive, setIsActive] = useState(false);
   
   const importRef = useRef(null);
@@ -346,6 +346,26 @@ const GameModal = ({ game, index, onClose, onUpdateGame, t, lang, showToast }) =
                 {/* --- ЛОГОТИП ТЕПЕРЬ ЗДЕСЬ (МЕЖДУ ДАТОЙ И БЭКАПОМ) --- */}
                 <div style={{ display: 'flex', justifyContent: 'left', marginBottom: '20px' }}>
                   {renderSourceLink()}
+                </div> 
+                
+                <div className="status-row">
+                  <button
+                    type="button"
+                    className={`chip ${game.favorite ? 'active' : ''}`}
+                    onClick={() => onPatch(game.id, { favorite: !game.favorite })}
+                  >
+                    ★ {t.filter_fav}
+                  </button>
+                  {['playing', 'done', 'dropped', 'wish'].map(key => (
+                    <button
+                      key={key}
+                      type="button"
+                      className={`chip ${game.status === key ? 'active' : ''}`}
+                      onClick={() => onPatch(game.id, { status: game.status === key ? '' : key })}
+                    >
+                      {t[`status_${key}`]}
+                    </button>
+                  ))}
                 </div>
 
                 <div className="grimoire-actions-row">

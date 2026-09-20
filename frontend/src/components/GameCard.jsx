@@ -4,7 +4,7 @@ const ROMAN_NUMERALS = ['Ⅰ','Ⅱ','Ⅲ','Ⅳ','Ⅴ','Ⅵ','Ⅶ','Ⅷ','Ⅸ','�
 
 import { getCoverUrl } from '../coverUrl';
 
-const GameCard = ({ game, index, onClick, onDelete, onRate, t }) => {
+const GameCard = ({ game, index, onClick, onDelete, onRate, onToggleFavorite, t }) => {
   const coverUrl = getCoverUrl(game);
   const roman = ROMAN_NUMERALS[index % ROMAN_NUMERALS.length] || String(index + 1);
   const volumeStr = String(game.number || index + 1).padStart(2, '0');
@@ -25,6 +25,14 @@ const GameCard = ({ game, index, onClick, onDelete, onRate, t }) => {
         onClick={(e) => { e.stopPropagation(); onDelete(game); }}
       >
         <svg viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+      </div>
+
+      <div
+        className={`card-fav ${game.favorite ? 'active' : ''}`}
+        title={game.favorite ? t.fav_del : t.fav_add}
+        onClick={(e) => { e.stopPropagation(); onToggleFavorite(game.id, !game.favorite); }}
+      >
+        ★
       </div>
 
       <div className="card-cover">
@@ -55,6 +63,7 @@ const GameCard = ({ game, index, onClick, onDelete, onRate, t }) => {
         <div className="card-number">
           <span>{t.vol} {volumeStr}</span>
           {!game.scraped && <span style={{color: 'var(--gold-light)'}}>⏳</span>}
+          {game.status && <span className={`status-badge ${game.status}`}>{t[`status_${game.status}`]}</span>}
         </div>
         <h3 className="card-title">{game.title}</h3>
         

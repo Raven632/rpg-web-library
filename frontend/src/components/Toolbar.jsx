@@ -3,7 +3,7 @@ import React, { useRef, useState } from 'react';
 const Toolbar = ({ 
   searchQuery, setSearchQuery, availableTags, selectedTag, setSelectedTag,
   currentSort, setCurrentSort, onUploadSuccess, socketMessage, t, showToast,
-  blurCovers, setBlurCovers
+  blurCovers, setBlurCovers, statusFilter, setStatusFilter
 }) => {
   const fileInputRef = useRef(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -131,6 +131,26 @@ const Toolbar = ({
         )}
         <span className="cover-toggle-label">{blurCovers ? t.covers_show : t.covers_hide}</span>
       </button>
+
+      <div className="filter-chips">
+        {[
+          ['all', t.filter_all],
+          ['fav', `★ ${t.filter_fav}`],
+          ['playing', t.status_playing],
+          ['done', t.status_done],
+          ['dropped', t.status_dropped],
+          ['wish', t.status_wish],
+        ].map(([key, label]) => (
+          <button
+            key={key}
+            type="button"
+            className={`chip ${statusFilter === key ? 'active' : ''}`}
+            onClick={() => setStatusFilter(key)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
 
       <div 
         className={`upload-btn ${isDragging ? 'drag-over' : ''}`} 
