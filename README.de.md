@@ -47,7 +47,8 @@ Dieses Projekt ist für die **native Docker Engine** (Linux) konzipiert. Die Ver
    git clone https://github.com/Raven632/rpg-web-library.git
    cd rpg-web-library
    ```
-2. Konfiguration anlegen:
+2. (Optional) Konfiguration anlegen:
+Der Server startet auch ohne diese Datei mit Standardwerten — sie wird gebraucht, wenn du einen eigenen SESSION_SECRET oder einen ScraperAPI-Key setzen willst.
    ```bash
    cp .env.example .env
    ```

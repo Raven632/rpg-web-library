@@ -53,8 +53,12 @@ COPY --chown=node:node api/ ./
 # МАГИЯ: Забираем собранный сайт из первого этапа
 COPY --chown=node:node --from=builder /app/frontend/dist/ ./public/
 
-USER node
+# Точка входа: готовит смонтированную папку и сбрасывает права до пользователя node
+COPY docker-entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
 EXPOSE 3000
 
+ENTRYPOINT ["docker-entrypoint.sh"]
 # Запускаем сервер
 CMD ["node", "server.js"]
