@@ -48,7 +48,8 @@ This project is built for **native Docker Engine** (Linux). Using Docker Desktop
    cd rpg-web-library
    ```
       
-2. Create your configuration:
+2. (Optional) Create your configuration:
+   The server also starts without this file, using defaults — create it when you want your own SESSION_SECRET or a ScraperAPI key.
    ```bash
    cp .env.example .env
    ```

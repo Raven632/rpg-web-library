@@ -18,7 +18,7 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const cookieParser = require('cookie-parser');
 const { Server } = require('socket.io');
-const { setIo } = require('./src/utils/cache.js');
+const { setIo, redisClient } = require('./src/utils/cache.js');
 
 // Локальные сервисы и утилиты
 const dbService = require('./src/db/database.js');
@@ -316,6 +316,21 @@ if (require.main === module) {
         
         // Отключаем таймауты для поддержки долгих загрузок больших архивов
         srv.timeout = 0; srv.requestTimeout = 0; srv.keepAliveTimeout = 0;
+        
+        // Ядро не доставляет процессу с PID 1 сигналы, для которых нет обработчика.
+        // Без этих строк сервер не слышал SIGTERM и через 10 секунд получал SIGKILL.
+        const shutdown = async (signal) => {
+            console.log(`⏹️  Получен ${signal}, завершаем работу`);
+            // Страховка: если что-то зависнет при закрытии — выходим сами
+            setTimeout(() => process.exit(0), 5000).unref();
+            io.close();
+            srv.close();
+            try { await redisClient.quit(); } catch (e) {}
+            try { await dbService.get().close(); } catch (e) {}
+            process.exit(0);
+        };
+        process.on('SIGTERM', () => shutdown('SIGTERM'));
+        process.on('SIGINT', () => shutdown('SIGINT'));
 
         // Настройка "наблюдателя" (Watcher) за папкой игр для автообновления библиотеки
         let syncTimer = null;
