@@ -110,6 +110,7 @@ const Toolbar = ({
 
       <select className="sort-box" value={currentSort} onChange={(e) => setCurrentSort(e.target.value)}>
         <option value="newest">{t.sort_new}</option>
+        <option value="oldest">{t.sort_old}</option>
         <option value="recent">{t.sort_rec}</option>
         <option value="rating_desc">{t.sort_rat}</option>
         <option value="name">{t.sort_alp}</option>

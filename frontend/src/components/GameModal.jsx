@@ -217,16 +217,27 @@ const GameModal = ({ game, index, onClose, onUpdateGame, t, lang, showToast }) =
     }
   };
 
-  const handlePlay = () => {
+  const handlePlay = async () => {
     setIsPlaying(true);
-    
-    // В dev страницу отдаёт Vite (:5173), а игры — dev-бэкенд на своём порту.
-    // Без порта ссылка вела бы на :80, то есть на прод.
+
+    // Отмечаем время запуска, иначе сортировка «Недавно запущенные» работает по старым данным
+    const lastPlayed = Date.now();
+    try {
+      await fetch(`/api/games/${encodeURIComponent(game.id)}/meta`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lastPlayed })
+      });
+      onUpdateGame(index, { ...game, lastPlayed });
+    } catch (err) {
+      // Не смогли отметить — это не повод не запускать игру
+    }
+
+    // В dev страницу отдаёт Vite (:5173), а игры — dev-бэкенд на своём порту
     const playUrl = import.meta.env.DEV
       ? `${window.location.protocol}//${window.location.hostname}:${import.meta.env.VITE_BACKEND_PORT}${game.url}`
       : game.url;
-
-    setTimeout(() => { window.location.href = playUrl; }, 500);
+    window.location.href = playUrl;
   };
 
   // --- НОВАЯ ЛОГИКА ОПРЕДЕЛЕНИЯ САЙТА ДЛЯ ССЫЛКИ ---

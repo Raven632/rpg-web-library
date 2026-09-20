@@ -189,14 +189,19 @@ function App() {
     if (selectedTag !== 'all') {
       result = result.filter(g => g.tags && g.tags.includes(selectedTag));
     }
+        // При равных значениях упорядочиваем по id: иначе порядок одинаковых игр «прыгает»
+    const byId = (a, b) => a.id.localeCompare(b.id);
     result = [...result].sort((a, b) => {
-      if (currentSort === 'newest') return b.addedAt - a.addedAt;
-      if (currentSort === 'recent') return b.lastPlayed - a.lastPlayed;
-      if (currentSort === 'rating_desc') return (b.rating || 0) - (a.rating || 0);
-      if (currentSort === 'name') return a.title.localeCompare(b.title);
-      if (currentSort === 'size_desc') return (b.size || 0) - (a.size || 0);
-      if (currentSort === 'size_asc') return (a.size || 0) - (b.size || 0);
-      return 0;
+      switch (currentSort) {
+        case 'newest':      return (b.addedAt || 0) - (a.addedAt || 0) || byId(a, b);
+        case 'oldest':      return (a.addedAt || 0) - (b.addedAt || 0) || byId(a, b);
+        case 'recent':      return (b.lastPlayed || 0) - (a.lastPlayed || 0) || byId(a, b);
+        case 'rating_desc': return (b.rating || 0) - (a.rating || 0) || byId(a, b);
+        case 'name':        return (a.title || a.id).localeCompare(b.title || b.id);
+        case 'size_desc':   return (b.size || 0) - (a.size || 0) || byId(a, b);
+        case 'size_asc':    return (a.size || 0) - (b.size || 0) || byId(a, b);
+        default:            return 0;
+      }
     });
     return result;
   }, [games, searchQuery, selectedTag, currentSort]);
