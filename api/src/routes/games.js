@@ -1,19 +1,14 @@
 const express = require('express');
+const fs = require('fs');
 const fsp = require('fs').promises;
 const path = require('path');
 const dbService = require('../db/database.js');
 const scraperService = require('../services/scraper.js');
 const { GAMES_DIR } = require('../config/index.js');
-const { upload, uploadLimiter, coverUpload } = require('../utils/upload.js');
+const { uploadLimiter, coverUpload } = require('../utils/upload.js');
 const { spawnExtract, findGameFolder, getFolderSize } = require('../utils/archive.js');
 const { validateIdParam } = require('../utils/validate.js');
-const { createClient } = require('redis');
-
-// Подключение к Redis
-const redisClient = createClient({ url: process.env.REDIS_URL || 'redis://redis:6379' });
-// Без обработчика 'error' любой разрыв связи с Redis роняет весь процесс
-redisClient.on('error', (err) => console.error('❌ [Redis Games] Ошибка:', err.message));
-redisClient.connect().catch(console.error);
+const { redisClient, invalidateGamesList, GAMES_LIST_KEY } = require('../utils/cache.js');
 
 const router = express.Router();
 
@@ -26,7 +21,7 @@ let isCalculatingSizes = false; // Глобальный замок
 router.get('/', async (req, res) => {
     try {
         // [REDIS] 1. Проверяем кэш. Если есть — отдаем мгновенно!
-        const cachedGames = await redisClient.get('api:games:list');
+        const cachedGames = await redisClient.get(GAMES_LIST_KEY);
         if (cachedGames) {
             return res.json(JSON.parse(cachedGames));
         }
@@ -52,7 +47,7 @@ router.get('/', async (req, res) => {
                         }
                     }
                     // [REDIS] Сбрасываем кэш, если размеры обновились, чтобы UI увидел изменения
-                    if (sizeUpdated) await redisClient.del('api:games:list');
+                    if (sizeUpdated) await invalidateGamesList();
                 } catch (e) {
                     console.error('[Background] Ошибка взвешивания:', e);
                 } finally {
@@ -83,7 +78,7 @@ router.get('/', async (req, res) => {
         games.forEach((g, i) => g.number = i + 1);
 
         // [REDIS] 2. Сохраняем собранный список в кэш на 5 минут (300 секунд)
-        await redisClient.set('api:games:list', JSON.stringify(games), { EX: 300 });
+        await redisClient.set(GAMES_LIST_KEY, JSON.stringify(games), { EX: 300 });
 
         res.json(games);
     } catch (e) { res.status(500).json({ error: 'DB Error' }); }
@@ -112,7 +107,7 @@ router.post('/:id/cover', coverUpload.single('cover'), async (req, res) => {
         await dbService.get().run('UPDATE games SET cover = ? WHERE id = ?', [dbCoverPath, gameId]);
         
         // [REDIS] Сбрасываем кэш, так как обложка изменилась
-        await redisClient.del('api:games:list');
+        await invalidateGamesList();
         
         res.json({ success: true, coverPath: dbCoverPath });
     } catch (e) {
@@ -143,7 +138,7 @@ router.delete('/:id/cover', async (req, res) => {
         await dbService.get().run('UPDATE games SET cover = ? WHERE id = ?', [newDbCover, gameId]);
         
         // [REDIS] Сбрасываем кэш
-        await redisClient.del('api:games:list');
+        await invalidateGamesList();
         
         res.json({ success: true, coverPath: newDbCover });
     } catch (e) {
@@ -208,7 +203,7 @@ router.post('/:id/edit', async (req, res) => {
         }
 
         // [REDIS] Сбрасываем кэш, так как метаданные игры изменились
-        await redisClient.del('api:games:list');
+        await invalidateGamesList();
 
         const updatedGame = await dbService.get().get('SELECT * FROM games WHERE id = ?', [folder]);
         res.json({
@@ -249,7 +244,7 @@ router.post('/:id/meta', async (req, res) => {
             await dbService.get().run(`UPDATE games SET ${updates.join(', ')} WHERE id = ?`, params);
             
             // [REDIS] Сбрасываем кэш, так как рейтинг или время игры обновились
-            await redisClient.del('api:games:list');
+            await invalidateGamesList();
         }
         res.json({ success: true });
     } catch (e) { res.status(500).json({ error: 'Ошибка сохранения метаданных' }); }
@@ -270,7 +265,7 @@ router.delete('/:id', async (req, res) => {
         await dbService.get().run('DELETE FROM games WHERE id = ?', [id]);
         
         // [REDIS] Сбрасываем кэш после удаления
-        await redisClient.del('api:games:list');
+        await invalidateGamesList();
         
         res.json({ success: true });
     } catch(e) { 
@@ -280,28 +275,42 @@ router.delete('/:id', async (req, res) => {
 
 // --- 7. ЧАНКОВАЯ ЗАГРУЗКА АРХИВОВ ---
 module.exports = function(io, addGameToDB, EXTRACT_TMP) {
-    router.post('/upload-chunk', uploadLimiter, upload.single('chunk'), async (req, res) => {
-        if (!req.file) return res.status(400).json({ error: 'Чанк не получен' });
+    router.post('/upload-chunk', uploadLimiter, async (req, res) => {
+        const { uploadId, chunkIndex, totalChunks, originalName, offset, totalSize } = req.query;
 
-        const { uploadId, chunkIndex, totalChunks, originalName } = req.body;
-        const chunkPath = req.file.path;
-        
-        const safeUploadId = uploadId.replace(/[^a-zA-Z0-9_-]/g, '');
+        const safeUploadId = String(uploadId || '').replace(/[^a-zA-Z0-9_-]/g, '');
+        const start = Number(offset);
+        if (!safeUploadId || !Number.isInteger(start) || start < 0 || !originalName) {
+            return res.status(400).json({ error: 'Некорректные параметры загрузки' });
+        }
+        if (!/\.(zip|7z|rar)$/i.test(originalName)) {
+            return res.status(400).json({ error: 'Поддерживаются только ZIP, 7z и RAR!' });
+        }
+
         const finalArchivePath = path.join(EXTRACT_TMP, `${safeUploadId}.archive`);
 
         try {
-            const partFile = path.join(EXTRACT_TMP, `${safeUploadId}_${chunkIndex}.part`);
-            await fsp.rename(chunkPath, partFile);
+            // Тело запроса пишем СРАЗУ в нужное место архива: ни временных кусков, ни склейки.
+            // Файл создаём заранее ('a'), чтобы затем писать по смещению ('r+').
+            await fsp.mkdir(EXTRACT_TMP, { recursive: true });
+            await (await fsp.open(finalArchivePath, 'a')).close();
+            await new Promise((resolve, reject) => {
+                const ws = fs.createWriteStream(finalArchivePath, { flags: 'r+', start });
+                req.on('error', reject);
+                ws.on('error', reject);
+                ws.on('close', resolve);
+                req.pipe(ws);
+            });
 
             if (parseInt(chunkIndex) < parseInt(totalChunks) - 1) {
                 return res.json({ success: true, finished: false });
             }
 
-            for (let i = 0; i < parseInt(totalChunks); i++) {
-                const p = path.join(EXTRACT_TMP, `${safeUploadId}_${i}.part`);
-                const partData = await fsp.readFile(p);
-                await fsp.appendFile(finalArchivePath, partData);
-                await fsp.unlink(p).catch(() => {});
+            // Последний кусок: проверяем, что архив собран целиком
+            const archiveSize = (await fsp.stat(finalArchivePath)).size;
+            if (totalSize && archiveSize !== Number(totalSize)) {
+                await fsp.unlink(finalArchivePath).catch(() => {});
+                return res.status(400).json({ error: `Архив собран не полностью: ${archiveSize} из ${totalSize} байт` });
             }
 
             let baseName = originalName.replace(/\.(zip|7z|rar)$/i, '').replace(/[^\w\s\-\.а-яА-Я\[\]]/g, '_').trim() || 'game_archive';
@@ -353,7 +362,7 @@ module.exports = function(io, addGameToDB, EXTRACT_TMP) {
                         await dbService.get().run('UPDATE games SET size = ? WHERE id = ?', [gameSize, finalDestFolder]);
                         
                         // [REDIS] Сбрасываем кэш, так как у новой игры появился размер
-                        await redisClient.del('api:games:list');
+                        await invalidateGamesList();
 
                         io.emit('scrape-success', { message: `Размер игры успешно определен!` });
                     } catch (e) {
@@ -372,7 +381,6 @@ module.exports = function(io, addGameToDB, EXTRACT_TMP) {
             }
 
         } catch (e) {
-            await fsp.unlink(chunkPath).catch(() => {});
             if (!res.headersSent) {
                 return res.status(500).json({ error: 'Ошибка склейки файла: ' + e.message });
             }

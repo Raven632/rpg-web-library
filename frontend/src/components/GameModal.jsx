@@ -1,5 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 
+import { getCoverUrl } from '../coverUrl';
+
 // Логотипы (пути относительно папки public)
 const STEAM_LOGO = 'steam_logo.png';
 const DLSITE_LOGO = 'dlsite_logo.png';
@@ -252,9 +254,7 @@ const GameModal = ({ game, index, onClose, onUpdateGame, t, lang, showToast }) =
     );
   };
 
-  const coverBase = game.cover ? (import.meta.env.DEV ? `/media/${game.cover}` : `/${game.cover}`) : null;
-  // Теперь React всегда будет видеть, что картинка новая!
-  const coverUrl = coverBase ? `${coverBase}?v=${game.updatedAt || game.addedAt || Date.now()}` : null;
+  const coverUrl = getCoverUrl(game);
   const roman = ROMAN_NUMERALS[index % ROMAN_NUMERALS.length] || String(index + 1);
 
   return (

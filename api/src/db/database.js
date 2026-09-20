@@ -4,6 +4,7 @@ const path = require('path');
 const crypto = require('crypto');
 const fs = require('fs');
 const fsp = fs.promises;
+const { invalidateGamesList } = require('../utils/cache.js');
 
 class DatabaseService {
     constructor() {
@@ -101,6 +102,9 @@ class DatabaseService {
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [folder, title, cover, '[]', '', 0, 0, stat.birthtimeMs || stat.mtimeMs || Date.now(), 0, 1]
         );
+        
+        // Библиотека изменилась — кэш списка больше не актуален
+        await invalidateGamesList();
 
         if (this.io) this.io.emit('scrape-success', { message: `✅ Игра "${title}" добавлена в библиотеку!` });
 
@@ -125,6 +129,7 @@ class DatabaseService {
         for (const id of dbIds) {
             if (!entries.includes(id) || ['_saves', '_tmp_uploads', 'node_modules', '.audio-cache'].includes(id)) {
                 await this.db.run('DELETE FROM games WHERE id = ?', [id]);
+                await invalidateGamesList();
             }
         }
     }

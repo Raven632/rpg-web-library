@@ -59,8 +59,9 @@ function App() {
     }, 4000);
   };
 
-  const fetchGames = async () => {
-    setLoading(true);
+  const fetchGames = async ({ silent = false } = {}) => {
+    // Тихое обновление — без индикатора: данные приехали сами, пользователь ничего не ждёт
+    if (!silent) setLoading(true);
     try {
       const statusRes = await fetch('/api/setup/status');
       const statusData = await statusRes.json();
@@ -91,25 +92,34 @@ function App() {
     }
   };
 
+  // События от сервера прилетают пачкой: игра добавлена, посчитан размер, найдены теги.
+  // Обновляем список один раз, через 800 мс после последнего события.
+  const refetchTimer = useRef(null);
+  const scheduleRefetch = () => {
+    clearTimeout(refetchTimer.current);
+    refetchTimer.current = setTimeout(() => fetchGames({ silent: true }), 800);
+  };
+
   useEffect(() => {
     fetchGames();
     socket.on('upload-status', (data) => setSocketMessage(data.message));
     socket.on('scrape-success', (data) => {
       showToast(data.message, 'success');
-      fetchGames(); 
+      scheduleRefetch();
     });
 
     const handleVisibilityChange = () => {
-      if (!document.hidden) fetchGames();
+      if (!document.hidden) fetchGames({ silent: true });
     };
     const handlePageShow = (event) => {
-      if (event.persisted) fetchGames();
+      if (event.persisted) fetchGames({ silent: true });
     };
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
     window.addEventListener('pageshow', handlePageShow);
 
     return () => {
+      clearTimeout(refetchTimer.current);
       socket.off('upload-status');
       socket.off('scrape-success');
       document.removeEventListener('visibilitychange', handleVisibilityChange);

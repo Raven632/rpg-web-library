@@ -2,8 +2,10 @@ import React from 'react';
 
 const ROMAN_NUMERALS = ['Ⅰ','Ⅱ','Ⅲ','Ⅳ','Ⅴ','Ⅵ','Ⅶ','Ⅷ','Ⅸ','Ⅹ','Ⅺ','Ⅻ'];
 
+import { getCoverUrl } from '../coverUrl';
+
 const GameCard = ({ game, index, onClick, onDelete, onRate, t }) => {
-  const coverUrl = game.cover ? (import.meta.env.DEV ? `/media/${game.cover}` : `/${game.cover}`) : null;
+  const coverUrl = getCoverUrl(game);
   const roman = ROMAN_NUMERALS[index % ROMAN_NUMERALS.length] || String(index + 1);
   const volumeStr = String(game.number || index + 1).padStart(2, '0');
 

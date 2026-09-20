@@ -33,12 +33,14 @@ const Toolbar = ({
         const end = Math.min(start + CHUNK_SIZE, file.size);
         const chunk = file.slice(start, end);
 
-        const formData = new FormData();
-        formData.append('chunk', chunk, file.name); 
-        formData.append('uploadId', uploadId);
-        formData.append('chunkIndex', i);
-        formData.append('totalChunks', totalChunks);
-        formData.append('originalName', file.name);
+        const params = new URLSearchParams({
+          uploadId,
+          chunkIndex: i,
+          totalChunks,
+          offset: start,
+          totalSize: file.size,
+          originalName: file.name,
+        });
 
         // --- ДОБАВЛЯЕМ СИСТЕМУ ПОВТОРОВ (RETRY) ---
         let chunkSuccess = false;
@@ -48,7 +50,8 @@ const Toolbar = ({
           try {
             const data = await new Promise((resolve, reject) => {
               const xhr = new XMLHttpRequest();
-              xhr.open('POST', '/api/games/upload-chunk');
+              xhr.open('POST', `/api/games/upload-chunk?${params}`);
+              xhr.setRequestHeader('Content-Type', 'application/octet-stream');
               
               xhr.upload.addEventListener('progress', (e) => {
                 if (e.lengthComputable) {
@@ -67,7 +70,7 @@ const Toolbar = ({
               });
 
               xhr.addEventListener('error', () => reject(new Error(t.up_int)));
-              xhr.send(formData);
+              xhr.send(chunk);
             });
 
             // Если ошибки не было, выходим из цикла retry

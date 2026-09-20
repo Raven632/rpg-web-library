@@ -3,13 +3,7 @@ const path = require('path');
 const util = require('util');
 const { execFile } = require('child_process');
 const execFilePromise = util.promisify(execFile);
-const { createClient } = require('redis');
-
-// Подключаем Redis
-const redisClient = createClient({ url: process.env.REDIS_URL || 'redis://redis:6379' });
-redisClient.on('error', (err) => console.error('❌ [Redis Scraper] Ошибка:', err));
-redisClient.connect().then(() => console.log('📦 [Redis] Парсер успешно подключен!')).catch(console.error);
-
+const { redisClient, invalidateGamesList } = require('../utils/cache.js');
 class ScraperService {
     constructor() {
         this.isBackgroundScraping = false;
@@ -85,7 +79,7 @@ class ScraperService {
                         }
 
                         // Сбрасываем кэш UI, так как игра получила новые теги!
-                        await redisClient.del('api:games:list');
+                        await invalidateGamesList();
 
                         if (this.io) this.io.emit('scrape-success', { message: `✅ Данные для "${title}" успешно загружены!` });
                         console.log(`[Queue] ✅ Успешно обновлено: ${folder}`);
