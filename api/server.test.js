@@ -8,6 +8,9 @@ const { isSafeSegment } = require('./src/utils/validate.js');
 
 // 2. Правильный импорт скрапера (это ЭКЗЕМПЛЯР КЛАССА, импортируем целиком)
 const scraperService = require('./src/services/scraper.js');
+// Имя куки задаётся через .env (в dev оно своё — auth_token_dev),
+// поэтому тест обязан спрашивать его там же, где код, а не писать строку руками
+const COOKIE_NAME = process.env.AUTH_COOKIE_NAME || 'auth_token';
 
 // ============================================================================
 // requireAuth tests (Проверка авторизации)
@@ -34,7 +37,7 @@ test('requireAuth: GET/POST без куки возвращает 401', () => {
 });
 
 test('requireAuth: запрос с неверным токеном возвращает 401', () => {
-  const req = { method: 'POST', cookies: { auth_token: 'WRONG_TOKEN_123' } };
+  const req = { method: 'POST', cookies: { [COOKIE_NAME]: 'WRONG_TOKEN_123' } };
   let statusCode;
   let nextCalled = false;
 
@@ -56,7 +59,7 @@ test('requireAuth: запрос с правильным токеном проп�
   dbService.sessionToken = 'test_token_123';
   t.after(() => { dbService.sessionToken = originalToken; });
 
-  const req = { method: 'POST', cookies: { auth_token: 'test_token_123' } };
+  const req = { method: 'POST', cookies: { [COOKIE_NAME]: 'test_token_123' } };
   const res = {};
   let nextCalled = false;
 
@@ -70,7 +73,7 @@ test('requireAuth: пустой токен сервера (до init) не пр�
   dbService.sessionToken = '';
   t.after(() => { dbService.sessionToken = originalToken; });
 
-  const req = { method: 'GET', cookies: { auth_token: '' } };
+  const req = { method: 'GET', cookies: { [COOKIE_NAME]: '' } };
   let statusCode;
   let nextCalled = false;
   const res = { status(code) { statusCode = code; return { json() {} }; } };
@@ -82,7 +85,7 @@ test('requireAuth: пустой токен сервера (до init) не пр�
 });
 
 test('requireAuth: старый захардкоженный fallback-токен больше не работает', () => {
-  const req = { method: 'GET', cookies: { auth_token: 'fallback_secret_key_for_dev' } };
+  const req = { method: 'GET', cookies: { [COOKIE_NAME]: 'fallback_secret_key_for_dev' } };
   let statusCode;
   let nextCalled = false;
   const res = { status(code) { statusCode = code; return { json() {} }; } };

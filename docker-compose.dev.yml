@@ -8,6 +8,8 @@ services:
       - ./api/src:/app/api/src
       # Главный файл сервера
       - ./api/server.js:/app/api/server.js
+      # Без этого npm test в контейнере гоняет копию тестов из образа, а не твою правку
+      - ./api/server.test.js:/app/api/server.test.js
       # Ювелирно прокидываем только один скрипт из папки public
       - ./api/public/rpg-fixes.js:/app/api/public/rpg-fixes.js
       # Игры прода только для чтения — в dev подключаются симлинками (scripts/dev-link-games.sh).
