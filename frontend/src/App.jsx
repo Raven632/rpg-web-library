@@ -227,7 +227,7 @@ function App() {
     <div className="app-container">
       <Header currentLang={lang} onLangChange={setLang} t={t} />
 
-      {isAuthed && <StorageMonitor />}
+      {isAuthed && <StorageMonitor t={t} />}
       
       <Toolbar 
         searchQuery={searchQuery} setSearchQuery={setSearchQuery} 
@@ -241,10 +241,9 @@ function App() {
       
       <main className="content">
         {loading ? (
-          <div className="loading">
-            <div className="loading-dots">
-               {t.loading}<span>.</span><span>.</span><span>.</span>
-            </div>
+          // Пустые «тома» вместо надписи: сетка та же, поэтому карточки не сдвигают вёрстку
+          <div className="library">
+            {Array.from({ length: 8 }, (_, i) => <div key={i} className="card-skeleton" />)}
           </div>
         ) : (
           <>

@@ -318,26 +318,26 @@ const GameModal = ({ game, index, onClose, onUpdateGame, t, lang, showToast }) =
                 <div className="grimoire-metadata">
                   <div className="meta-row">
                     <div className="meta-item">
-                      <span className="meta-label">Разработчик:</span>
-                      <span className="meta-value gold">{game.developer || 'Неизвестен'}</span>
+                      <span className="meta-label">{t.meta_dev}</span>
+                      <span className="meta-value gold">{game.developer || t.meta_unknown}</span>
                     </div>
                     <div className="meta-item">
-                      <span className="meta-label">Выпуск:</span>
+                      <span className="meta-label">{t.meta_release}</span>
                       <span className="meta-value gold">{formatReleaseDate(game.releaseDate)}</span>
                     </div>
                     <div className="meta-item">
-                      <span className="meta-label">Язык:</span>
+                      <span className="meta-label">{t.meta_lang}</span>
                       <span className="meta-value gold">{game.language || '—'}</span>
                     </div>
                   </div>
-                  
+
                   <div className="meta-row">
                     <div className="meta-item">
-                      <span className="meta-label">Размер:</span>
+                      <span className="meta-label">{t.meta_size}</span>
                       <span className="meta-value">{formatSize(game.size)}</span>
                     </div>
                     <div className="meta-item">
-                      <span className="meta-label">Прибытие:</span>
+                      <span className="meta-label">{t.meta_added}</span>
                       <span className="meta-value">{formatDate(game.addedAt)}</span>
                     </div>
                   </div>
@@ -358,7 +358,7 @@ const GameModal = ({ game, index, onClose, onUpdateGame, t, lang, showToast }) =
                   {game.tags && game.tags.length > 0 ? (
                     game.tags.map(tag => <span key={tag} className="tag">{tag}</span>)
                   ) : (
-                    <span className="tag" style={{ opacity: 0.5, borderColor: 'transparent' }}>{"Нет тегов"}</span>
+                    <span className="tag" style={{ opacity: 0.5, borderColor: 'transparent' }}>{t.no_tags}</span>
                   )}
                 </div>
 

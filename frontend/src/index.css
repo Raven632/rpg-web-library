@@ -8,8 +8,9 @@
   --bg-deep: #080608; 
   --bg-mid: #100e12; 
   --bg-card: #13111a;
-  --text: #e8dfc8; 
-  --text-dim: #7a7060;
+  --text: #e8dfc8;
+  /* Был #7a7060 — контраст с фоном карточки 3.9:1, мелкий текст читался с трудом. Стало 5.1:1 */
+  --text-dim: #8f8470;
 }
 
 * { 
@@ -76,9 +77,10 @@ header {
 .lang-switcher {
   position: absolute;
   right: 20px;
-  top: 30px;
+  top: 47px;
   min-width: auto;
-  padding: 8px 12px;
+  width: auto;          /* иначе селект растягивается на всю строку */
+  padding: 10px 15px;
   font-size: 0.75rem;
 }
 
@@ -100,8 +102,28 @@ h1 {
   letter-spacing: 0.1em; 
 }
 
-.controls-zone { 
-  position: relative; 
+/* Виджет места на диске — в стиле темы: золото, серифный шрифт, по центру под шапкой */
+.storage-monitor {
+  display: flex;
+  gap: 24px;
+  align-items: center;
+  width: fit-content;
+  margin: 20px auto 0;
+  padding: 8px 18px;
+  background: rgba(19, 17, 26, 0.6);
+  border: 1px solid rgba(201, 168, 76, 0.2);
+  border-radius: 6px;
+  font-family: 'Cinzel', serif;
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.storage-monitor b { color: var(--gold); font-weight: 700; margin-left: 8px; }
+
+.controls-zone {
+  position: relative;
   z-index: 1; 
   max-width: 1100px; 
   margin: 30px auto 40px; 
@@ -280,9 +302,26 @@ h1 {
   gap: 28px; max-width: 1400px; margin: 0 auto; padding: 0 20px 80px; 
 }
 
-.game-card { 
-  position: relative; background: var(--bg-card); 
-  border: 1px solid rgba(201,168,76,0.15); border-radius: 4px; 
+/* Пустые «тома» вместо надписи «Загрузка…»: вёрстка не прыгает, когда приедут карточки */
+.card-skeleton {
+  height: 420px;
+  border: 1px solid rgba(201, 168, 76, 0.12);
+  border-radius: 4px;
+  background: linear-gradient(100deg, var(--bg-card) 30%, rgba(201, 168, 76, 0.06) 50%, var(--bg-card) 70%);
+  background-size: 200% 100%;
+  animation: shimmer 1.6s infinite;
+}
+@keyframes shimmer { to { background-position: -200% 0; } }
+
+/* Видимый фокус для клавиатуры: цвет темы, поведение мыши не меняется */
+.game-card:focus-visible,
+.upload-btn:focus-visible,
+.sort-box:focus-visible,
+.card-delete:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
+
+.game-card {
+  position: relative; background: var(--bg-card);
+  border: 1px solid rgba(201,168,76,0.15); border-radius: 4px;
   cursor: pointer; text-decoration: none; color: inherit; display: block; 
   transition: all 0.4s ease; overflow: hidden; animation: fadeInUp 0.6s ease both; 
 }
@@ -334,6 +373,10 @@ h1 {
   opacity: 0; transition: opacity 0.3s; 
 }
 .game-card:hover .card-rating, .card-rating.has-rating { opacity: 1; }
+/* На сенсорных экранах наведения нет — без этого оценку вообще не поставить */
+@media (hover: none) {
+  .card-rating { opacity: 1; background: rgba(0, 0, 0, 0.45); }
+}
 .card-rating .star { color: rgba(255,255,255,0.2); font-size: 16px; cursor: pointer; transition: 0.2s; line-height: 1;}
 .card-rating .star:hover { transform: scale(1.3); }
 .card-rating .star.active { color: var(--gold); text-shadow: 0 0 8px var(--gold); }
@@ -415,6 +458,8 @@ footer {
 
 /* --- КНОПКИ УПРАВЛЕНИЯ ВЕРХНЕГО УГЛА --- */
 .modal-actions-top { position: absolute; top: 15px; right: 15px; display: flex; align-items: center; gap: 15px; z-index: 10; }
+/* 44×44 — минимальная цель для пальца; на вид ничего не меняется, попадать проще */
+.modal-edit-toggle, .modal-close { min-width: 44px; min-height: 44px; display: flex; align-items: center; justify-content: center; }
 .modal-edit-toggle { font-size: 1.6rem; cursor: pointer; opacity: 0.4; transition: all 0.3s ease; filter: grayscale(1); line-height: 1; }
 .modal-edit-toggle:hover, .modal-edit-toggle.active { opacity: 1; filter: grayscale(0); transform: rotate(45deg); text-shadow: 0 0 10px var(--gold); }
 .modal-close { font-size: 2.2rem; line-height: 0.8; cursor: pointer; color: var(--text-dim); transition: color 0.3s; }
@@ -666,8 +711,14 @@ footer {
 /* ========================================================= */
 /* 6. МОБИЛЬНАЯ АДАПТАЦИЯ                                    */
 /* ========================================================= */
-@media (max-width: 700px) { 
+@media (max-width: 700px) {
   html, body { max-width: 100vw; overflow-x: hidden; }
+  /* Абсолютный переключатель языка наезжал на заголовок — на узком экране ставим его в поток */
+  header { padding: 18px 16px 14px; }
+  /* header перед классом — чтобы правило было сильнее общего .sort-box { min-width: 100% } ниже */
+  header .lang-switcher { position: static; display: block; margin: 12px auto 0; width: auto; min-width: auto; }
+  h1 { font-size: clamp(1.4rem, 8vw, 2rem); }
+  .storage-monitor { gap: 14px; margin-top: 14px; font-size: 0.7rem; padding: 8px 12px; }
   .search-box, .sort-box, .upload-btn { min-width: 100%; }
   .controls-zone { gap: 10px; margin-bottom: 20px; }
   .modal-overlay { padding: 10px; align-items: center; justify-content: center; } 

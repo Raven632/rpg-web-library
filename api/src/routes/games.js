@@ -67,6 +67,8 @@ router.get('/', async (req, res) => {
             link: row.link || '',
             size: row.size || 0,
             version: row.version || '1.0.0',
+            // Без этого поля значок «ждёт метаданные» горел на каждой карточке
+            scraped: !!row.scraped,
             tags: row.tags ? JSON.parse(row.tags) : [],
             description: row.description, 
             url: `/${row.id}/`, 

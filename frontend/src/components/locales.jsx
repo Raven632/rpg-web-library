@@ -53,7 +53,18 @@ export const locales = {
     saving_rj: "Связь с серверами... (~15 сек)",
     err_net: "Магия отвергла вас",
     "sort_size_desc": "Сначала тяжелые",
-    "sort_size_asc": "Сначала легкие"
+    "sort_size_asc": "Сначала легкие",
+    meta_dev: "Разработчик:",
+    meta_release: "Выпуск:",
+    meta_lang: "Язык:",
+    meta_size: "Размер:",
+    meta_added: "Прибытие:",
+    meta_unknown: "Неизвестен",
+    no_tags: "Нет тегов",
+    storage_games: "Игры",
+    storage_free: "Свободно",
+    storage_scan: "Сканирование диска...",
+    storage_err: "Нет связи с диском"
   },
   en: {
     subtitle: "Your personal adventure collection",
@@ -109,7 +120,18 @@ export const locales = {
     saving_rj: "Contacting servers... (~15 sec)",
     err_net: "Magic rejected you",
     "sort_size_desc": "Largest first",
-    "sort_size_asc": "Smallest first"
+    "sort_size_asc": "Smallest first",
+    meta_dev: "Developer:",
+    meta_release: "Released:",
+    meta_lang: "Language:",
+    meta_size: "Size:",
+    meta_added: "Added:",
+    meta_unknown: "Unknown",
+    no_tags: "No tags",
+    storage_games: "Games",
+    storage_free: "Free",
+    storage_scan: "Scanning disk...",
+    storage_err: "No connection to disk"
   },
   de: {
     subtitle: "Deine persönliche Abenteuersammlung",
@@ -165,6 +187,17 @@ export const locales = {
     saving_rj: "Verbindung zu den Servern... (~15 Sek)",
     err_net: "Die Magie hat dich abgelehnt",
     "sort_size_desc": "Größte zuerst",
-    "sort_size_asc": "Kleinste zuerst"
+    "sort_size_asc": "Kleinste zuerst",
+    meta_dev: "Entwickler:",
+    meta_release: "Erschienen:",
+    meta_lang: "Sprache:",
+    meta_size: "Größe:",
+    meta_added: "Hinzugefügt:",
+    meta_unknown: "Unbekannt",
+    no_tags: "Keine Tags",
+    storage_games: "Spiele",
+    storage_free: "Frei",
+    storage_scan: "Festplatte wird gescannt...",
+    storage_err: "Keine Verbindung zur Festplatte"
   }
 };

@@ -11,20 +11,12 @@ const Header = ({ currentLang, onLangChange, t }) => {
       <h1>RPG Library</h1>
       <p className="subtitle">{t.subtitle}</p>
 
-      {/* Возвращаем жесткие стили позиционирования, чтобы кнопка не растягивалась */}
-      <select 
-        value={currentLang} 
+      {/* Стили — в классе .lang-switcher: инлайновые перебивали медиазапрос,
+          и на телефоне селект наезжал на заголовок */}
+      <select
+        value={currentLang}
         onChange={(e) => onLangChange(e.target.value)}
-        className="sort-box"
-        style={{
-          position: 'absolute',
-          right: '20px',
-          top: '47px',
-          minWidth: 'auto',
-          width: 'auto', // Жестко запрещаем растягиваться
-          padding: '10px 15px',
-          fontSize: '0.75rem'
-        }}
+        className="sort-box lang-switcher"
       >
         <option value="en">English</option>
         <option value="de">Deutsch</option>

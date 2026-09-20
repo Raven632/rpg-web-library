@@ -10,7 +10,13 @@ const GameCard = ({ game, index, onClick, onDelete, onRate, t }) => {
   const volumeStr = String(game.number || index + 1).padStart(2, '0');
 
   return (
-    <div className="game-card" onClick={onClick}>
+    <div
+      className="game-card"
+      onClick={onClick}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } }}
+    >
       <div className="card-corner-tl"></div>
       
       <div 
