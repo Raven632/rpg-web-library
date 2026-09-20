@@ -1,10 +1,22 @@
 const express = require('express');
 const bcrypt = require('bcrypt');
 const crypto = require('crypto');
+const rateLimit = require('express-rate-limit');
 const dbService = require('../db/database.js');
 
 const router = express.Router();
 const COOKIE_NAME = process.env.AUTH_COOKIE_NAME || 'auth_token';
+
+// Общий apiLimiter пропускает 200 запросов в минуту — для подбора пароля это
+// 288 000 попыток в сутки, то есть защиты нет. Форме входа нужен свой лимит.
+const loginLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 10,
+    skipSuccessfulRequests: true, // удачный вход попытку не тратит
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Слишком много попыток входа. Повторите через 15 минут.' },
+});
 
 function tokensEqual(a, b) {
     const bufA = Buffer.from(a);
@@ -27,7 +39,7 @@ router.get('/setup/status', async (req, res) => {
     res.json({ initialized: !!adminSet });
 });
 
-router.post('/setup/init', async (req, res) => {
+router.post('/setup/init', loginLimiter, async (req, res) => {
     const adminSet = await dbService.get().get('SELECT value FROM settings WHERE key = "admin_user"');
     if (adminSet) return res.status(403).json({ error: 'Сервер уже настроен!' });
 
@@ -42,7 +54,7 @@ router.post('/setup/init', async (req, res) => {
     res.json({ success: true });
 });
 
-router.post('/login', async (req, res) => {
+router.post('/login', loginLimiter, async (req, res) => {
     const { username, password } = req.body;
     const dbUser = await dbService.get().get('SELECT value FROM settings WHERE key = "admin_user"');
     const dbPass = await dbService.get().get('SELECT value FROM settings WHERE key = "admin_pass"');
@@ -62,4 +74,15 @@ router.post('/logout', (req, res) => {
     res.json({ success: true });
 });
 
-module.exports = { authRouter: router, requireAuth };
+// У веб-сокета нет express-мидлвар, но заголовки при рукопожатии есть.
+// Достаём куку руками и сверяем тем же способом, что и requireAuth.
+function isAuthedSocket(req) {
+    const raw = req.headers.cookie || '';
+    const found = raw.split(';').map(s => s.trim()).find(c => c.startsWith(COOKIE_NAME + '='));
+    if (!found) return false;
+    const provided = decodeURIComponent(found.slice(COOKIE_NAME.length + 1));
+    const expected = dbService.getSessionToken();
+    return !!expected && tokensEqual(provided, expected);
+}
+
+module.exports = { authRouter: router, requireAuth, isAuthedSocket };

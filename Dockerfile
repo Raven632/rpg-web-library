@@ -2,7 +2,7 @@
 # ЭТАП 1: Сборка фронтенда (React/Vite)
 # ==========================================
 # Используем ультра-легкий Alpine Linux (весит 5МБ) для быстрой сборки
-FROM node:20-alpine AS builder
+FROM node:22-alpine AS builder
 
 WORKDIR /app/frontend
 
@@ -18,7 +18,7 @@ RUN npm run build
 # ЭТАП 2: Сборка Бэкенда и финальный релиз
 # ==========================================
 # Используем slim-версию (весит ~200МБ вместо 1.1ГБ стандартного node:20)
-FROM node:20-slim
+FROM node:22-slim
 
 WORKDIR /app/api
 

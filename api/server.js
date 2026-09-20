@@ -24,7 +24,7 @@ const { setIo } = require('./src/utils/cache.js');
 const dbService = require('./src/db/database.js');
 const scraperService = require('./src/services/scraper.js');
 const audioService = require('./src/services/audio.js');
-const { authRouter, requireAuth } = require('./src/routes/auth.js');
+const { authRouter, requireAuth, isAuthedSocket } = require('./src/routes/auth.js');
 const createGamesRouter = require('./src/routes/games.js');
 const createSavesRouter = require('./src/routes/saves.js');
 const { findGameFolder } = require('./src/utils/archive.js');
@@ -35,7 +35,11 @@ const { GAMES_DIR, EXTRACT_TMP, SAVES_DIR, AUDIOCACHE } = require('./src/config/
 // ============================================================================
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: '*' } });
+// CORS к веб-сокетам браузером не применяется, поэтому пускаем по той же куке,
+// что и обычные запросы: чужая страница и сторонний скрипт получат 403.
+const io = new Server(server, {
+    allowRequest: (req, done) => done(null, isAuthedSocket(req)),
+});
 
 // Внедрение зависимостей в сервисы
 scraperService.setDependencies(io, GAMES_DIR, dbService);
@@ -46,7 +50,9 @@ setIo(io);
 // [3] ГЛОБАЛЬНЫЕ MIDDLEWARE И НАСТРОЙКА ПАПОК
 // ============================================================================
 app.use(compression());
-app.use(express.json({ limit: '50mb' }));
+// Тело JSON у нас максимум в несколько килобайт (метаданные, форма входа).
+// 50 МБ позволяли любому неавторизованному клиенту занимать память сервера.
+app.use(express.json({ limit: '1mb' }));
 app.use(cookieParser());
 // Отключаем строгие политики Helmet, чтобы игры в iframe (Cross-Origin) работали корректно
 app.use(helmet({ 
