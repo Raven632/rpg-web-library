@@ -1119,4 +1119,4 @@ class ScraperService {
     }
 }
 
-module.exports = new ScraperService();
+module.exports = new ScraperService();

@@ -194,4 +194,4 @@ test('translateText: возвращает оригинальный текст п
   // Вызываем через объект скрапера
   const result = await scraperService.translateText('Original text');
   assert.strictEqual(result, 'Original text', 'При сбое сети должен вернуться оригинал');
-});
+});
