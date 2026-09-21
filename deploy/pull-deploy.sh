@@ -46,6 +46,9 @@ main() {
     echo "Деплой ${local_sha:0:7} -> ${remote_sha:0:7}"
     git merge --ff-only --quiet "$remote_sha"
     docker compose up -d --build --remove-orphans
+    # Убираем за собой: без этого старые образы и кэш сборки растут бесконечно
+    docker image prune -f >/dev/null
+    docker builder prune -f --max-used-space 2GB >/dev/null
     echo "Готово"
 }
 
