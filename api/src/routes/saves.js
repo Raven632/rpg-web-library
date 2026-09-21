@@ -12,6 +12,22 @@ const { validateIdParam } = require('../utils/validate.js');
 const { requireAuth } = require('./auth.js');
 const { updateProgress } = require('../utils/saveprogress.js');
 
+// В архиве с компьютера сейвы называются так, как их пишет сама игра: file1.rpgsave
+// у MV и file1.rmmzsave у MZ. Движок же в браузере спрашивает сейв по своему ключу —
+// «RPG File1» у MV и «MZ_file1» у MZ, — а мы храним файл под этим ключом. Без
+// переименования импортированные сейвы в игре просто не появлялись, а файлы MZ
+// вдобавок удалялись как посторонние. Содержимое у файла и у браузерного хранилища
+// одинаковое, поэтому достаточно правильно назвать.
+function desktopSaveKey(file) {
+    const m = file.match(/^(.+)\.(rpgsave|rmmzsave)$/i);
+    if (!m) return null;
+    const [, name, ext] = m;
+    const key = ext.toLowerCase() === 'rmmzsave'
+        ? `MZ_${name}`
+        : `RPG ${name.charAt(0).toUpperCase()}${name.slice(1)}`;
+    return encodeURIComponent(key);
+}
+
 module.exports = function(EXTRACT_TMP) {
     const router = express.Router();
 
@@ -74,8 +90,9 @@ module.exports = function(EXTRACT_TMP) {
                 }
 
                 // ВОЗВРАЩЕНА ПРОВЕРКА: Обновление меток времени
-                if (file.toLowerCase().endsWith('.rpgsave')) {
-                    const newPath = path.join(gameSavesDir, file.replace(/\.rpgsave$/i, '.json'));
+                const key = desktopSaveKey(file);
+                if (key) {
+                    const newPath = path.join(gameSavesDir, key + '.json');
                     await fsp.rename(filePath, newPath);
                     await fsp.utimes(newPath, now, now).catch(() => {});
                 } else if (file.toLowerCase().endsWith('.json')) {
@@ -100,7 +117,13 @@ module.exports = function(EXTRACT_TMP) {
             for (const file of files.filter(f => f.endsWith('.json'))) {
                 const filePath = path.join(gameSavesDir, file);
                 const stats = await fsp.stat(filePath);
-                saves[decodeURIComponent(file.replace('.json', ''))] = {
+                // Имя пришло из архива и может оказаться не тем, что мы записали сами:
+                // на «100%.json» decodeURIComponent бросает ошибку, и раньше из-за
+                // одного такого файла игра получала пустой список всех сейвов
+                let key;
+                try { key = decodeURIComponent(file.replace('.json', '')); }
+                catch (e) { key = file.replace('.json', ''); }
+                saves[key] = {
                     value: await fsp.readFile(filePath, 'utf8'), updatedAt: stats.mtimeMs 
                 };
             }
