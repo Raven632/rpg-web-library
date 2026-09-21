@@ -42,3 +42,25 @@ jobs:
         REDIS_URL: redis://localhost:6379
       run: npm test
       
+  build-frontend:
+    name: Build frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+    - name: Скачивание кода
+      uses: actions/checkout@v4
+
+    - name: Настройка Node.js 22
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+
+    - name: Установка пакетов (Strict Mode)
+      working-directory: ./frontend
+      run: npm ci
+
+    - name: Сборка фронтенда
+      working-directory: ./frontend
+      run: npm run build
+      
