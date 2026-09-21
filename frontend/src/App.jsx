@@ -205,6 +205,15 @@ function App() {
     setSelectedGame(prev => prev ? { ...prev, game: updatedGame } : null);
   };
 
+  // Ключ сессии на сервере один на всех, поэтому выход закрывает доступ сразу
+  // и на телефоне, и на компьютере. Предупреждаем, чтобы это не было сюрпризом.
+  const handleLogout = async () => {
+    if (!window.confirm(t.logout_confirm)) return;
+    try { await fetch('/api/logout', { method: 'POST' }); } catch (e) {}
+    setIsAuthed(false);
+    setAuthMode('login');
+  };
+
   const handleRescan = async () => {
     try {
       const res = await fetch('/api/games/rescan', { method: 'POST' });
@@ -303,6 +312,7 @@ function App() {
         <div className="tool-row">
           <button type="button" className="stats-btn" onClick={() => setStatsOpen(true)}>📊 {t.stats}</button>
           <button type="button" className="stats-btn" onClick={handleRescan}>🔄 {t.rescan}</button>
+          <button type="button" className="stats-btn" onClick={handleLogout}>🚪 {t.logout}</button>
         </div>
       )}
       {scrapeLeft > 0 && <div className="scrape-progress">{t.scrape_left(scrapeLeft)}</div>}

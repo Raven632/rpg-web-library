@@ -3,6 +3,7 @@ const bcrypt = require('bcrypt');
 const crypto = require('crypto');
 const rateLimit = require('express-rate-limit');
 const dbService = require('../db/database.js');
+const { getIo } = require('../utils/cache.js');
 
 const router = express.Router();
 const COOKIE_NAME = process.env.AUTH_COOKIE_NAME || 'auth_token';
@@ -69,9 +70,21 @@ router.post('/login', loginLimiter, async (req, res) => {
     res.status(401).json({ error: 'Неверный логин или пароль' });
 });
 
-router.post('/logout', (req, res) => {
+// Раньше выход просто стирал куку в браузере, а сам ключ оставался прежним:
+// копия куки с другого устройства продолжала работать вечно. Теперь ключ меняется,
+// то есть выход действительно закрывает доступ — сразу на всех устройствах.
+router.post('/logout', async (req, res) => {
+    let rotated = false;
+    try {
+        rotated = await dbService.rotateSessionToken();
+        // Уже открытые веб-сокеты проверку проходили при подключении, а не постоянно,
+        // поэтому их нужно разорвать руками: иначе живая вкладка осталась бы на связи
+        if (rotated) getIo()?.disconnectSockets(true);
+    } catch (e) {
+        console.error('[Auth] Не удалось сменить ключ сессии:', e.message);
+    }
     res.clearCookie(COOKIE_NAME);
-    res.json({ success: true });
+    res.json({ success: true, allDevices: rotated });
 });
 
 // У веб-сокета нет express-мидлвар, но заголовки при рукопожатии есть.

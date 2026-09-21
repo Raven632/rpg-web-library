@@ -12,6 +12,7 @@ const GAMES_LIST_KEY = 'api:games:list';
 // это одно и то же событие, поэтому живут в одном месте.
 let io = null;
 function setIo(instance) { io = instance; }
+function getIo() { return io; }
 
 // Список игр закэширован на 5 минут. Любое изменение библиотеки обязано сбросить кэш,
 // иначе изменение увидят с задержкой до 5 минут.
@@ -27,4 +28,4 @@ async function invalidateGamesList() {
     }
 }
 
-module.exports = { redisClient, invalidateGamesList, GAMES_LIST_KEY, setIo };
+module.exports = { redisClient, invalidateGamesList, GAMES_LIST_KEY, setIo, getIo };

@@ -71,6 +71,20 @@ class DatabaseService {
     // До init() токен пустой — requireAuth в этом случае никого не пускает
     getSessionToken() { return this.sessionToken; }
 
+    // Ключ сессии один на весь сервер, поэтому «выйти» по-настоящему — это сменить
+    // его: старая кука перестаёт работать сразу и везде, включая устройство, которое
+    // потерялось. Если ключ задан в .env, он там и остаётся: после перезапуска
+    // значение всё равно вернётся из конфига, и смена была бы обманом.
+    async rotateSessionToken() {
+        if (process.env.SESSION_SECRET) return false;
+        this.sessionToken = crypto.randomBytes(64).toString('hex');
+        await this.db.run(
+            'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+            ['session_secret', this.sessionToken]
+        );
+        return true;
+    }
+
     async addGameToDB(folder, gamePath) {
         let title = folder.replace(/\[?RJ\d{6,8}\]?/gi, '').replace(/[-_]/g, ' ').replace(/\s+/g, ' ').trim() || folder;
         
