@@ -3,6 +3,56 @@
 All notable changes to this project are documented here.
 Versions before v5.0 are listed at [Releases](https://github.com/Raven632/rpg-web-library/releases).
 
+## [Unreleased]
+
+### Added
+
+- **Universal metadata lookup.** A game is matched through F95zone (a pasted thread link,
+  catalog search by title, forum search by RJ code), DLsite, VNDB and Steam, in that order.
+  ScraperAPI is used as a fallback when the free path hits a rate limit or a region block.
+- **Manual F95 picker** in the game window for titles the search cannot match on its own.
+- **Game images** — a cover and up to six in-game screenshots. Covers come from the store
+  by RJ code, screenshots from the forum, with the store's own samples and Steam
+  screenshots as fallbacks. Everything is stored in `_media`, never inside a game folder.
+- **Sign-out button**, which until now had a route but no way to reach it.
+
+### Changed
+
+- **"Fetch missing metadata"** also queues games that have no images, and no longer skips
+  games that a previous sweep remembered as a miss: the button is pressed by hand, usually
+  right after the parser was improved.
+- **Titles are cleaned before searching** — version tails such as `v1.2`, `-uncen` or
+  `Steam` are stripped, which is what makes matching by name work at all.
+- **Nothing is written inside game folders any more.** Scraped covers used to land next to
+  the game's own files; they now go to `_media` like the rest of the media.
+- **Line endings are LF everywhere**, enforced by `.gitattributes`. Mixed CRLF and LF made
+  a one-line edit show up as a rewritten file.
+- **Icons** are real 32 / 180 / 192 / 512 px files instead of one 623 KB image served for
+  every size; 1.8 MB of unreferenced duplicates removed.
+
+### Fixed
+
+- **Steam returned nothing at all** — the store answers `success: false` for adult titles
+  without age-gate cookies, so the whole Steam branch was silently dead.
+- **Images saved as `.jpg` were not JPEG.** F95 serves AVIF or WebP over the same URL, and
+  a thread's cover can be a 1.6 MB animation; every image is now re-encoded through ffmpeg.
+- **Forum previews (400×250) were saved as screenshots** instead of the full-size originals.
+- **Repeating images** in a gallery — near-identical pictures are dropped by a perceptual
+  hash, not only by an exact byte match.
+- **A thread about a different game by the same author** could be matched by RJ code; the
+  code is now verified against the thread itself.
+- **Imported desktop saves never appeared in the game**, and MZ saves (`.rmmzsave`) were
+  deleted as foreign files; both formats are renamed to the keys the engine asks for.
+- **One oddly named save file emptied the whole save list** for that game.
+- **A partial `/edit` request wiped the title** and other fields it did not carry.
+- **The background scrape queue** resumes after a restart instead of waiting for a new task.
+
+### Security
+
+- **Signing out rotates the server session key**, so the cookie stops working everywhere at
+  once and open sockets are dropped. Before, logout only cleared the cookie in that one
+  browser.
+
 ## [5.0] — 2026-09-20
 
 ### Security
