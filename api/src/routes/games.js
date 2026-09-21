@@ -9,6 +9,7 @@ const { uploadLimiter, coverUpload } = require('../utils/upload.js');
 const { spawnExtract, findGameFolder, getFolderSize } = require('../utils/archive.js');
 const { validateIdParam } = require('../utils/validate.js');
 const { redisClient, invalidateGamesList, GAMES_LIST_KEY } = require('../utils/cache.js');
+const { normalizeTags } = require('../utils/tags.js');
 
 const router = express.Router();
 
@@ -72,7 +73,7 @@ router.get('/', async (req, res) => {
             version: row.version || '1.0.0',
             // Без этого поля значок «ждёт метаданные» горел на каждой карточке
             scraped: !!row.scraped,
-            tags: row.tags ? JSON.parse(row.tags) : [],
+            tags: normalizeTags(row.tags ? JSON.parse(row.tags) : []),
             description: row.description, 
             url: `/${row.id}/`, 
             number: 0,
@@ -225,7 +226,7 @@ router.post('/:id/edit', async (req, res) => {
                 language: updatedGame.language,
                 releaseDate: updatedGame.releaseDate,
                 link: updatedGame.link,
-                tags: updatedGame.tags ? JSON.parse(updatedGame.tags) : [], 
+                tags: normalizeTags(updatedGame.tags ? JSON.parse(updatedGame.tags) : []),
                 description: updatedGame.description
             }
         });

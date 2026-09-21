@@ -9,6 +9,7 @@ import Toast from './components/Toast'
 import { locales } from './components/locales'
 import StorageMonitor from './components/StorageMonitor';
 import ContinueCard from './components/ContinueCard';
+import StatsModal from './components/StatsModal';
 
 const socket = io();
 
@@ -18,6 +19,7 @@ function App() {
   const [lang, setLang] = useState(localStorage.getItem('rpg_lang') || 'ru');
   // Скрытие обложек: помним выбор между заходами, как и язык
   const [blurCovers, setBlurCovers] = useState(() => localStorage.getItem('rpg_blur') === '1');
+  const [statsOpen, setStatsOpen] = useState(false);
   
   useEffect(() => {
     localStorage.setItem('rpg_lang', lang);
@@ -207,9 +209,12 @@ function App() {
       }
     });
     return Object.keys(tagCounts)
+      // Теги-одиночки только засоряют список. Найти такую игру по-прежнему можно поиском,
+      // а выбранный тег оставляем всегда — иначе он исчезнет из списка прямо под курсором.
+      .filter(tag => tagCounts[tag] >= 2 || tag === selectedTag)
       .sort((a, b) => a.localeCompare(b))
       .map(tag => ({ name: tag, count: tagCounts[tag] }));
-  }, [games]);
+  }, [games, selectedTag]);
 
   // Последняя запущенная игра. Прячем блок, когда человек ищет или фильтрует:
   // он уже знает, что хочет найти, и большая карточка только мешает.
@@ -278,6 +283,9 @@ function App() {
       <Header currentLang={lang} onLangChange={setLang} t={t} />
 
       {isAuthed && <StorageMonitor t={t} />}
+      {isAuthed && (
+        <button type="button" className="stats-btn" onClick={() => setStatsOpen(true)}>📊 {t.stats}</button>
+      )}
       
       <Toolbar 
         blurCovers={blurCovers} setBlurCovers={setBlurCovers}
@@ -341,6 +349,8 @@ function App() {
           showToast={showToast}
         />
       )}
+      
+      {statsOpen && <StatsModal games={games} t={t} lang={lang} onClose={() => setStatsOpen(false)} />}
 
       {selectedGame && (
         <GameModal 
