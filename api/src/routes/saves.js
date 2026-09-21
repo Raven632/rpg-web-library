@@ -10,6 +10,7 @@ const { spawnExtract } = require('../utils/archive.js');
 const { upload, uploadLimiter } = require('../utils/upload.js');
 const { validateIdParam } = require('../utils/validate.js');
 const { requireAuth } = require('./auth.js');
+const { updateProgress } = require('../utils/saveprogress.js');
 
 module.exports = function(EXTRACT_TMP) {
     const router = express.Router();
@@ -110,10 +111,18 @@ module.exports = function(EXTRACT_TMP) {
     router.post('/:gameId/:key', async (req, res) => {
         if (typeof req.body.value !== 'string') return res.status(400).json({ error: 'Bad data' });
         try {
-            const dir = path.join(SAVES_DIR, path.basename(req.params.gameId));
+            const gameId = path.basename(req.params.gameId);
+            const fileName = encodeURIComponent(path.basename(req.params.key));
+            const dir = path.join(SAVES_DIR, gameId);
             await fsp.mkdir(dir, { recursive: true });
-            await fsp.writeFile(path.join(dir, encodeURIComponent(path.basename(req.params.key)) + '.json'), req.body.value, 'utf8');
+            await fsp.writeFile(path.join(dir, fileName + '.json'), req.body.value, 'utf8');
             res.json({ success: true });
+
+            // Игра ждёт ответа на запись, поэтому разбор сейва делаем уже после ответа.
+            // Слоты — единственное, где есть прогресс: config и global пропускаем.
+            if (/^(RPG%20File\d+|MZ_file\d+)$/i.test(fileName)) {
+                updateProgress(gameId).catch(() => {});
+            }
         } catch(e) { res.status(500).json({ error: 'Server error' }); }
     });
 

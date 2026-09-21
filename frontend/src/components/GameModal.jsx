@@ -2,6 +2,10 @@ import React, { useState, useRef, useEffect } from 'react';
 
 import { getCoverUrl } from '../coverUrl';
 
+import { formatPlaytime } from '../formatPlaytime';
+
+import { launchGame } from '../launchGame';
+
 // Логотипы (пути относительно папки public)
 const STEAM_LOGO = 'steam_logo.png';
 const DLSITE_LOGO = 'dlsite_logo.png';
@@ -219,25 +223,7 @@ const GameModal = ({ game, index, onClose, onUpdateGame, onPatch, t, lang, showT
 
   const handlePlay = async () => {
     setIsPlaying(true);
-
-    // Отмечаем время запуска, иначе сортировка «Недавно запущенные» работает по старым данным
-    const lastPlayed = Date.now();
-    try {
-      await fetch(`/api/games/${encodeURIComponent(game.id)}/meta`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ lastPlayed })
-      });
-      onUpdateGame(index, { ...game, lastPlayed });
-    } catch (err) {
-      // Не смогли отметить — это не повод не запускать игру
-    }
-
-    // В dev страницу отдаёт Vite (:5173), а игры — dev-бэкенд на своём порту
-    const playUrl = import.meta.env.DEV
-      ? `${window.location.protocol}//${window.location.hostname}:${import.meta.env.VITE_BACKEND_PORT}${game.url}`
-      : game.url;
-    window.location.href = playUrl;
+    await launchGame(game, (updated) => onUpdateGame(index, updated));
   };
 
   // --- НОВАЯ ЛОГИКА ОПРЕДЕЛЕНИЯ САЙТА ДЛЯ ССЫЛКИ ---
@@ -347,7 +333,15 @@ const GameModal = ({ game, index, onClose, onUpdateGame, onPatch, t, lang, showT
                 <div style={{ display: 'flex', justifyContent: 'left', marginBottom: '20px' }}>
                   {renderSourceLink()}
                 </div> 
-                
+
+                {formatPlaytime(game.playtime, t) && (
+                  <div className="modal-progress">
+                    <span className="meta-label">{t.playtime}</span> <b>{formatPlaytime(game.playtime, t)}</b>
+                    {game.progress?.level != null && <> · <span className="meta-label">{t.progress_level}</span> <b>{game.progress.level}</b></>}
+                    {game.progress?.gold != null && <> · <span className="meta-label">{t.progress_gold}</span> <b>{game.progress.gold.toLocaleString(lang === 'en' ? 'en-US' : lang === 'de' ? 'de-DE' : 'ru-RU')}</b></>}
+                  </div>
+                )}
+
                 <div className="status-row">
                   <button
                     type="button"

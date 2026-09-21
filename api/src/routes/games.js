@@ -17,6 +17,9 @@ router.param('id', validateIdParam);
 
 let isCalculatingSizes = false; // Глобальный замок
 
+// Строку пишем мы сами, но битое значение в базе не должно ронять весь список
+const parseProgress = (raw) => { try { return raw ? JSON.parse(raw) : null; } catch { return null; } };
+
 // --- 1. ПОЛУЧЕНИЕ ВСЕХ ИГР (С КЭШИРОВАНИЕМ REDIS) ---
 router.get('/', async (req, res) => {
     try {
@@ -77,7 +80,9 @@ router.get('/', async (req, res) => {
             lastPlayed: row.lastPlayed, 
             rating: row.rating,
             status: row.status || '',
-            favorite: !!row.favorite
+            favorite: !!row.favorite,
+            playtime: row.playtime || 0,
+            progress: parseProgress(row.progress)
         })).sort((a, b) => b.addedAt - a.addedAt); 
         games.forEach((g, i) => g.number = i + 1);
 

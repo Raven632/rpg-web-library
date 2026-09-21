@@ -29,6 +29,7 @@ const createGamesRouter = require('./src/routes/games.js');
 const createSavesRouter = require('./src/routes/saves.js');
 const { findGameFolder } = require('./src/utils/archive.js');
 const { GAMES_DIR, EXTRACT_TMP, SAVES_DIR, AUDIOCACHE } = require('./src/config/index.js');
+const { backfillProgress } = require('./src/utils/saveprogress.js');
 
 // ============================================================================
 // [2] ИНИЦИАЛИЗАЦИЯ ПРИЛОЖЕНИЯ И ЗАВИСИМОСТЕЙ
@@ -331,6 +332,9 @@ if (require.main === module) {
         };
         process.on('SIGTERM', () => shutdown('SIGTERM'));
         process.on('SIGINT', () => shutdown('SIGINT'));
+        
+        // Разовый проход по существующим сейвам, чтобы прогресс появился у старых игр
+        setTimeout(() => backfillProgress().catch(e => console.error('[Progress]', e.message)), 3000);
 
         // Настройка "наблюдателя" (Watcher) за папкой игр для автообновления библиотеки
         let syncTimer = null;

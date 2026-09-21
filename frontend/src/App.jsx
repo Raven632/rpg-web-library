@@ -8,6 +8,7 @@ import LoginModal from './components/LoginModal'
 import Toast from './components/Toast'
 import { locales } from './components/locales'
 import StorageMonitor from './components/StorageMonitor';
+import ContinueCard from './components/ContinueCard';
 
 const socket = io();
 
@@ -210,6 +211,13 @@ function App() {
       .map(tag => ({ name: tag, count: tagCounts[tag] }));
   }, [games]);
 
+  // Последняя запущенная игра. Прячем блок, когда человек ищет или фильтрует:
+  // он уже знает, что хочет найти, и большая карточка только мешает.
+  const continueGame = useMemo(() => {
+    if (searchQuery || selectedTag !== 'all' || statusFilter !== 'all') return null;
+    return [...games].filter(g => g.lastPlayed).sort((a, b) => b.lastPlayed - a.lastPlayed)[0] || null;
+  }, [games, searchQuery, selectedTag, statusFilter]);
+
   const processedGames = useMemo(() => {
     let result = games;
     if (searchQuery) {
@@ -241,6 +249,7 @@ function App() {
         case 'name':        return (a.title || a.id).localeCompare(b.title || b.id);
         case 'size_desc':   return (b.size || 0) - (a.size || 0) || byId(a, b);
         case 'size_asc':    return (a.size || 0) - (b.size || 0) || byId(a, b);
+        case 'playtime':    return (b.playtime || 0) - (a.playtime || 0) || byId(a, b);
         default:            return 0;
       }
     });
@@ -283,6 +292,13 @@ function App() {
       />
       
       <main className="content">
+        {!loading && (
+          <ContinueCard
+            game={continueGame}
+            t={t}
+            onUpdateGame={(updated) => setGames(prev => prev.map(g => g.id === updated.id ? updated : g))}
+          />
+        )}
         {loading ? (
           // Пустые «тома» вместо надписи: сетка та же, поэтому карточки не сдвигают вёрстку
           <div className="library">

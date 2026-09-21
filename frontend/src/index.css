@@ -477,6 +477,10 @@ h1 {
 .status-badge.dropped { color: #b06a6a; }
 .status-badge.wish    { color: #8f9ec7; }
 
+.card-playtime { font-size: 0.6rem; letter-spacing: 0.05em; color: var(--gold-dim); white-space: nowrap; }
+.modal-progress { margin: 0 0 18px; font-size: 0.9rem; color: var(--text); }
+.modal-progress b { color: var(--gold-light); font-weight: 700; }
+
 .card-info { padding: 10px 20px 24px; position: relative; z-index: 1; }
 .card-number { 
   font-family: 'Cinzel', serif; font-size: 0.65rem; color: var(--gold-dim); 
@@ -740,7 +744,9 @@ footer {
 /* --- ТЕГИ И ОПИСАНИЕ --- */
 .modal-tags { 
   display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 30px; 
-  max-height: 130px; overflow-y: auto; padding-right: 10px; align-content: flex-start; 
+  max-height: 130px; overflow-y: auto; padding-right: 10px; align-content: flex-start;
+  /* Без этого прокручиваемый блок сжимается флекс-колонкой до нескольких пикселей */
+  flex-shrink: 0;
 }
 .modal-tags::-webkit-scrollbar { width: 4px; }
 .modal-tags::-webkit-scrollbar-track { background: rgba(0,0,0,0.2); border-radius: 2px; }
@@ -825,8 +831,34 @@ footer {
    и карточки, и модальное окно. Наведение блюр не снимает. */
 .covers-hidden .card-cover img,
 .covers-hidden .game-card:hover .card-cover img,
+.covers-hidden .continue-cover img,
 .covers-hidden #modal-cover {
   filter: blur(18px) brightness(0.55) saturate(0.7);
   /* размытие «съедает» края — увеличиваем, чтобы не было прозрачной кромки */
   transform: scale(1.1);
+}
+
+/* Блок «Продолжить»: последняя запущенная игра над библиотекой */
+.continue-block { max-width: 1100px; margin: 0 auto 34px; padding: 0 20px; display: flex; gap: 24px; }
+.continue-cover {
+  width: 260px; flex-shrink: 0; aspect-ratio: 16/10; overflow: hidden;
+  border-radius: 6px; border: 1px solid rgba(201,168,76,0.25); background: #0f0d15;
+}
+.continue-cover img { width: 100%; height: 100%; object-fit: cover; filter: brightness(0.8); transition: filter 0.4s, transform 0.4s; }
+.continue-info { display: flex; flex-direction: column; justify-content: center; gap: 10px; min-width: 0; }
+.continue-label { font-family: 'Cinzel', serif; font-size: 0.7rem; letter-spacing: 0.2em; text-transform: uppercase; color: var(--gold-dim); }
+.continue-title { font-family: 'Cinzel', serif; font-size: 1.6rem; color: var(--gold-light); margin: 0; }
+.continue-meta { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; font-size: 0.75rem; color: var(--text-dim); }
+.continue-btn {
+  align-self: flex-start; margin-top: 6px; padding: 12px 28px;
+  background: rgba(201,168,76,0.1); border: 1px solid var(--gold); border-radius: 6px;
+  color: var(--gold-light); font-family: 'Cinzel', serif; font-size: 0.9rem;
+  letter-spacing: 0.1em; text-transform: uppercase; cursor: pointer; transition: all 0.3s;
+}
+@media (hover: hover) { .continue-btn:hover { background: var(--gold); color: var(--bg-deep); box-shadow: 0 0 20px rgba(201,168,76,0.4); } }
+.continue-btn:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
+@media (max-width: 700px) {
+  .continue-block { flex-direction: column; gap: 14px; }
+  .continue-cover { width: 100%; }
+  .continue-title { font-size: 1.2rem; }
 }

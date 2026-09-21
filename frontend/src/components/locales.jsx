@@ -76,6 +76,13 @@ export const locales = {
     filter_fav: "Избранное",
     fav_add: "В избранное",
     fav_del: "Убрать из избранного",
+    unit_h: "ч",
+    unit_min: "мин",
+    playtime: "В игре:",
+    progress_level: "Уровень:",
+    progress_gold: "Золото:",
+    sort_playtime: "По времени в игре",
+    continue_label: "Продолжить"
   },
   en: {
     subtitle: "Your personal adventure collection",
@@ -154,6 +161,13 @@ export const locales = {
     filter_fav: "Favorites",
     fav_add: "Add to favorites",
     fav_del: "Remove from favorites",
+    unit_h: "h",
+    unit_min: "m",
+    playtime: "Played:",
+    progress_level: "Level:",
+    progress_gold: "Gold:",
+    sort_playtime: "By time played",
+    continue_label: "Continue"
   },
   de: {
     subtitle: "Deine persönliche Abenteuersammlung",
@@ -232,5 +246,12 @@ export const locales = {
     filter_fav: "Favoriten",
     fav_add: "Zu Favoriten",
     fav_del: "Aus Favoriten entfernen",
+    unit_h: "Std",
+    unit_min: "Min",
+    playtime: "Gespielt:",
+    progress_level: "Level:",
+    progress_gold: "Gold:",
+    sort_playtime: "Nach Spielzeit",
+    continue_label: "Weiterspielen"
   }
 };

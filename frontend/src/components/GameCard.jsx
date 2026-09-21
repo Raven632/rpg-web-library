@@ -1,4 +1,5 @@
 import React from 'react';
+import { formatPlaytime } from '../formatPlaytime';
 
 const ROMAN_NUMERALS = ['Ⅰ','Ⅱ','Ⅲ','Ⅳ','Ⅴ','Ⅵ','Ⅶ','Ⅷ','Ⅸ','Ⅹ','Ⅺ','Ⅻ'];
 
@@ -8,6 +9,8 @@ const GameCard = ({ game, index, onClick, onDelete, onRate, onToggleFavorite, t 
   const coverUrl = getCoverUrl(game);
   const roman = ROMAN_NUMERALS[index % ROMAN_NUMERALS.length] || String(index + 1);
   const volumeStr = String(game.number || index + 1).padStart(2, '0');
+  // Пустая строка означает «меньше минуты» — тогда не рисуем даже значок
+  const played = formatPlaytime(game.playtime, t);
 
   return (
     <div
@@ -64,6 +67,7 @@ const GameCard = ({ game, index, onClick, onDelete, onRate, onToggleFavorite, t 
           <span>{t.vol} {volumeStr}</span>
           {!game.scraped && <span style={{color: 'var(--gold-light)'}}>⏳</span>}
           {game.status && <span className={`status-badge ${game.status}`}>{t[`status_${game.status}`]}</span>}
+          {played && <span className="card-playtime">⏱ {played}</span>}
         </div>
         <h3 className="card-title">{game.title}</h3>
         
