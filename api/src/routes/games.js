@@ -83,7 +83,8 @@ router.get('/', async (req, res) => {
             status: row.status || '',
             favorite: !!row.favorite,
             playtime: row.playtime || 0,
-            progress: parseProgress(row.progress)
+            progress: parseProgress(row.progress),
+            screens: parseProgress(row.screens) || []
         })).sort((a, b) => b.addedAt - a.addedAt); 
         games.forEach((g, i) => g.number = i + 1);
 
@@ -92,6 +93,35 @@ router.get('/', async (req, res) => {
 
         res.json(games);
     } catch (e) { res.status(500).json({ error: 'DB Error' }); }
+});
+
+// --- ДОГОН МЕТАДАННЫХ: ставим в очередь всех, у кого их нет ---
+router.post('/rescan', async (req, res) => {
+    try {
+        // Берём и те игры, у которых нет картинок: кнопка называется «дозагрузить»,
+        // а не «дозагрузить теги», и после появления галереи это стало заметно.
+        const rows = await dbService.get().all(
+            `SELECT id FROM games WHERE ready = 1 AND (
+                tags IS NULL OR tags = '' OR tags = '[]'
+                OR scraped = 0 OR link = ''
+                OR screens IS NULL OR screens = '' OR screens = '[]'
+            )`
+        );
+        // Очередь живёт в Redis и сама держит паузу в 4 секунды между играми,
+        // поэтому просто складываем туда всё и отвечаем сразу, не дожидаясь обхода.
+        // force: недельная память о неудачах существует для автоматических обходов.
+        // Кнопку человек нажимает сам и обычно как раз после того, как парсер починили,
+        // так что старый отрицательный ответ здесь только мешает.
+        let queued = 0, skipped = 0;
+        for (const row of rows) {
+            // Вернёт false, только если игра уже стоит в очереди
+            const added = await scraperService.queueScrape(row.id, { force: true });
+            added ? queued++ : skipped++;
+        }
+        res.json({ success: true, queued, skipped });
+    } catch (e) {
+        res.status(500).json({ error: 'Не удалось поставить в очередь' });
+    }
 });
 
 // --- 2. РОУТ ДЛЯ ЗАГРУЗКИ КАСТОМНОЙ ОБЛОЖКИ ---
@@ -156,37 +186,64 @@ router.delete('/:id/cover', async (req, res) => {
     }
 });
 
+// --- ПОИСК КАНДИДАТОВ НА F95 (ручной выбор в модалке) ---
+router.get('/:id/f95-search', async (req, res) => {
+    const query = String(req.query.q || '').trim();
+    if (query.length < 2) return res.status(400).json({ error: 'Слишком короткий запрос' });
+    try {
+        res.json({ items: await scraperService.searchF95Candidates(query) });
+    } catch (e) {
+        res.status(500).json({ error: 'Поиск не удался' });
+    }
+});
+
 // --- 4. РЕДАКТИРОВАНИЕ МЕТАДАННЫХ ---
 router.post('/:id/edit', async (req, res) => {
     const folder = path.basename(req.params.id);
     const { title, rjCode, developer, language, releaseDate, link } = req.body;
-    const gamePath = path.join(GAMES_DIR, folder);
 
     try {
         let scrapeWarning = null;
         
-        await dbService.get().run(
-            `UPDATE games SET title = ?, developer = ?, language = ?, releaseDate = ?, link = ? WHERE id = ?`,
-            [title || '', developer || '', language || '', releaseDate || '', link || '', folder]
-        );
+        // Обновляем только те поля, что реально пришли. Раньше частичный запрос
+        // (например, одна лишь ссылка) затирал название и остальное пустыми строками.
+        const manual = { title, developer, language, releaseDate, link };
+        const manualKeys = Object.keys(manual).filter(k => manual[k] !== undefined);
+        if (manualKeys.length > 0) {
+            await dbService.get().run(
+                `UPDATE games SET ${manualKeys.map(k => `${k} = ?`).join(', ')} WHERE id = ?`,
+                [...manualKeys.map(k => manual[k]), folder]
+            );
+        }
+
+        // Искать будем по тому названию, что сейчас в базе, если своё не прислали
+        const current = await dbService.get().get('SELECT title FROM games WHERE id = ?', [folder]);
+        const searchFrom = title || current?.title || folder;
 
         const rawQuery = rjCode || link; 
         const actualRjCode = (rawQuery && rawQuery.match(/RJ\d{6,8}/i)) ? rawQuery.match(/RJ\d{6,8}/i)[0].toUpperCase() : null;
         let coverUpdated = false;
 
-        if (actualRjCode && await scraperService.fetchDLsiteCover(actualRjCode, path.join(gamePath, 'cover.jpg'))) {
-            await dbService.get().run('UPDATE games SET cover = ? WHERE id = ?', [`${folder}/cover.jpg`, folder]);
-            coverUpdated = true;
-        }
-
-        const scrapedData = await scraperService.fetchUniversalMetadata(title, rawQuery);
+        const scrapedData = await scraperService.fetchUniversalMetadata(searchFrom, rawQuery);
         
         if (scrapedData) {
-            if (scrapedData.coverUrl && !coverUpdated && await scraperService.downloadRemoteCover(scrapedData.coverUrl, path.join(gamePath, 'cover.jpg'))) {
-                await dbService.get().run('UPDATE games SET cover = ? WHERE id = ?', [`${folder}/cover.jpg`, folder]);
+            // Все картинки сохраняет saveGameMedia и только в _media. Раньше обложка
+            // писалась ещё и в папку игры, а потом перетиралась картинкой с форума —
+            // из-за этого вместо обложки магазина в карточке оказывалась анимация темы.
+            const currentRow = await dbService.get().get('SELECT cover FROM games WHERE id = ?', [folder]);
+            const media = await scraperService.saveGameMedia(
+                folder,
+                { ...scrapedData, rjCode: scrapedData.rjCode || actualRjCode },
+                currentRow?.cover
+            );
+            if (media.cover) {
+                await dbService.get().run('UPDATE games SET cover = ? WHERE id = ?', [media.cover, folder]);
                 coverUpdated = true;
             }
-            
+            if (media.screens.length) {
+                await dbService.get().run('UPDATE games SET screens = ? WHERE id = ?', [JSON.stringify(media.screens), folder]);
+            }
+
             const t_tags = scrapedData.tags?.length > 0 ? JSON.stringify(scrapedData.tags) : '[]';
             const t_desc = scrapedData.description || '';
             const t_dev = scrapedData.developer || developer || '';
@@ -407,4 +464,4 @@ module.exports = function(io, addGameToDB, EXTRACT_TMP) {
     });
 
     return router;
-};
+};

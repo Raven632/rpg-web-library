@@ -790,6 +790,8 @@ footer {
 }
 #modal-play-btn:hover { background: var(--gold); color: var(--bg-deep); box-shadow: 0 0 25px rgba(201,168,76,0.6); transform: translateY(-2px); }
 
+
+
 /* ========================================================= */
 /* 6. МОБИЛЬНАЯ АДАПТАЦИЯ                                    */
 /* ========================================================= */
@@ -832,10 +834,18 @@ footer {
 .covers-hidden .card-cover img,
 .covers-hidden .game-card:hover .card-cover img,
 .covers-hidden .continue-cover img,
+.covers-hidden .game-screens img,
 .covers-hidden #modal-cover {
   filter: blur(18px) brightness(0.55) saturate(0.7);
   /* размытие «съедает» края — увеличиваем, чтобы не было прозрачной кромки */
   transform: scale(1.1);
+}
+
+.tool-row { display: flex; gap: 10px; justify-content: center; margin-top: 10px; flex-wrap: wrap; }
+.tool-row .stats-btn { margin: 0; }
+.scrape-progress {
+  text-align: center; margin-top: 8px; font-family: 'Cinzel', serif;
+  font-size: 0.7rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--gold-dim);
 }
 
 /* Блок «Продолжить»: последняя запущенная игра над библиотекой */
@@ -914,3 +924,27 @@ footer {
   .stat-bar-label { flex-basis: 45%; }
   .stats-months { height: 90px; }
 }
+/* Ручной выбор темы на F95 */
+.f95-search-btn { margin-top: 8px; }
+.f95-list { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; max-height: 240px; overflow-y: auto; }
+.f95-item {
+  display: flex; flex-direction: column; gap: 3px; text-align: left; padding: 8px 12px;
+  background: rgba(19, 17, 26, 0.6); border: 1px solid rgba(201, 168, 76, 0.2);
+  border-radius: 6px; cursor: pointer; transition: all 0.2s;
+}
+@media (hover: hover) { .f95-item:hover { border-color: var(--gold); background: rgba(201, 168, 76, 0.08); } }
+.f95-item:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+.f95-title { font-family: 'Cinzel', serif; font-size: 0.8rem; color: var(--gold-light); }
+.f95-meta { font-size: 0.7rem; color: var(--text-dim); }
+
+/* Скриншоты игры из шапки темы на F95 */
+.game-screens { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 24px; }
+.game-screens img {
+  width: 132px; height: 74px; object-fit: cover; display: block;
+  border-radius: 4px; border: 1px solid rgba(201, 168, 76, 0.25);
+  filter: brightness(0.85); transition: transform 0.25s, filter 0.25s, border-color 0.25s;
+}
+@media (hover: hover) {
+  .game-screens a:hover img { transform: scale(1.06); filter: brightness(1); border-color: var(--gold); }
+}
+.game-screens a:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }

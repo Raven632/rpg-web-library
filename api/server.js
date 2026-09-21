@@ -336,6 +336,11 @@ if (require.main === module) {
         // Разовый проход по существующим сейвам, чтобы прогресс появился у старых игр
         setTimeout(() => backfillProgress().catch(e => console.error('[Progress]', e.message)), 3000);
 
+        // Очередь сбора метаданных живёт в Redis и переживает перезапуск, но сама себя
+        // не будит: после рестарта её некому запустить, пока не добавят новую задачу.
+        // Поэтому подталкиваем её на старте — иначе деплой посреди обхода тихо всё останавливает.
+        setTimeout(() => scraperService.processBackgroundScrape().catch(e => console.error('[Queue]', e.message)), 5000);
+
         // Настройка "наблюдателя" (Watcher) за папкой игр для автообновления библиотеки
         let syncTimer = null;
         let syncInProgress = false;
@@ -367,7 +372,7 @@ if (require.main === module) {
 
         // Прослушиваем изменения директории (игнорируя служебные папки)
         fs.watch(GAMES_DIR, { persistent: true }, (eventType, filename) => {
-            if (!filename || ['_tmp_uploads', '_saves', 'node_modules', '.audio-cache'].includes(filename)) return;
+            if (!filename || ['_tmp_uploads', '_saves', '_media', 'node_modules', '.audio-cache'].includes(filename)) return;
             
             // Используем Debounce (5 сек), чтобы не запускать синк на каждый скопированный файл
             clearTimeout(syncTimer);

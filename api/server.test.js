@@ -158,7 +158,9 @@ test('findRJCode: находит RJ внутри текстового файла
   const originalReadFile = fsp.readFile;
 
   // Мокаем файловую систему, чтобы тест не лез на жесткий диск
-  fsp.readdir = async () => ['readme.txt'];
+  // Новый findRJCode просит readdir с withFileTypes, поэтому заглушка отдаёт
+  // такие же объекты, какие вернула бы настоящая файловая система
+  fsp.readdir = async () => [{ name: 'readme.txt', isFile: () => true, isDirectory: () => false }];
   fsp.stat = async () => ({ size: 1024 }); 
   fsp.readFile = async () => 'Welcome to the game! Code: RJ999999.';
 
@@ -192,4 +194,4 @@ test('translateText: возвращает оригинальный текст п
   // Вызываем через объект скрапера
   const result = await scraperService.translateText('Original text');
   assert.strictEqual(result, 'Original text', 'При сбое сети должен вернуться оригинал');
-});
+});

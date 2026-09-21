@@ -57,6 +57,7 @@ class DatabaseService {
         try { await this.db.exec('ALTER TABLE games ADD COLUMN favorite INTEGER DEFAULT 0'); } catch(e){}
         try { await this.db.exec('ALTER TABLE games ADD COLUMN playtime INTEGER DEFAULT 0'); } catch(e){}
         try { await this.db.exec('ALTER TABLE games ADD COLUMN progress TEXT DEFAULT ""'); } catch(e){}
+        try { await this.db.exec('ALTER TABLE games ADD COLUMN screens TEXT DEFAULT ""'); } catch(e){}
         
         console.log('🗄️ [DB] База данных инициализирована.');
         return this.db;
@@ -87,7 +88,17 @@ class DatabaseService {
 
         const rjCode = await this.scraperService.findRJCode(folder, gamePath);
         if (rjCode && !cover) {
-            if (await this.scraperService.fetchDLsiteCover(rjCode, path.join(gamePath, 'cover.jpg'))) cover = `${folder}/cover.jpg`;
+            // Обложку магазина кладём в _media рядом с папками игр: внутрь самой игры
+            // мы не пишем ничего, иначе её содержимое перестаёт быть тем, что скачал автор
+            const buf = await this.scraperService.fetchDLsiteCover(rjCode);
+            if (buf) {
+                try {
+                    const dir = path.join(path.dirname(gamePath), '_media', folder);
+                    await fsp.mkdir(dir, { recursive: true });
+                    await fsp.writeFile(path.join(dir, 'cover.jpg'), buf);
+                    cover = `_media/${folder}/cover.jpg`;
+                } catch (e) {}
+            }
         }
 
         if (!cover) {
@@ -125,13 +136,13 @@ class DatabaseService {
             const gamePath = path.join(this.GAMES_DIR, folder);
             try { 
                 const stat = await fsp.stat(gamePath); 
-                if (!stat.isDirectory() || ['node_modules', '_saves', '_tmp_uploads', '.audio-cache'].includes(folder)) continue;
+                if (!stat.isDirectory() || ['node_modules', '_saves', '_tmp_uploads', '_media', '.audio-cache'].includes(folder)) continue;
                 if (!dbIds.includes(folder)) await this.addGameToDB(folder, gamePath);
             } catch(e) { continue; }
         }
 
         for (const id of dbIds) {
-            if (!entries.includes(id) || ['_saves', '_tmp_uploads', 'node_modules', '.audio-cache'].includes(id)) {
+            if (!entries.includes(id) || ['_saves', '_tmp_uploads', '_media', 'node_modules', '.audio-cache'].includes(id)) {
                 await this.db.run('DELETE FROM games WHERE id = ?', [id]);
                 await invalidateGamesList();
             }

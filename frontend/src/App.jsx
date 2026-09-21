@@ -20,6 +20,8 @@ function App() {
   // Скрытие обложек: помним выбор между заходами, как и язык
   const [blurCovers, setBlurCovers] = useState(() => localStorage.getItem('rpg_blur') === '1');
   const [statsOpen, setStatsOpen] = useState(false);
+  // Сколько игр ещё ждёт сбора метаданных — приходит с сервера по сокету
+  const [scrapeLeft, setScrapeLeft] = useState(0);
   
   useEffect(() => {
     localStorage.setItem('rpg_lang', lang);
@@ -127,6 +129,7 @@ function App() {
 
     // Кто-то изменил библиотеку с другого устройства — тихо подтягиваем список
     socket.on('library-changed', () => scheduleRefetch());
+    socket.on('scrape-progress', ({ left }) => setScrapeLeft(left));
 
     const handleVisibilityChange = () => {
       if (!document.hidden) fetchGames({ silent: true });
@@ -144,7 +147,8 @@ function App() {
       socket.off('scrape-success');
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('pageshow', handlePageShow);
-      socket.off('library-changed');      
+      socket.off('library-changed');
+      socket.off('scrape-progress');      
     };
   }, []);
 
@@ -199,6 +203,18 @@ function App() {
     
     // 2. КРИТИЧЕСКИ ВАЖНО: Обновляем снимок в выбранной игре, чтобы модалка сразу перерисовала обложку!
     setSelectedGame(prev => prev ? { ...prev, game: updatedGame } : null);
+  };
+
+  const handleRescan = async () => {
+    try {
+      const res = await fetch('/api/games/rescan', { method: 'POST' });
+      const data = await res.json();
+      if (data.queued) showToast(t.rescan_queued(data.queued), 'success');
+      else if (data.skipped) showToast(t.rescan_skipped(data.skipped), 'error');
+      else showToast(t.rescan_none, 'error');
+    } catch (err) {
+      showToast(t.err_net, 'error');
+    }
   };
 
   const availableTags = useMemo(() => {
@@ -284,8 +300,12 @@ function App() {
 
       {isAuthed && <StorageMonitor t={t} />}
       {isAuthed && (
-        <button type="button" className="stats-btn" onClick={() => setStatsOpen(true)}>📊 {t.stats}</button>
+        <div className="tool-row">
+          <button type="button" className="stats-btn" onClick={() => setStatsOpen(true)}>📊 {t.stats}</button>
+          <button type="button" className="stats-btn" onClick={handleRescan}>🔄 {t.rescan}</button>
+        </div>
       )}
+      {scrapeLeft > 0 && <div className="scrape-progress">{t.scrape_left(scrapeLeft)}</div>}
       
       <Toolbar 
         blurCovers={blurCovers} setBlurCovers={setBlurCovers}

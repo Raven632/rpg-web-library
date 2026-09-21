@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 
-import { getCoverUrl } from '../coverUrl';
+import { getCoverUrl, getMediaUrl } from '../coverUrl';
 
 import { formatPlaytime } from '../formatPlaytime';
 
@@ -69,6 +69,10 @@ const GameModal = ({ game, index, onClose, onUpdateGame, onPatch, t, lang, showT
   const [isEditing, setIsEditing] = useState(false);
   const [editTitle, setEditTitle] = useState(game.title || '');
   const [editRj, setEditRj] = useState('');
+  // Кандидаты с F95 для ручного выбора: автомат ошибается на непохожих названиях,
+  // а человек узнаёт свою игру с первого взгляда
+  const [f95List, setF95List] = useState([]);
+  const [f95Busy, setF95Busy] = useState(false);
   const [editDeveloper, setEditDeveloper] = useState(game.developer || '');
   const [editLanguage, setEditLanguage] = useState(game.language || '');
   const [editReleaseDate, setEditReleaseDate] = useState(game.releaseDate || '');
@@ -221,6 +225,21 @@ const GameModal = ({ game, index, onClose, onUpdateGame, onPatch, t, lang, showT
     }
   };
 
+  const searchF95 = async () => {
+    setF95Busy(true);
+    try {
+      const q = (editTitle || game.title || '').trim();
+      const res = await fetch(`/api/games/${encodeURIComponent(game.id)}/f95-search?q=${encodeURIComponent(q)}`);
+      const data = await res.json();
+      setF95List(data.items || []);
+      if (!data.items || data.items.length === 0) showToast(t.f95_none, 'error');
+    } catch (err) {
+      showToast(t.err_net, 'error');
+    } finally {
+      setF95Busy(false);
+    }
+  };
+
   const handlePlay = async () => {
     setIsPlaying(true);
     await launchGame(game, (updated) => onUpdateGame(index, updated));
@@ -240,6 +259,7 @@ const GameModal = ({ game, index, onClose, onUpdateGame, onPatch, t, lang, showT
           if (url.includes('dlsite.com')) iconSrc = '/dlsite-logo.png';
           else if (url.includes('vndb.org')) iconSrc = '/vndb-logo.png';
           else if (url.includes('steampowered.com')) iconSrc = '/steam-logo.png';
+          else if (url.includes('f95zone.to')) iconSrc = '/f95-logo.png';
 
           return (
             <a key={idx} href={url} target="_blank" rel="noopener noreferrer" className="grimoire-source-link" title={url}>
@@ -286,7 +306,21 @@ const GameModal = ({ game, index, onClose, onUpdateGame, onPatch, t, lang, showT
                 <input type="text" value={editReleaseDate} onChange={e => setEditReleaseDate(e.target.value)} placeholder="Дата выпуска (ГГГГ-ММ-ДД)..." />
                 <input type="text" value={editLanguage} onChange={e => setEditLanguage(e.target.value)} placeholder="Язык (RU, EN, JP)..." />
                 <input type="text" value={editLink} onChange={e => setEditLink(e.target.value)} placeholder="Ссылка на источник..." />
-                <input type="text" value={editRj} onChange={handleRjChange} placeholder="RJ код или полная ссылка на игру" />
+                <input type="text" value={editRj} onChange={handleRjChange} placeholder="RJ-код или ссылка: DLsite, Steam, VNDB, F95zone" />
+                <button type="button" className="chip f95-search-btn" onClick={searchF95} disabled={f95Busy}>
+                  🔎 {f95Busy ? t.checking : t.f95_search}
+                </button>
+                {f95List.length > 0 && (
+                  <div className="f95-list">
+                    {f95List.map(item => (
+                      <button type="button" key={item.url} className="f95-item"
+                        onClick={() => { setEditRj(item.url); setF95List([]); }}>
+                        <span className="f95-title">{item.title}</span>
+                        <span className="f95-meta">{item.creator} · {t.f95_tags(item.tags)}{item.rating ? ` · ★${item.rating}` : ''}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
                 
                 <div className="form-actions">
                   <button onClick={handleSave} disabled={isSaving} className="save-btn">{isSaving ? '⏳...' : t.save}</button>
@@ -375,6 +409,16 @@ const GameModal = ({ game, index, onClose, onUpdateGame, onPatch, t, lang, showT
                     <span className="tag" style={{ opacity: 0.5, borderColor: 'transparent' }}>{t.no_tags}</span>
                   )}
                 </div>
+
+                {game.screens && game.screens.length > 0 && (
+                  <div className="game-screens">
+                    {game.screens.map((src, i) => (
+                      <a key={src} href={getMediaUrl(src)} target="_blank" rel="noopener noreferrer" title={t.screens_open}>
+                        <img src={getMediaUrl(src)} alt={`${game.title} — ${i + 1}`} loading="lazy" />
+                      </a>
+                    ))}
+                  </div>
+                )}
 
                 {game.description && (
                   <div className="modal-description">{game.description}</div>
