@@ -214,6 +214,17 @@ function App() {
     setAuthMode('login');
   };
 
+  // Клик по тегу в окне игры. Заодно сбрасываем поиск и статус: иначе после клика
+  // библиотека может оказаться пустой по причине, которой не видно — например,
+  // остался фильтр «пройдено» или строка поиска от прошлого раза.
+  const handleTagClick = (tag) => {
+    setSelectedGame(null);
+    setSearchQuery('');
+    setStatusFilter('all');
+    setSelectedTag(tag);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
   const handleRescan = async () => {
     try {
       const res = await fetch('/api/games/rescan', { method: 'POST' });
@@ -389,6 +400,7 @@ function App() {
           t={t} lang={lang}
           showToast={showToast}
           onPatch={patchGame}
+          onTagClick={handleTagClick}
         />
       )}
 

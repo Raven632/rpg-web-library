@@ -12,8 +12,7 @@ const STEAM_LOGO = 'steam_logo.png';
 const DLSITE_LOGO = 'dlsite_logo.png';
 
 const ROMAN_NUMERALS = ['Ⅰ','Ⅱ','Ⅲ','Ⅳ','Ⅴ','Ⅵ','Ⅶ','Ⅷ','Ⅸ','Ⅹ','Ⅺ','Ⅻ'];
-
-const GameModal = ({ game, index, onClose, onUpdateGame, onPatch, t, lang, showToast }) => {
+const GameModal = ({ game, index, onClose, onUpdateGame, onPatch, onTagClick, t, lang, showToast }) => {
   const [isActive, setIsActive] = useState(false);
   // Номер раскрытой картинки или null. Раньше кадр открывался новой вкладкой —
   // игру при этом приходилось терять из виду и возвращаться назад руками.
@@ -425,7 +424,20 @@ const GameModal = ({ game, index, onClose, onUpdateGame, onPatch, t, lang, showT
 
                 <div className="modal-tags">
                   {game.tags && game.tags.length > 0 ? (
-                    game.tags.map(tag => <span key={tag} className="tag">{tag}</span>)
+                    game.tags.map(tag => (
+                      // Тег — кнопка, а не текст: клик уводит в библиотеку, отфильтрованную
+                      // по нему. Раньше «а что ещё есть такого же» приходилось искать руками
+                      // в выпадающем списке, хотя ответ был прямо перед глазами.
+                      <button
+                        key={tag}
+                        type="button"
+                        className="tag tag-link"
+                        onClick={() => onTagClick?.(tag)}
+                        title={t.tag_filter_by(tag)}
+                      >
+                        {tag}
+                      </button>
+                    ))
                   ) : (
                     <span className="tag" style={{ opacity: 0.5, borderColor: 'transparent' }}>{t.no_tags}</span>
                   )}

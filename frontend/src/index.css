@@ -753,6 +753,17 @@ footer {
 .modal-tags::-webkit-scrollbar-thumb { background: var(--gold-dim); border-radius: 2px; }
 .modal-tags .tag { padding: 6px 14px; font-size: 0.75rem; border: 1px solid rgba(201,168,76,0.3); background: rgba(20,18,26,0.8); border-radius: 4px;}
 
+/* Тег-кнопка выглядит как обычный тег, но ведёт себя как ссылка на фильтр.
+   Кнопка не наследует шрифт и цвет — задаём явно, иначе будет системный серый. */
+.modal-tags .tag-link {
+  font: inherit; color: inherit; cursor: pointer;
+  transition: border-color 0.2s, color 0.2s, background 0.2s;
+}
+@media (hover: hover) {
+  .modal-tags .tag-link:hover { border-color: var(--gold); color: var(--gold); background: rgba(201,168,76,0.12); }
+}
+.modal-tags .tag-link:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+
 .modal-description { 
   font-family: 'Crimson Text', serif; font-size: 1.05rem; line-height: 1.7; 
   color: var(--text-dim); white-space: pre-wrap; padding-right: 20px; 
@@ -834,10 +845,20 @@ footer {
 .covers-hidden .card-cover img,
 .covers-hidden .game-card:hover .card-cover img,
 .covers-hidden .continue-cover img,
-.covers-hidden .game-screens img,
 .covers-hidden #modal-cover {
   filter: blur(18px) brightness(0.55) saturate(0.7);
   /* размытие «съедает» края — увеличиваем, чтобы не было прозрачной кромки */
+  transform: scale(1.1);
+}
+
+/* Миниатюры в галерее — 145 px против 493 px у обложки. Те же 18 px дают там 12%
+   ширины вместо 4% и превращают кадр в однотонное пятно. Размытие должно быть
+   пропорционально размеру картинки, а не одинаковым в пикселях.
+   Наведение сюда же: правило .screen-thumb:hover img весит столько же, сколько
+   правило скрытия, и при равном весе побеждает то, что ниже в файле — оно снимало блюр. */
+.covers-hidden .game-screens img,
+.covers-hidden .screen-thumb:hover img {
+  filter: blur(8px) brightness(0.55) saturate(0.7);
   transform: scale(1.1);
 }
 

@@ -107,6 +107,7 @@ export const locales = {
     f95_none: "На F95 ничего не нашлось",
     f95_tags: (n) => `${n} тегов`,
     screens_open: "Открыть в полном размере",
+    tag_filter_by: (tag) => `Показать все игры с тегом «${tag}»`,
   },
   en: {
     subtitle: "Your personal adventure collection",
@@ -216,6 +217,7 @@ export const locales = {
     f95_none: "Nothing found on F95",
     f95_tags: (n) => `${n} tags`,
     screens_open: "Open full size",
+    tag_filter_by: (tag) => `Show every game tagged "${tag}"`,
   },
   de: {
     subtitle: "Deine persönliche Abenteuersammlung",
@@ -325,5 +327,6 @@ export const locales = {
     f95_none: "Auf F95 nichts gefunden",
     f95_tags: (n) => `${n} Tags`,
     screens_open: "In voller Größe öffnen",
+    tag_filter_by: (tag) => `Alle Spiele mit dem Tag „${tag}“ zeigen`,
   }
 };
