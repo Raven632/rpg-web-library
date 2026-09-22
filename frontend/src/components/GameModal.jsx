@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 
 import { getCoverUrl, getMediaUrl } from '../coverUrl';
 
@@ -14,6 +15,9 @@ const ROMAN_NUMERALS = ['Ⅰ','Ⅱ','Ⅲ','Ⅳ','Ⅴ','Ⅵ','Ⅶ','Ⅷ','Ⅸ','�
 
 const GameModal = ({ game, index, onClose, onUpdateGame, onPatch, t, lang, showToast }) => {
   const [isActive, setIsActive] = useState(false);
+  // Номер раскрытой картинки или null. Раньше кадр открывался новой вкладкой —
+  // игру при этом приходилось терять из виду и возвращаться назад руками.
+  const [lightbox, setLightbox] = useState(null);
   
   const importRef = useRef(null);
   const coverInputRef = useRef(null);
@@ -22,6 +26,23 @@ const GameModal = ({ game, index, onClose, onUpdateGame, onPatch, t, lang, showT
     const timer = setTimeout(() => setIsActive(true), 10);
     return () => clearTimeout(timer);
   }, []);
+
+  // Обработчик живёт только пока картинка раскрыта: Esc закрывает просмотрщик,
+  // а не всё окно игры, стрелки листают кадры по кругу
+  useEffect(() => {
+    if (lightbox === null) return undefined;
+    const total = game.screens?.length || 0;
+    const onKey = (e) => {
+      if (e.key === 'Escape') setLightbox(null);
+      else if (e.key === 'ArrowRight' && total) setLightbox(i => (i + 1) % total);
+      else if (e.key === 'ArrowLeft' && total) setLightbox(i => (i - 1 + total) % total);
+      else return;
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [lightbox, game.screens]);
 
   const handleCloseModal = () => {
     setIsActive(false);
@@ -413,9 +434,9 @@ const GameModal = ({ game, index, onClose, onUpdateGame, onPatch, t, lang, showT
                 {game.screens && game.screens.length > 0 && (
                   <div className="game-screens">
                     {game.screens.map((src, i) => (
-                      <a key={src} href={getMediaUrl(src)} target="_blank" rel="noopener noreferrer" title={t.screens_open}>
+                      <button key={src} type="button" className="screen-thumb" onClick={() => setLightbox(i)} title={t.screens_open}>
                         <img src={getMediaUrl(src)} alt={`${game.title} — ${i + 1}`} loading="lazy" />
-                      </a>
+                      </button>
                     ))}
                   </div>
                 )}
@@ -432,6 +453,42 @@ const GameModal = ({ game, index, onClose, onUpdateGame, onPatch, t, lang, showT
           </div>
         </div>
       </div>
+
+      {/* Просмотрщик рисуем прямо в body: у окна игры есть backdrop-filter, а он
+          становится точкой отсчёта для position: fixed внутри — картинка выросла бы
+          не во весь экран, а в рамку окна за вычетом его отступов */}
+      {lightbox !== null && game.screens?.length > 0 && createPortal(
+        <div className="lightbox" onClick={(e) => { e.stopPropagation(); setLightbox(null); }}>
+          <button type="button" className="lightbox-close" onClick={(e) => { e.stopPropagation(); setLightbox(null); }}>×</button>
+
+          {game.screens.length > 1 && (
+            <>
+              <button
+                type="button"
+                className="lightbox-nav prev"
+                onClick={(e) => { e.stopPropagation(); setLightbox(i => (i - 1 + game.screens.length) % game.screens.length); }}
+              >‹</button>
+              <button
+                type="button"
+                className="lightbox-nav next"
+                onClick={(e) => { e.stopPropagation(); setLightbox(i => (i + 1) % game.screens.length); }}
+              >›</button>
+            </>
+          )}
+
+          {/* Клик по самой картинке не закрывает: промахнуться мимо мелкой кнопки легко */}
+          <img
+            src={getMediaUrl(game.screens[lightbox])}
+            alt={`${game.title} — ${lightbox + 1}`}
+            onClick={(e) => e.stopPropagation()}
+          />
+
+          {game.screens.length > 1 && (
+            <div className="lightbox-counter">{lightbox + 1} / {game.screens.length}</div>
+          )}
+        </div>,
+        document.body
+      )}
     </div>
   );
 };

@@ -944,7 +944,50 @@ footer {
   border-radius: 4px; border: 1px solid rgba(201, 168, 76, 0.25);
   filter: brightness(0.85); transition: transform 0.25s, filter 0.25s, border-color 0.25s;
 }
+.screen-thumb { padding: 0; border: none; background: none; cursor: pointer; line-height: 0; }
 @media (hover: hover) {
-  .game-screens a:hover img { transform: scale(1.06); filter: brightness(1); border-color: var(--gold); }
+  .screen-thumb:hover img { transform: scale(1.06); filter: brightness(1); border-color: var(--gold); }
 }
-.game-screens a:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
+.screen-thumb:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
+
+/* Просмотрщик кадра. Лежит выше окна игры (оно 2000), фон приглушает всё под собой,
+   клик по фону закрывает — как в любой галерее. */
+.lightbox {
+  position: fixed; inset: 0; z-index: 3000;
+  display: flex; align-items: center; justify-content: center;
+  padding: 40px 20px;
+  background: rgba(8, 6, 8, 0.93);
+  -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+  animation: lightbox-in 0.2s ease-out;
+}
+@keyframes lightbox-in { from { opacity: 0; } to { opacity: 1; } }
+.lightbox img {
+  max-width: 100%; max-height: 100%; object-fit: contain;
+  border-radius: 4px; border: 1px solid rgba(201, 168, 76, 0.35);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.7);
+}
+.lightbox-close, .lightbox-nav {
+  position: absolute; display: flex; align-items: center; justify-content: center;
+  background: rgba(20, 18, 26, 0.85); color: var(--gold);
+  border: 1px solid rgba(201, 168, 76, 0.3); border-radius: 50%;
+  cursor: pointer; transition: background 0.2s, border-color 0.2s, transform 0.2s;
+}
+.lightbox-close { top: 18px; right: 18px; width: 40px; height: 40px; font-size: 1.6rem; line-height: 1; }
+.lightbox-nav { top: 50%; transform: translateY(-50%); width: 46px; height: 46px; font-size: 2rem; line-height: 1; }
+.lightbox-nav.prev { left: 14px; }
+.lightbox-nav.next { right: 14px; }
+@media (hover: hover) {
+  .lightbox-close:hover, .lightbox-nav:hover { background: rgba(201, 168, 76, 0.2); border-color: var(--gold); }
+}
+.lightbox-counter {
+  position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
+  font-family: 'Cinzel', serif; font-size: 0.75rem; letter-spacing: 0.1em;
+  color: var(--gold-dim);
+}
+/* На телефоне стрелки мельче и ближе к краю, иначе перекрывают саму картинку */
+@media (max-width: 600px) {
+  .lightbox { padding: 60px 8px; }
+  .lightbox-nav { width: 38px; height: 38px; font-size: 1.6rem; }
+  .lightbox-nav.prev { left: 6px; }
+  .lightbox-nav.next { right: 6px; }
+}
