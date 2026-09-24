@@ -4,12 +4,13 @@ const fsp = require('fs').promises;
 const path = require('path');
 const dbService = require('../db/database.js');
 const scraperService = require('../services/scraper.js');
-const { GAMES_DIR } = require('../config/index.js');
+const { GAMES_DIR, SAVES_DIR } = require('../config/index.js');
 const { uploadLimiter, coverUpload } = require('../utils/upload.js');
 const { spawnExtract, findGameFolder, getFolderSize } = require('../utils/archive.js');
 const { validateIdParam } = require('../utils/validate.js');
 const { redisClient, invalidateGamesList, GAMES_LIST_KEY } = require('../utils/cache.js');
 const { normalizeTags } = require('../utils/tags.js');
+const { cleanTitle } = require('../utils/title.js');
 
 const router = express.Router();
 
@@ -121,6 +122,67 @@ router.post('/rescan', async (req, res) => {
         res.json({ success: true, queued, skipped });
     } catch (e) {
         res.status(500).json({ error: 'Не удалось поставить в очередь' });
+    }
+});
+
+// --- РЕВИЗИЯ БИБЛИОТЕКИ ---
+// Отвечает на вопросы, которых по списку игр не видно: что не запустится, что лежит
+// дважды, что занимает место и ни разу не открывалось, от чего остались сейвы, хотя
+// игры уже нет. Ничего не удаляет и не чинит — только показывает.
+router.get('/audit', async (req, res) => {
+    const exists = async (p) => { try { await fsp.access(p); return true; } catch { return false; } };
+
+    try {
+        const rows = await dbService.get().all('SELECT * FROM games WHERE ready = 1');
+
+        // Движок открывает игру через index.html: либо в корне папки, либо в www —
+        // ровно так его ищет раздача файлов. Нет ни того, ни другого — игра не запустится
+        const broken = [];
+        for (const g of rows) {
+            const dir = path.join(GAMES_DIR, g.id);
+            const ok = await exists(path.join(dir, 'index.html'))
+                || await exists(path.join(dir, 'www', 'index.html'));
+            if (!ok) broken.push({ id: g.id, title: g.title, size: g.size || 0 });
+        }
+
+        // Похожие названия. Сравниваем очищенное от версий название без знаков:
+        // «Roseliam-1.08» и «Roseliam v1.1» — это одна игра в двух папках.
+        const byKey = new Map();
+        for (const g of rows) {
+            const key = cleanTitle(g.title || g.id).toLowerCase().replace(/[^a-z0-9а-я]/gi, '');
+            if (key.length < 4) continue;   // от «TOD» и «123» пользы в сравнении нет
+            if (!byKey.has(key)) byKey.set(key, []);
+            byKey.get(key).push({ id: g.id, title: g.title, size: g.size || 0 });
+        }
+        const duplicates = [...byKey.values()].filter(group => group.length > 1);
+
+        const slim = (g) => ({ id: g.id, title: g.title, size: g.size || 0 });
+        const bySize = (a, b) => b.size - a.size;
+
+        const never = rows.filter(g => !g.lastPlayed && !g.playtime).map(slim).sort(bySize);
+        const heavy = rows.map(slim).sort(bySize).slice(0, 10);
+        const nometa = rows.filter(g => !g.tags || g.tags === '[]' || !g.link).map(slim).sort(bySize);
+
+        // Папки, игры к которым уже нет. Сейвы в таком случае — единственное, что
+        // осталось от прохождения, поэтому показываем отдельно и ничего не трогаем.
+        const ids = new Set(rows.map(g => g.id));
+        const orphanDirs = async (dir, kind) => {
+            try {
+                const entries = await fsp.readdir(dir, { withFileTypes: true });
+                return entries.filter(e => e.isDirectory() && !ids.has(e.name)).map(e => ({ id: e.name, kind }));
+            } catch (e) {
+                return [];
+            }
+        };
+        const orphans = [
+            ...await orphanDirs(SAVES_DIR, 'saves'),
+            ...await orphanDirs(path.join(GAMES_DIR, '_media'), 'media'),
+        ];
+
+        res.json({ total: rows.length, broken, duplicates, nometa, orphans, never, heavy });
+    } catch (e) {
+        console.error('[Audit] Ошибка:', e.message);
+        res.status(500).json({ error: 'Не удалось собрать ревизию' });
     }
 });
 

@@ -10,6 +10,7 @@ import { locales } from './components/locales'
 import StorageMonitor from './components/StorageMonitor';
 import ContinueCard from './components/ContinueCard';
 import StatsModal from './components/StatsModal';
+import AuditModal from './components/AuditModal';
 
 const socket = io();
 
@@ -20,6 +21,7 @@ function App() {
   // Скрытие обложек: помним выбор между заходами, как и язык
   const [blurCovers, setBlurCovers] = useState(() => localStorage.getItem('rpg_blur') === '1');
   const [statsOpen, setStatsOpen] = useState(false);
+  const [auditOpen, setAuditOpen] = useState(false);
   // Сколько игр ещё ждёт сбора метаданных — приходит с сервера по сокету
   const [scrapeLeft, setScrapeLeft] = useState(0);
   
@@ -214,6 +216,12 @@ function App() {
     setAuthMode('login');
   };
 
+  // Ревизия знает только id, а окну игры нужен сам объект и его номер в списке
+  const handleOpenGameById = (id) => {
+    const index = games.findIndex(g => g.id === id);
+    if (index >= 0) setSelectedGame({ game: games[index], index });
+  };
+
   // Клик по тегу в окне игры. Заодно сбрасываем поиск и статус: иначе после клика
   // библиотека может оказаться пустой по причине, которой не видно — например,
   // остался фильтр «пройдено» или строка поиска от прошлого раза.
@@ -323,6 +331,7 @@ function App() {
         <div className="tool-row">
           <button type="button" className="stats-btn" onClick={() => setStatsOpen(true)}>📊 {t.stats}</button>
           <button type="button" className="stats-btn" onClick={handleRescan}>🔄 {t.rescan}</button>
+          <button type="button" className="stats-btn" onClick={() => setAuditOpen(true)}>🩺 {t.audit}</button>
           <button type="button" className="stats-btn" onClick={handleLogout}>🚪 {t.logout}</button>
         </div>
       )}
@@ -392,6 +401,8 @@ function App() {
       )}
       
       {statsOpen && <StatsModal games={games} t={t} lang={lang} onClose={() => setStatsOpen(false)} />}
+
+      {auditOpen && <AuditModal t={t} onClose={() => setAuditOpen(false)} onOpenGame={handleOpenGameById} />}
 
       {selectedGame && (
         <GameModal 
