@@ -1,0 +1,58 @@
+import React, { useEffect, useRef, useState } from 'react';
+
+// Редкие действия — статистика, ревизия, дозагрузка, выход — раньше лежали
+// четырьмя кнопками над библиотекой и весили столько же, сколько поиск и фильтры.
+// Их место здесь: нажимают их раз в месяц, а место они занимали на каждом экране.
+const HeaderMenu = ({ items, label }) => {
+  const [open, setOpen] = useState(false);
+  const boxRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    // Закрываем по клику мимо и по Escape — иначе меню остаётся висеть
+    // поверх страницы, когда человек передумал
+    const onDown = (e) => { if (!boxRef.current?.contains(e.target)) setOpen(false); };
+    const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  return (
+    <div className="header-menu" ref={boxRef}>
+      <button
+        type="button"
+        className={`header-menu-btn ${open ? 'active' : ''}`}
+        onClick={() => setOpen(v => !v)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={label}
+        title={label}
+      >
+        <svg viewBox="0 0 24 24"><path d="M6 10c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm12 0c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm-6 0c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/></svg>
+      </button>
+
+      {open && (
+        <div className="header-menu-list" role="menu">
+          {items.map(item => (
+            <button
+              key={item.key}
+              type="button"
+              role="menuitem"
+              className="header-menu-item"
+              onClick={() => { setOpen(false); item.onClick(); }}
+            >
+              <span className="header-menu-icon">{item.icon}</span>
+              {item.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default HeaderMenu;

@@ -69,7 +69,8 @@ const GameCard = ({ game, index, onClick, onDelete, onRate, onToggleFavorite, t 
           {game.status && <span className={`status-badge ${game.status}`}>{t[`status_${game.status}`]}</span>}
           {played && <span className="card-playtime">⏱ {played}</span>}
         </div>
-        <h3 className="card-title">{game.title}</h3>
+        {/* Название обрезается на второй строке, а у этих игр смысл часто в хвосте */}
+        <h3 className="card-title" title={game.title}>{game.title}</h3>
         
         <div className="card-launch">
           {t.details} <span className="launch-arrow">→</span>

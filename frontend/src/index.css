@@ -5,12 +5,19 @@
   --gold: #c9a84c; 
   --gold-light: #f0d080; 
   --gold-dim: #7a6030;
+  /* gold-dim хорош для линий и рамок, но как цвет мелкого текста даёт 3.2:1 к фону
+     карточки — ниже порога 4.5:1 (WCAG AA). Для текста — этот, 5.6:1. */
+  --gold-muted: #aa8844;
   --bg-deep: #080608; 
   --bg-mid: #100e12; 
   --bg-card: #13111a;
   --text: #e8dfc8;
   /* Был #7a7060 — контраст с фоном карточки 3.9:1, мелкий текст читался с трудом. Стало 5.1:1 */
   --text-dim: #8f8470;
+  /* Ширина колонки контента. Раньше панель инструментов и блок «Продолжить» были
+     1100px, а сетка игр 1400px: на широком экране их левые края расходились на
+     150px, и страница шла ступеньками. Теперь величина одна на всех. */
+  --content-width: 1600px;
 }
 
 * { 
@@ -44,7 +51,10 @@ header {
   top: 0; 
   z-index: 100; 
   text-align: center; 
-  padding: 30px 20px 20px; 
+  /* До первой карточки на десктопе набегало 692px — экран ноутбука показывал один
+     ряд игр. Ужимаем всё, что стоит над библиотекой: шапку, виджет места,
+     панель и блок «Продолжить». */
+  padding: 22px 20px 16px; 
   background: linear-gradient(to bottom, rgba(8,6,8,0.95) 40%, rgba(8,6,8,0.7) 100%);
   backdrop-filter: blur(12px); 
   -webkit-backdrop-filter: blur(12px);
@@ -74,19 +84,85 @@ header {
   box-shadow: 0 0 12px rgba(201,168,76,0.6); 
 }
 
-.lang-switcher {
+/* Язык и меню редких действий стоят вместе и прижаты к колонке контента,
+   а не к краю окна: на 1920 контент заканчивается на 1740, и одинокий селект
+   у самого края висел от него в 160px особняком. Проценты считаются от шапки,
+   поэтому полоса прокрутки на расчёт не влияет. */
+.header-actions {
   position: absolute;
-  right: 20px;
-  top: 47px;
-  min-width: auto;
-  width: auto;          /* иначе селект растягивается на всю строку */
-  padding: 10px 15px;
-  font-size: 0.75rem;
+  right: max(20px, calc(50% - var(--content-width) / 2 + 20px));
+  top: 42px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
+
+/* В шапке органы управления легче, чем на панели: язык и меню трогают редко,
+   и крупные поля спорили по весу с заголовком */
+/* header впереди — чтобы перебить общие правила .sort-box (min-width 180px и
+   растяжение flex: 1), которые делали селект языка шире нужного */
+header .lang-switcher {
+  flex: 0 0 auto;
+  min-width: 0;
+  width: auto;          /* иначе селект растягивается на всю строку */
+  height: 40px;
+  padding: 0 30px 0 14px;
+  font-size: 0.78rem;
+  background-position: right 6px center;
+}
+
+/* Занятое место — справка, а не действие: тонкая строка в углу шапки вместо
+   блока с рамкой по центру страницы */
+.header-aside {
+  position: absolute;
+  left: max(20px, calc(50% - var(--content-width) / 2 + 20px));
+  top: 52px;
+}
+.header-aside .storage-monitor {
+  margin: 0; padding: 0; gap: 14px;
+  background: none; border: none;
+}
+/* Без рамки «ИГРЫ 2.73 GB СВОБОДНО 45.04 GB» читалось одной строкой —
+   точка разводит её на две пары «что — сколько» */
+.header-aside .storage-monitor span + span::before {
+  content: '·'; margin-right: 14px; color: var(--gold-dim);
+}
+
+/* Меню редких действий */
+.header-menu { position: relative; }
+.header-menu-btn {
+  width: 40px; height: 40px; display: flex; align-items: center; justify-content: center;
+  background: rgba(19, 17, 26, 0.6); border: 1px solid rgba(201,168,76,0.3);
+  border-radius: 6px; color: var(--gold-light); cursor: pointer; transition: all 0.25s;
+}
+.header-menu-btn svg { width: 20px; height: 20px; fill: currentColor; }
+.header-menu-btn.active { border-color: var(--gold); background: rgba(201,168,76,0.12); }
+@media (hover: hover) { .header-menu-btn:hover { border-color: var(--gold); } }
+.header-menu-btn:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
+
+.header-menu-list {
+  position: absolute; right: 0; top: calc(100% + 8px); z-index: 120;
+  min-width: 240px; padding: 6px; display: flex; flex-direction: column;
+  background: var(--bg-card); border: 1px solid rgba(201,168,76,0.3); border-radius: 8px;
+  box-shadow: 0 18px 40px rgba(0,0,0,0.75);
+}
+.header-menu-item {
+  display: flex; align-items: center; gap: 12px; width: 100%; padding: 11px 14px;
+  background: none; border: none; border-radius: 6px; cursor: pointer;
+  font-family: 'Cinzel', serif; font-size: 0.75rem; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--text-dim); text-align: left;
+  transition: background 0.2s, color 0.2s;
+}
+@media (hover: hover) {
+  .header-menu-item:hover { background: rgba(201,168,76,0.1); color: var(--gold-light); }
+}
+.header-menu-item:focus-visible { outline: 2px solid var(--gold); outline-offset: -2px; }
+.header-menu-icon { display: inline-flex; color: var(--gold-muted); transition: color 0.2s; }
+@media (hover: hover) { .header-menu-item:hover .header-menu-icon { color: var(--gold-light); } }
 
 h1 { 
   font-family: 'Cinzel', serif; 
-  font-size: clamp(1.8rem, 5vw, 3rem); 
+  font-size: clamp(1.8rem, 3.2vw, 2.4rem); 
   font-weight: 900; 
   letter-spacing: 0.15em; 
   text-transform: uppercase; 
@@ -108,7 +184,7 @@ h1 {
   gap: 24px;
   align-items: center;
   width: fit-content;
-  margin: 20px auto 0;
+  margin: 12px auto 0;
   padding: 8px 18px;
   background: rgba(19, 17, 26, 0.6);
   border: 1px solid rgba(201, 168, 76, 0.2);
@@ -125,8 +201,8 @@ h1 {
 .controls-zone {
   position: relative;
   z-index: 1; 
-  max-width: 1100px; 
-  margin: 30px auto 40px; 
+  max-width: var(--content-width); 
+  margin: 20px auto 26px; 
   padding: 0 20px; 
   display: flex; 
   gap: 15px; 
@@ -171,7 +247,10 @@ h1 {
 .sort-box { 
   flex: 1; 
   min-width: 180px; 
-  padding: 16px 20px; 
+  /* Справа место под стрелку: она нарисована фоном, и при узком списке
+     (на телефоне их теперь два в ряд) длинное название налезало на неё */
+  padding: 16px 38px 16px 20px; 
+  text-overflow: ellipsis; 
   background: rgba(19, 17, 26, 0.6); 
   border: 1px solid rgba(201,168,76,0.3); 
   border-radius: 6px; 
@@ -196,11 +275,18 @@ h1 {
 .sort-box option { background: var(--bg-deep); color: var(--text); }
 
 .upload-btn { 
-  flex: 1 1 100%;          /* всегда занимает отдельную строку целиком */
+  /* Раньше было flex: 1 1 100% — кнопка занимала отдельную строку целиком, и на
+     широком экране превращалась в пустую плашку во всю ширину. Отдельная строка
+     была нужна, чтобы панель не прыгала при переключении обложек, но за это теперь
+     отвечает min-width у самой кнопки-переключателя. */
+  flex: 0 1 auto;
+  min-width: 200px;
   white-space: nowrap;
-  padding: 16px; 
+  /* Второе по важности действие: игры добавляют редко, а играют каждый раз.
+     Заполненной на странице остаётся одна кнопка — «Играть» в блоке «Продолжить». */
+  padding: 16px 24px; 
   background: rgba(201,168,76,0.08); 
-  border: 1px dashed rgba(201,168,76,0.4); 
+  border: 1px solid var(--gold); 
   border-radius: 6px; 
   cursor: pointer; 
   display: flex; 
@@ -210,10 +296,12 @@ h1 {
   font-family: 'Cinzel', serif; 
   font-size: 0.8rem; 
   letter-spacing: 0.1em; 
-  color: var(--gold-dim); 
+  color: var(--gold-light); 
+  font-weight: 700;
   text-transform: uppercase; 
   transition: all 0.3s ease; 
 }
+.upload-btn svg { fill: currentColor; }
 
 /* Переключатель «скрыть обложки» — в одном стиле с панелью, но узкий */
 .cover-toggle {
@@ -225,17 +313,21 @@ h1 {
   background: rgba(19, 17, 26, 0.6);
   border: 1px solid rgba(201, 168, 76, 0.3);
   border-radius: 6px;
-  color: var(--gold-dim);
+  color: var(--gold-muted);
   font-family: 'Cinzel', serif;
   font-size: 0.8rem;
   letter-spacing: 0.1em;
   text-transform: uppercase;
   cursor: pointer;
   transition: all 0.3s ease;
-  min-width: 230px;        /* одинаковая ширина при «Скрыть» и «Показать» — вёрстка не прыгает */
+  /* Только иконка: подпись занимала 230px, менялась при каждом нажатии и заставляла
+     держать фиксированную ширину, чтобы панель не прыгала. Смысл понятен и без неё. */
+  min-width: 52px;
+  padding: 16px;
   justify-content: center;
   white-space: nowrap;
 }
+
 
 .cover-toggle.active { background: rgba(201, 168, 76, 0.12); border-color: var(--gold); color: var(--gold-light); }
 .cover-toggle:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
@@ -268,31 +360,12 @@ h1 {
   .cover-toggle:hover { border-color: var(--gold); color: var(--gold); box-shadow: 0 0 15px rgba(201, 168, 76, 0.15); }
   .chip:hover { border-color: var(--gold); color: var(--gold); }
 }
-.upload-btn:hover { 
-  background: rgba(201,168,76,0.15); 
-  border-color: rgba(201,168,76,0.7); 
-  color: var(--gold); 
-  box-shadow: 0 0 15px rgba(201,168,76,0.1); 
-}
-
-.upload-btn.drag-over { 
-  background: rgba(201,168,76,0.2); 
-  border-color: var(--gold); 
-  color: var(--gold-light); 
+@media (hover: hover) {
+  .upload-btn:hover { background: var(--gold); color: var(--bg-deep); box-shadow: 0 0 15px rgba(201,168,76,0.25); }
 }
 
 .upload-btn svg { width: 18px; height: 18px; fill: currentColor; flex-shrink: 0; }
 #file-input { display: none; }
-
-.progress-wrap { 
-  display: none; 
-  width: 100%; 
-  margin-top: 15px; 
-  background: rgba(0,0,0,0.6); 
-  border: 1px solid rgba(201,168,76,0.3); 
-  border-radius: 6px; 
-  overflow: hidden; 
-}
 
 .progress-bar { 
   height: 6px; 
@@ -308,14 +381,60 @@ h1 {
   100% { background-position: -200% center; } 
 }
 
-.progress-text { 
-  padding: 12px; 
-  font-family: 'Cinzel', serif; 
-  font-size: 0.75rem; 
-  letter-spacing: 0.1em; 
-  color: var(--gold-light); 
-  text-align: center; 
+/* Оверлей перетаскивания: архив можно бросить в любое место страницы.
+   pointer-events: none — оверлей только показывает, события достаются странице
+   как и раньше, иначе счётчик входов-выходов сбивался бы на его собственных детях. */
+.drop-overlay {
+  position: fixed; inset: 0; z-index: 2500; pointer-events: none;
+  display: flex; align-items: center; justify-content: center; padding: 24px;
+  background: rgba(8, 6, 8, 0.82);
+  -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+  animation: drop-in 0.15s ease-out;
 }
+@keyframes drop-in { from { opacity: 0; } to { opacity: 1; } }
+.drop-overlay-frame {
+  width: min(560px, 100%); padding: 56px 32px; text-align: center;
+  border: 2px dashed var(--gold); border-radius: 14px;
+  background: rgba(201, 168, 76, 0.06);
+  box-shadow: 0 0 60px rgba(201, 168, 76, 0.15) inset;
+}
+.drop-overlay-icon {
+  width: 72px; height: 72px; fill: var(--gold-light); margin-bottom: 18px;
+  animation: drop-bob 1.2s ease-in-out infinite;
+}
+/* Стрелка покачивается вверх-вниз: сразу видно, что страница ждёт файл */
+@keyframes drop-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
+.drop-overlay-title {
+  font-family: 'Cinzel', serif; font-size: 1.4rem; font-weight: 700;
+  letter-spacing: 0.08em; text-transform: uppercase; color: var(--gold-light);
+}
+.drop-overlay-hint { margin-top: 10px; font-size: 0.95rem; color: var(--text-dim); }
+
+/* Карточка загрузки. Висит в углу экрана, а не в панели: архив бросают с любого
+   места страницы, и ход загрузки должен быть виден там же. Снизу по центру
+   уже живёт тост, поэтому карточка справа. */
+.upload-card {
+  position: fixed; right: 24px; bottom: 24px; z-index: 2400;
+  width: min(380px, calc(100vw - 32px)); padding: 16px 18px 14px;
+  background: var(--bg-card); border: 1px solid rgba(201, 168, 76, 0.35); border-radius: 10px;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.75);
+  animation: card-in 0.25s ease-out;
+}
+@keyframes card-in { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: none; } }
+.upload-card-head { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+.upload-card-icon { width: 30px; height: 30px; flex-shrink: 0; fill: var(--gold); }
+.upload-card-text { flex: 1; min-width: 0; }
+.upload-card-name {
+  font-size: 0.95rem; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.upload-card-status {
+  margin-top: 2px; font-family: 'Cinzel', serif; font-size: 0.68rem;
+  letter-spacing: 0.08em; color: var(--gold-muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.upload-card-pct { font-family: 'Cinzel', serif; font-size: 1rem; font-weight: 700; color: var(--gold-light); }
+.upload-card-track { height: 6px; border-radius: 3px; overflow: hidden; background: rgba(0, 0, 0, 0.5); }
 
 /* ========================================================= */
 /* 3. КОМПОНЕНТЫ УВЕДОМЛЕНИЙ И СОСТОЯНИЙ                     */
@@ -336,7 +455,7 @@ h1 {
   position: relative; z-index: 1; text-align: center; padding: 80px 20px; 
   font-family: 'Cinzel', serif; color: var(--text-dim); letter-spacing: 0.2em; font-size: 0.85rem; 
 }
-.loading-dots span { display: inline-block; animation: blink 1.4s infinite both; font-size: 1.2rem; color: var(--gold-dim); }
+.loading-dots span { display: inline-block; animation: blink 1.4s infinite both; font-size: 1.2rem; color: var(--gold-muted); }
 .loading-dots span:nth-child(2) { animation-delay: 0.2s; }
 .loading-dots span:nth-child(3) { animation-delay: 0.4s; }
 @keyframes blink { 0%,80%,100%{opacity:0} 40%{opacity:1} }
@@ -351,8 +470,12 @@ h1 {
 /* ========================================================= */
 .library { 
   position: relative; z-index: 1; display: grid; 
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); 
-  gap: 28px; max-width: 1400px; margin: 0 auto; padding: 0 20px 80px; 
+  /* Было minmax(240px, 1fr): при потолке в 1400px это давало пять колонок по 250px,
+     и чем шире экран, тем мельче обложка — на 1024 карточка была 309px, а на 1920
+     уже 250. Теперь у колонки есть и нижняя, и верхняя граница, а остаток ширины
+     уходит в поля по краям, а не в растягивание. */
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); 
+  gap: 28px; max-width: var(--content-width); margin: 0 auto; padding: 0 20px 80px; 
 }
 
 /* Пустые «тома» вместо надписи «Загрузка…»: вёрстка не прыгает, когда приедут карточки */
@@ -439,7 +562,7 @@ h1 {
   justify-content: center; background: linear-gradient(135deg, #0f0d15 0%, #1a1525 50%, #0f0d15 100%); gap: 8px; 
 }
 .cover-placeholder .rune { font-family: 'Cinzel', serif; font-size: 2.5rem; color: var(--gold-dim); opacity: 0.5; transition: all 0.4s; }
-.cover-placeholder .folder-name { font-family: 'Cinzel', serif; font-size: 0.9rem; font-weight: 700; color: var(--gold-dim); letter-spacing: 0.1em; text-transform: uppercase; transition: color 0.4s; text-align: center; padding: 0 12px; }
+.cover-placeholder .folder-name { font-family: 'Cinzel', serif; font-size: 0.9rem; font-weight: 700; color: var(--gold-muted); letter-spacing: 0.1em; text-transform: uppercase; transition: color 0.4s; text-align: center; padding: 0 12px; }
 .game-card:hover .cover-placeholder .rune { opacity: 1; color: var(--gold); transform: scale(1.1);}
 .game-card:hover .cover-placeholder .folder-name { color: var(--gold-light); }
 .card-cover-overlay { position: absolute; inset: 0; background: linear-gradient(to top, rgba(19,17,26,1) 0%, transparent 60%); z-index: 1; pointer-events: none;}
@@ -477,13 +600,13 @@ h1 {
 .status-badge.dropped { color: #b06a6a; }
 .status-badge.wish    { color: #8f9ec7; }
 
-.card-playtime { font-size: 0.6rem; letter-spacing: 0.05em; color: var(--gold-dim); white-space: nowrap; }
+.card-playtime { font-size: 0.6rem; letter-spacing: 0.05em; color: var(--gold-muted); white-space: nowrap; }
 .modal-progress { margin: 0 0 18px; font-size: 0.9rem; color: var(--text); }
 .modal-progress b { color: var(--gold-light); font-weight: 700; }
 
 .card-info { padding: 10px 20px 24px; position: relative; z-index: 1; }
 .card-number { 
-  font-family: 'Cinzel', serif; font-size: 0.65rem; color: var(--gold-dim); 
+  font-family: 'Cinzel', serif; font-size: 0.65rem; color: var(--gold-muted); 
   letter-spacing: 0.2em; text-transform: uppercase; margin-bottom: 8px; 
   display: flex; align-items: center; justify-content: space-between; gap: 6px;
 }
@@ -539,9 +662,7 @@ footer {
 /* --- КНОПКИ УПРАВЛЕНИЯ ВЕРХНЕГО УГЛА --- */
 .modal-actions-top { position: absolute; top: 15px; right: 15px; display: flex; align-items: center; gap: 15px; z-index: 10; }
 /* 44×44 — минимальная цель для пальца; на вид ничего не меняется, попадать проще */
-.modal-edit-toggle, .modal-close { min-width: 44px; min-height: 44px; display: flex; align-items: center; justify-content: center; }
-.modal-edit-toggle { font-size: 1.6rem; cursor: pointer; opacity: 0.4; transition: all 0.3s ease; filter: grayscale(1); line-height: 1; }
-.modal-edit-toggle:hover, .modal-edit-toggle.active { opacity: 1; filter: grayscale(0); transform: rotate(45deg); text-shadow: 0 0 10px var(--gold); }
+.modal-close { min-width: 44px; min-height: 44px; display: flex; align-items: center; justify-content: center; }
 .modal-close { font-size: 2.2rem; line-height: 0.8; cursor: pointer; color: var(--text-dim); transition: color 0.3s; }
 .modal-close:hover { color: var(--gold-light); }
 
@@ -557,7 +678,10 @@ footer {
   top: 0;
   align-self: flex-start;
   flex-shrink: 0;
-  width: 450px;  /* Фиксируем красивую ширину левой колонки */
+  /* Было жёстко 450px. При ширине окна 820 обложка забирала их себе, и на текст
+     оставалось 182px: дата ломалась по словам, «Выпуск» уезжал за край, статусы
+     вставали столбиком. Теперь колонка — доля от окна с потолком в те же 450px. */
+  width: clamp(240px, 32%, 450px);
   height: auto;  /* КРИТИЧЕСКИ ВАЖНО: высота теперь подстроится автоматически! */
   border-radius: 8px;
   overflow: hidden;
@@ -639,6 +763,8 @@ footer {
   align-items: flex-start;
   gap: 20px;
   margin-bottom: 25px;
+  /* Справа место под крестик: он висит поверх, и длинное название уходило под него */
+  padding-right: 48px;
 }
 
 #modal-title {
@@ -718,8 +844,10 @@ footer {
   width: 100%;
   margin-bottom: 20px; 
 }
+.grimoire-action-btn svg { flex-shrink: 0; color: var(--gold-muted); }
 .grimoire-action-btn {
   flex: 1;
+  white-space: nowrap;
   padding: 10px;
   background: rgba(20, 18, 26, 0.8) !important;
   color: var(--text) !important;
@@ -806,28 +934,47 @@ footer {
 /* ========================================================= */
 /* 6. МОБИЛЬНАЯ АДАПТАЦИЯ                                    */
 /* ========================================================= */
+/* Полторы колонки помещаются примерно до 1000px: обложка (минимум 240) плюс
+   отступы и зазор съедают 320px, и текстовой колонке остаётся меньше 400 —
+   заголовок с датами уже не встают в строку. Ниже этой границы кладём обложку
+   сверху, а тексту отдаём всю ширину окна. */
+@media (max-width: 1000px) {
+  .modal-header { flex-direction: column; flex-wrap: nowrap; }
+  .modal-cover-wrapper {
+    width: 100%; max-width: none; max-height: 300px; align-self: center;
+    position: relative; background: var(--bg-card); display: flex;
+    align-items: center; justify-content: center;
+  }
+  #modal-cover { width: 100%; height: 100%; object-fit: contain; }
+  .modal-info { width: 100%; min-width: 0; }
+}
+
 @media (max-width: 700px) {
   html, body { max-width: 100vw; overflow-x: hidden; }
   /* Абсолютный переключатель языка наезжал на заголовок — на узком экране ставим его в поток */
   header { padding: 18px 16px 14px; }
   /* header перед классом — чтобы правило было сильнее общего .sort-box { min-width: 100% } ниже */
-  header .lang-switcher { position: static; display: block; margin: 12px auto 0; width: auto; min-width: auto; }
+  header .lang-switcher { display: block; width: auto; min-width: 0; flex: 0 0 auto; }
+  .header-actions { position: static; justify-content: center; margin-top: 12px; }
+  .header-aside { position: static; margin-top: 10px; }
+  .header-aside .storage-monitor { justify-content: center; }
+  .upload-card { right: 16px; left: 16px; top: 12px; bottom: auto; width: auto; }
+  .drop-overlay-frame { padding: 40px 20px; }
+  .drop-overlay-title { font-size: 1.1rem; }
   h1 { font-size: clamp(1.4rem, 8vw, 2rem); }
   .storage-monitor { gap: 14px; margin-top: 14px; font-size: 0.7rem; padding: 8px 12px; }
-  .search-box, .sort-box, .upload-btn, .cover-toggle { min-width: 100%; }
+  .search-box { min-width: 100%; }
+  /* Глаз стал иконкой и больше не требует своей строки: делит ряд с кнопкой добавления */
+  .cover-toggle { min-width: 52px; flex: 0 0 52px; }
+  .upload-btn { min-width: 0; flex: 1 1 auto; }
+  /* Два списка помещаются в одну строку и экономят ряд на самом узком экране */
+  .sort-box { min-width: calc(50% - 5px); flex: 1 1 calc(50% - 5px); }
   .controls-zone { gap: 10px; margin-bottom: 20px; }
   .modal-overlay { padding: 10px; align-items: center; justify-content: center; } 
   .modal-content { width: 100%; max-width: calc(100vw - 20px); max-height: 90vh; border-radius: 12px; margin: 0; }
-  .modal-header { padding: 15px; gap: 15px; display: flex; flex-direction: column; flex-wrap: nowrap; } 
-  
-  .modal-cover-wrapper { 
-    width: 100%; min-width: 0 !important; max-width: none; max-height: 300px; 
-    align-self: center; position: relative; background: var(--bg-card); display: flex; align-items: center; 
-    justify-content: center; box-shadow: none; border-color: rgba(201,168,76,0.1); 
-  }
-  #modal-cover { width: 100%; height: 100%; object-fit: contain; display: block; }
-  
-  .modal-info { width: 100%; min-width: 0 !important; }
+  /* Раскладку в колонку задаёт блок выше (1000px), здесь только телефонные мелочи */
+  .modal-header { padding: 15px; gap: 15px; } 
+  .modal-cover-wrapper { box-shadow: none; border-color: rgba(201,168,76,0.1); }
   
   /* На телефоне логотип останется рядом с заголовком, если влезет, или аккуратно сместится */
   .modal-title-block { flex-direction: row; align-items: flex-start; gap: 15px; margin-bottom: 15px; width: 100%; }
@@ -862,50 +1009,42 @@ footer {
   transform: scale(1.1);
 }
 
-.tool-row { display: flex; gap: 10px; justify-content: center; margin-top: 10px; flex-wrap: wrap; }
-.tool-row .stats-btn { margin: 0; }
 .scrape-progress {
   text-align: center; margin-top: 8px; font-family: 'Cinzel', serif;
-  font-size: 0.7rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--gold-dim);
+  font-size: 0.7rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--gold-muted);
 }
 
 /* Блок «Продолжить»: последняя запущенная игра над библиотекой */
-.continue-block { max-width: 1100px; margin: 0 auto 34px; padding: 0 20px; display: flex; gap: 24px; }
+.continue-block { max-width: var(--content-width); margin: 0 auto 26px; padding: 0 20px; display: flex; gap: 24px; }
 .continue-cover {
-  width: 260px; flex-shrink: 0; aspect-ratio: 16/10; overflow: hidden;
+  width: 210px; flex-shrink: 0; aspect-ratio: 16/10; overflow: hidden;
   border-radius: 6px; border: 1px solid rgba(201,168,76,0.25); background: #0f0d15;
 }
 .continue-cover img { width: 100%; height: 100%; object-fit: cover; filter: brightness(0.8); transition: filter 0.4s, transform 0.4s; }
 .continue-info { display: flex; flex-direction: column; justify-content: center; gap: 10px; min-width: 0; }
-.continue-label { font-family: 'Cinzel', serif; font-size: 0.7rem; letter-spacing: 0.2em; text-transform: uppercase; color: var(--gold-dim); }
+.continue-label { font-family: 'Cinzel', serif; font-size: 0.7rem; letter-spacing: 0.2em; text-transform: uppercase; color: var(--gold-muted); }
 .continue-title { font-family: 'Cinzel', serif; font-size: 1.6rem; color: var(--gold-light); margin: 0; }
 .continue-meta { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; font-size: 0.75rem; color: var(--text-dim); }
 .continue-btn {
   align-self: flex-start; margin-top: 6px; padding: 12px 28px;
-  background: rgba(201,168,76,0.1); border: 1px solid var(--gold); border-radius: 6px;
-  color: var(--gold-light); font-family: 'Cinzel', serif; font-size: 0.9rem;
+  /* Главное действие страницы — ради него блок «Продолжить» и существует */
+  background: var(--gold); border: 1px solid var(--gold); border-radius: 6px;
+  color: var(--bg-deep); font-weight: 700; font-family: 'Cinzel', serif; font-size: 0.9rem;
   letter-spacing: 0.1em; text-transform: uppercase; cursor: pointer; transition: all 0.3s;
 }
-@media (hover: hover) { .continue-btn:hover { background: var(--gold); color: var(--bg-deep); box-shadow: 0 0 20px rgba(201,168,76,0.4); } }
+@media (hover: hover) { .continue-btn:hover { background: var(--gold-light); border-color: var(--gold-light); box-shadow: 0 0 20px rgba(201,168,76,0.4); } }
 .continue-btn:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
 @media (max-width: 700px) {
-  .continue-block { flex-direction: column; gap: 14px; }
-  .continue-cover { width: 100%; }
+  /* Раньше блок раскладывался в колонку, и обложка во всю ширину съедала 219px —
+     до первой игры приходилось листать полтора экрана. В строку он занимает 100px. */
+  .continue-block { gap: 14px; align-items: center; }
+  .continue-cover { width: 40%; max-width: 160px; }
   .continue-title { font-size: 1.2rem; }
 }
 
 /* ========================================================= */
 /* 8. СТАТИСТИКА                                             */
 /* ========================================================= */
-.stats-btn {
-  display: block; margin: 10px auto 0; padding: 8px 18px;
-  background: transparent; border: 1px solid rgba(201,168,76,0.25); border-radius: 20px;
-  color: var(--text-dim); font-family: 'Cinzel', serif; font-size: 0.7rem;
-  letter-spacing: 0.1em; text-transform: uppercase; cursor: pointer; transition: all 0.25s;
-}
-@media (hover: hover) { .stats-btn:hover { border-color: var(--gold); color: var(--gold); } }
-.stats-btn:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
-
 .stats-content {
   position: relative; background: var(--bg-card); border: 1px solid rgba(201,168,76,0.3);
   border-radius: 8px; width: min(760px, 92vw); max-height: 88vh; overflow-y: auto;
@@ -925,7 +1064,7 @@ footer {
 
 .stats-section {
   font-family: 'Cinzel', serif; font-size: 0.8rem; letter-spacing: 0.15em; text-transform: uppercase;
-  color: var(--gold-dim); margin: 26px 0 12px; border-bottom: 1px solid rgba(201,168,76,0.15); padding-bottom: 6px;
+  color: var(--gold-muted); margin: 26px 0 12px; border-bottom: 1px solid rgba(201,168,76,0.15); padding-bottom: 6px;
 }
 .stat-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; font-size: 0.8rem; }
 .stat-bar-label { flex: 0 0 38%; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -942,7 +1081,7 @@ footer {
 
 /* Ревизия библиотеки: списки находок в окне статистики */
 .audit-hint { font-size: 0.8rem; color: var(--text-dim); margin: 0 0 12px; line-height: 1.5; }
-.audit-clean { text-align: center; color: var(--gold-dim); font-family: 'Cinzel', serif; padding: 30px 0; }
+.audit-clean { text-align: center; color: var(--gold-muted); font-family: 'Cinzel', serif; padding: 30px 0; }
 .audit-count {
   font-family: 'Crimson Text', serif; font-size: 0.8rem; color: var(--text-dim);
   border: 1px solid rgba(201,168,76,0.25); border-radius: 10px; padding: 1px 8px; margin-left: 8px;
@@ -1030,7 +1169,7 @@ footer {
 .lightbox-counter {
   position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
   font-family: 'Cinzel', serif; font-size: 0.75rem; letter-spacing: 0.1em;
-  color: var(--gold-dim);
+  color: var(--gold-muted);
 }
 /* На телефоне стрелки мельче и ближе к краю, иначе перекрывают саму картинку */
 @media (max-width: 600px) {

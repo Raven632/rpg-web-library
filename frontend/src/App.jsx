@@ -10,6 +10,7 @@ import { locales } from './components/locales'
 import StorageMonitor from './components/StorageMonitor';
 import ContinueCard from './components/ContinueCard';
 import StatsModal from './components/StatsModal';
+import { IconStats, IconRefresh, IconAudit, IconLogout } from './components/icons';
 import AuditModal from './components/AuditModal';
 
 const socket = io();
@@ -324,17 +325,19 @@ function App() {
 
   return (
     <div className={`app-container${blurCovers ? ' covers-hidden' : ''}`}>
-      <Header currentLang={lang} onLangChange={setLang} t={t} />
-
-      {isAuthed && <StorageMonitor t={t} />}
-      {isAuthed && (
-        <div className="tool-row">
-          <button type="button" className="stats-btn" onClick={() => setStatsOpen(true)}>📊 {t.stats}</button>
-          <button type="button" className="stats-btn" onClick={handleRescan}>🔄 {t.rescan}</button>
-          <button type="button" className="stats-btn" onClick={() => setAuditOpen(true)}>🩺 {t.audit}</button>
-          <button type="button" className="stats-btn" onClick={handleLogout}>🚪 {t.logout}</button>
-        </div>
-      )}
+      <Header
+        currentLang={lang}
+        onLangChange={setLang}
+        t={t}
+        menuItems={isAuthed ? [
+          { key: 'stats', icon: <IconStats />, label: t.stats, onClick: () => setStatsOpen(true) },
+          { key: 'rescan', icon: <IconRefresh />, label: t.rescan, onClick: handleRescan },
+          { key: 'audit', icon: <IconAudit />, label: t.audit, onClick: () => setAuditOpen(true) },
+          { key: 'logout', icon: <IconLogout />, label: t.logout, onClick: handleLogout },
+        ] : []}
+      >
+        {isAuthed && <StorageMonitor t={t} />}
+      </Header>
       {scrapeLeft > 0 && <div className="scrape-progress">{t.scrape_left(scrapeLeft)}</div>}
       
       <Toolbar 
@@ -347,6 +350,7 @@ function App() {
         t={t}
         showToast={showToast}
         statusFilter={statusFilter} setStatusFilter={setStatusFilter}
+        canUpload={isAuthed}
       />
       
       <main className="content">

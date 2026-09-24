@@ -7,6 +7,8 @@ import { formatPlaytime } from '../formatPlaytime';
 
 import { launchGame } from '../launchGame';
 
+import { IconEdit, IconDownload, IconUpload } from './icons';
+
 // Логотипы (пути относительно папки public)
 const STEAM_LOGO = 'steam_logo.png';
 const DLSITE_LOGO = 'dlsite_logo.png';
@@ -298,8 +300,10 @@ const GameModal = ({ game, index, onClose, onUpdateGame, onPatch, onTagClick, t,
     <div className={`modal-overlay ${isActive ? 'active' : ''}`} onClick={handleCloseModal}>
       <div className="modal-content" onClick={e => e.stopPropagation()}>
         
+        {/* В углу остаётся только крестик — его там ищут по привычке в любом окне.
+            Шестерёнка висела рядом и заезжала на длинное название: теперь это
+            обычная кнопка «Изменить» в ряду с остальными действиями над игрой */}
         <div className="modal-actions-top">
-          <div className={`modal-edit-toggle ${isEditing ? 'active' : ''}`} onClick={() => setIsEditing(!isEditing)} title={t.edit_meta}>⚙️</div>
           <div className="modal-close" onClick={handleCloseModal}>×</div>
         </div>
 
@@ -417,8 +421,9 @@ const GameModal = ({ game, index, onClose, onUpdateGame, onPatch, onTagClick, t,
                 </div>
 
                 <div className="grimoire-actions-row">
-                  <button onClick={handleBackup} className="grimoire-action-btn">{t.backup || 'Бэкап'}</button>
-                  <button onClick={() => importRef.current.click()} className="grimoire-action-btn">{isImporting ? t.import_wait : t.import}</button>
+                  <button onClick={() => setIsEditing(true)} className="grimoire-action-btn" title={t.edit_meta}><IconEdit />{t.edit_btn}</button>
+                  <button onClick={handleBackup} className="grimoire-action-btn"><IconDownload />{t.backup}</button>
+                  <button onClick={() => importRef.current.click()} className="grimoire-action-btn"><IconUpload />{isImporting ? t.import_wait : t.import}</button>
                   <input type="file" ref={importRef} accept=".zip" style={{ display: 'none' }} onChange={handleImportSelect} />
                 </div>
 
