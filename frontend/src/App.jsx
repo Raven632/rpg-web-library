@@ -10,8 +10,9 @@ import { locales } from './components/locales'
 import StorageMonitor from './components/StorageMonitor';
 import ContinueCard from './components/ContinueCard';
 import StatsModal from './components/StatsModal';
-import { IconStats, IconAudit, IconLogout } from './components/icons';
+import { IconStats, IconAudit, IconLogout, IconUpload } from './components/icons';
 import AuditModal from './components/AuditModal';
+import StatusChips from './components/StatusChips';
 
 const socket = io();
 
@@ -40,13 +41,28 @@ function App() {
   const [selectedTag, setSelectedTag] = useState(() => sessionStorage.getItem('rpg_tag') || 'all');
   const [currentSort, setCurrentSort] = useState(() => sessionStorage.getItem('rpg_sort') || 'newest');
   const [statusFilter, setStatusFilter] = useState(() => sessionStorage.getItem('rpg_status') || 'all');
+  // Язык по тексту самой игры: «всё, во что можно играть на русском» — одним выбором
+  const [langFilter, setLangFilter] = useState(() => sessionStorage.getItem('rpg_langf') || 'all');
 
   useEffect(() => {
     sessionStorage.setItem('rpg_search', searchQuery);
     sessionStorage.setItem('rpg_tag', selectedTag);
     sessionStorage.setItem('rpg_sort', currentSort);
     sessionStorage.setItem('rpg_status', statusFilter);
-  }, [searchQuery, selectedTag, currentSort, statusFilter]);
+    sessionStorage.setItem('rpg_langf', langFilter);
+  }, [searchQuery, selectedTag, currentSort, statusFilter, langFilter]);
+
+  const filtersActive = !!searchQuery || selectedTag !== 'all' || statusFilter !== 'all' || langFilter !== 'all';
+  const resetFilters = () => {
+    setSearchQuery('');
+    setSelectedTag('all');
+    setStatusFilter('all');
+    setLangFilter('all');
+  };
+
+  // Кнопку «Добавить игру» на телефоне убрали в меню, а сама загрузка живёт в панели:
+  // панель кладёт сюда функцию, которая открывает выбор файла
+  const openUploadRef = useRef(null);
 
   const [socketMessage, setSocketMessage] = useState('');
   const [selectedGame, setSelectedGame] = useState(null);
@@ -62,7 +78,7 @@ function App() {
   // Сбрасываем страницу на первую при любом изменении фильтров
   useEffect(() => {
     setPage(1);
-  }, [searchQuery, selectedTag, currentSort, statusFilter]);
+  }, [searchQuery, selectedTag, currentSort, statusFilter, langFilter]);
 
   const [toast, setToast] = useState({ message: '', type: 'success', visible: false });
   const toastTimerRef = useRef(null);
@@ -155,8 +171,9 @@ function App() {
     };
   }, []);
 
+  // Возвращает, удалилась ли игра: окно игры закрывается только после настоящего удаления
   const handleDeleteGame = async (game) => {
-    if (!window.confirm(t.burn_confirm(game.title))) return;
+    if (!window.confirm(t.burn_confirm(game.displayTitle || game.title))) return false;
 
     try {
       const res = await fetch(`/api/games/${encodeURIComponent(game.id)}`, { method: 'DELETE' });
@@ -165,12 +182,13 @@ function App() {
       if (data.success) {
         setGames(prevGames => prevGames.filter(g => g.id !== game.id));
         showToast(lang === 'ru' ? 'Том обратился в пепел' : 'Scroll turned to ashes', 'success');
-      } else {
-        showToast(`Ошибка: ${data.error}`, 'error');
+        return true;
       }
+      showToast(`Ошибка: ${data.error}`, 'error');
     } catch (err) {
       showToast(t.burn_err, 'error');
     }
+    return false;
   };
 
   const handleRateGame = async (id, ratingValue) => {
@@ -231,6 +249,7 @@ function App() {
     setSelectedGame(null);
     setSearchQuery('');
     setStatusFilter('all');
+    setLangFilter('all');
     setSelectedTag(tag);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -251,22 +270,37 @@ function App() {
       .map(tag => ({ name: tag, count: tagCounts[tag] }));
   }, [games, selectedTag]);
 
+  // Языки, которые есть в библиотеке, — для фильтра. Самые частые первыми
+  const availableLangs = useMemo(() => {
+    const counts = {};
+    games.forEach(g => (g.textLang?.langs || []).forEach(code => { counts[code] = (counts[code] || 0) + 1; }));
+    return Object.entries(counts)
+      .sort((a, b) => b[1] - a[1])
+      .map(([code, count]) => ({ code, count }));
+  }, [games]);
+
   // Последняя запущенная игра. Прячем блок, когда человек ищет или фильтрует:
   // он уже знает, что хочет найти, и большая карточка только мешает.
   const continueGame = useMemo(() => {
-    if (searchQuery || selectedTag !== 'all' || statusFilter !== 'all') return null;
+    if (filtersActive) return null;
     return [...games].filter(g => g.lastPlayed).sort((a, b) => b.lastPlayed - a.lastPlayed)[0] || null;
-  }, [games, searchQuery, selectedTag, statusFilter]);
+  }, [games, filtersActive]);
 
   const processedGames = useMemo(() => {
     let result = games;
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
       result = result.filter(game => {
-        const matchTitle = game.title?.toLowerCase().includes(query) || game.id.toLowerCase().includes(query);
+        // Ищем и по показанному названию, и по исходному: японское, версия и имя папки
+        // тоже находят игру
+        const matchTitle = [game.displayTitle, game.originalTitle, game.title, game.id]
+          .some(s => s?.toLowerCase().includes(query));
         const matchTags = game.tags?.some(tag => tag.toLowerCase().includes(query));
         return matchTitle || matchTags;
       });
+    }
+    if (langFilter !== 'all') {
+      result = result.filter(g => g.textLang?.langs?.includes(langFilter));
     }
     if (selectedTag !== 'all') {
       result = result.filter(g => g.tags && g.tags.includes(selectedTag));
@@ -286,7 +320,7 @@ function App() {
         case 'oldest':      return (a.addedAt || 0) - (b.addedAt || 0) || byId(a, b);
         case 'recent':      return (b.lastPlayed || 0) - (a.lastPlayed || 0) || byId(a, b);
         case 'rating_desc': return (b.rating || 0) - (a.rating || 0) || byId(a, b);
-        case 'name':        return (a.title || a.id).localeCompare(b.title || b.id);
+        case 'name':        return (a.displayTitle || a.title || a.id).localeCompare(b.displayTitle || b.title || b.id);
         case 'size_desc':   return (b.size || 0) - (a.size || 0) || byId(a, b);
         case 'size_asc':    return (a.size || 0) - (b.size || 0) || byId(a, b);
         case 'playtime':    return (b.playtime || 0) - (a.playtime || 0) || byId(a, b);
@@ -294,7 +328,7 @@ function App() {
       }
     });
     return result;
-  }, [games, searchQuery, selectedTag, currentSort, statusFilter]);
+  }, [games, searchQuery, selectedTag, currentSort, statusFilter, langFilter]);
 
   // Высчитываем, какие игры показывать на текущей странице
   const visibleGames = processedGames.slice(0, page * itemsPerPage);
@@ -320,6 +354,8 @@ function App() {
         onLangChange={setLang}
         t={t}
         menuItems={isAuthed ? [
+          // Только на телефоне: там кнопка на панели убрана, игры с телефона добавляют редко
+          { key: 'upload', icon: <IconUpload />, label: t.add_game, onClick: () => openUploadRef.current?.(), className: 'mobile-only' },
           { key: 'stats', icon: <IconStats />, label: t.stats, onClick: () => setStatsOpen(true) },
           { key: 'audit', icon: <IconAudit />, label: t.audit, onClick: () => setAuditOpen(true) },
           { key: 'logout', icon: <IconLogout />, label: t.logout, onClick: handleLogout },
@@ -333,23 +369,29 @@ function App() {
         blurCovers={blurCovers} setBlurCovers={setBlurCovers}
         searchQuery={searchQuery} setSearchQuery={setSearchQuery} 
         availableTags={availableTags} selectedTag={selectedTag} setSelectedTag={setSelectedTag}
+        availableLangs={availableLangs} langFilter={langFilter} setLangFilter={setLangFilter} lang={lang}
+        openUploadRef={openUploadRef}
         currentSort={currentSort} setCurrentSort={setCurrentSort}
         onUploadSuccess={() => { setSocketMessage(''); fetchGames(); }}
         socketMessage={socketMessage}
         t={t}
         showToast={showToast}
-        statusFilter={statusFilter} setStatusFilter={setStatusFilter}
         canUpload={isAuthed}
       />
       
       <main className="content">
-        {!loading && (
-          <ContinueCard
-            game={continueGame}
-            t={t}
-            onUpdateGame={(updated) => setGames(prev => prev.map(g => g.id === updated.id ? updated : g))}
-          />
-        )}
+        {/* Чипы статусов и «Продолжить» делят одну строку: раньше это были два ряда
+            высотой 160px, а справа от чипов пустовало полэкрана */}
+        <div className="library-bar">
+          <StatusChips value={statusFilter} onChange={setStatusFilter} t={t} />
+          {!loading && (
+            <ContinueCard
+              game={continueGame}
+              t={t}
+              onUpdateGame={(updated) => setGames(prev => prev.map(g => g.id === updated.id ? updated : g))}
+            />
+          )}
+        </div>
         {loading ? (
           // Пустые «тома» вместо надписи: сетка та же, поэтому карточки не сдвигают вёрстку
           <div className="library">
@@ -362,13 +404,20 @@ function App() {
                 <GameCard 
                   key={game.id} game={game} index={index}
                   onClick={() => setSelectedGame({ game, index })} 
-                  onDelete={handleDeleteGame} onRate={handleRateGame}
+                  onRate={handleRateGame}
                   onToggleFavorite={(id, value) => patchGame(id, { favorite: value })}
                   t={t} lang={lang}
                 />
               ))}
               {processedGames.length === 0 && (
-                <div className="empty-state">{t.not_found}</div>
+                <div className="empty-state">
+                  <p>{t.not_found}</p>
+                  {/* Без кнопки пустой экран был тупиком: какой из четырёх фильтров
+                      всё отсеял, приходилось вспоминать и сбрасывать по одному */}
+                  {filtersActive && (
+                    <button type="button" className="chip active empty-reset" onClick={resetFilters}>{t.reset_filters}</button>
+                  )}
+                </div>
               )}
             </div>
             
@@ -404,6 +453,7 @@ function App() {
           t={t} lang={lang}
           showToast={showToast}
           onPatch={patchGame}
+          onDelete={handleDeleteGame}
           onTagClick={handleTagClick}
         />
       )}

@@ -19,25 +19,31 @@ export function languageName(code, lang) {
 
 const capitalize = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 
-// full — для окна игры: «Русский · перевод с японского», «Китайский, английский, японский».
-// short — плашка на карточке: «RU ← JA», «ZH · EN · JA».
-// Ручная правка из «Изменить» главнее найденного: её показываем как есть
-export function describeLanguage(game, t, lang) {
-  if (game.language) return { full: game.language, short: game.language, translated: false };
+// С большой буквы — для списков и фильтра: «Русский», а не «русский»
+export const languageTitle = (code, lang) => capitalize(languageName(code, lang));
 
+// Плашка на карточке — один язык, словом. Английский, если он есть среди языков
+// игры, иначе основной. Стрелки вида «RU ← JA» читались с трудом, а все языки
+// и пометка о переводе есть в окне игры.
+// Ручная правка из «Изменить» главнее найденного: её показываем как есть
+export function languageBadge(game, lang) {
+  if (game.language) return game.language;
+  const info = game.textLang;
+  if (!info?.langs?.length) return null;
+  return capitalize(languageName(info.langs.includes('en') ? 'en' : info.main, lang));
+}
+
+// Окно игры — все языки, главный первым: «Китайский, английский, японский».
+// У перевода — с какого: «Русский · перевод с японского». Если язык оригинала
+// тоже есть в игре (японский и английский на выбор), это не перевод, а многоязычное издание
+export function languageLine(game, t, lang) {
+  if (game.language) return game.language;
   const info = game.textLang;
   if (!info?.langs?.length) return null;
 
-  // Перевод — когда языка оригинала среди языков игры нет вовсе. Если есть
-  // (японский и английский на выбор), это многоязычное издание, а не перевод
-  const translated = !!info.original && !info.langs.includes(info.original);
-  const list = info.langs.map((code) => languageName(code, lang));
-  let full = capitalize(list.join(', '));
-  if (translated) full += ` · ${t.lang_translated_from(languageName(info.original, lang))}`;
-
-  const codes = info.langs.map((code) => code.toUpperCase());
-  let short = codes.slice(0, 3).join(' · ') + (codes.length > 3 ? ` +${codes.length - 3}` : '');
-  if (translated) short += ` ← ${info.original.toUpperCase()}`;
-
-  return { full, short, translated };
+  let line = capitalize(info.langs.map((code) => languageName(code, lang)).join(', '));
+  if (info.original && !info.langs.includes(info.original)) {
+    line += ` · ${t.lang_translated_from(languageName(info.original, lang))}`;
+  }
+  return line;
 }

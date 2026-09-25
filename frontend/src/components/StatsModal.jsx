@@ -91,7 +91,7 @@ const StatsModal = ({ games, t, lang, onClose }) => {
           <>
             <h3 className="stats-section">{t.stats_top_played}</h3>
             {s.topPlayed.map(g => (
-              <Bar key={g.id} label={g.title} value={g.playtime} max={maxPlayed} text={formatPlaytime(g.playtime, t)} />
+              <Bar key={g.id} label={g.displayTitle || g.title} value={g.playtime} max={maxPlayed} text={formatPlaytime(g.playtime, t)} />
             ))}
           </>
         )}

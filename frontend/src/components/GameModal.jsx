@@ -7,18 +7,65 @@ import { formatPlaytime } from '../formatPlaytime';
 
 import { launchGame } from '../launchGame';
 
-import { IconEdit, IconDownload, IconUpload } from './icons';
+import { IconEdit, IconDownload, IconUpload, IconTrash, IconSearch } from './icons';
 
 import { describeMeta } from '../formatRetry';
-import { describeLanguage } from '../formatLanguage';
+import { languageLine } from '../formatLanguage';
 
 // Логотипы (пути относительно папки public)
 const STEAM_LOGO = 'steam_logo.png';
 const DLSITE_LOGO = 'dlsite_logo.png';
 
 const ROMAN_NUMERALS = ['Ⅰ','Ⅱ','Ⅲ','Ⅳ','Ⅴ','Ⅵ','Ⅶ','Ⅷ','Ⅸ','Ⅹ','Ⅺ','Ⅻ'];
-const GameModal = ({ game, index, onClose, onUpdateGame, onPatch, onTagClick, t, lang, showToast }) => {
+// Ссылки источников: в базе — одна строка через запятую, в форме — список
+const splitLinks = (s) => String(s || '').split(/[\s,]+/).map(x => x.trim()).filter(Boolean);
+
+// Что человек вставил в поле «добавить»: ссылку, несколько ссылок или RJ-код.
+// RJ-код превращаем в ссылку на DLsite — в том же виде, в каком её пишет автопоиск.
+// Непонятный кусок — null: лучше переспросить, чем молча сохранить мусор
+function parseLinkInput(text) {
+  const out = [];
+  for (const part of String(text).split(/[\s,]+/).filter(Boolean)) {
+    if (/^https?:\/\/\S+$/i.test(part)) out.push(part);
+    else if (/^RJ\d{6,8}$/i.test(part)) out.push(`https://www.dlsite.com/home/work/=/product_id/${part.toUpperCase()}.html`);
+    else return null;
+  }
+  return out.length ? out : null;
+}
+
+// Логотип сайта для ссылки
+function linkIcon(url) {
+  if (url.includes('dlsite.com')) return '/dlsite-logo.png';
+  if (url.includes('vndb.org')) return '/vndb-logo.png';
+  if (url.includes('steampowered.com')) return '/steam-logo.png';
+  if (url.includes('f95zone.to')) return '/f95-logo.png';
+  return '';
+}
+
+// Подпись ссылки в форме: сайт и что именно — тема, код работы, номер в магазине
+function describeLink(url) {
+  let host;
+  try { host = new URL(url).hostname.replace(/^www\./, ''); } catch { return { host: url, label: '' }; }
+  const f95 = url.match(/f95zone\.to\/threads\/([^/?#]+)/i);
+  if (f95) return { host, label: f95[1].replace(/\.\d+$/, '').replace(/-/g, ' ') };
+  const rj = url.match(/RJ\d{6,8}/i);
+  if (rj) return { host, label: rj[0].toUpperCase() };
+  const app = url.match(/app\/(\d+)/);
+  if (app) return { host, label: `app ${app[1]}` };
+  const vn = url.match(/vndb\.org\/(v\d+)/i);
+  if (vn) return { host, label: vn[1] };
+  return { host, label: '' };
+}
+
+// Сколько тегов видно сразу. Раньше показывались все — по 27 крупных плашек, и
+// блок прокручивался внутри окна, которое само прокручивается
+const TAGS_SHOWN = 12;
+
+const GameModal = ({ game, index, onClose, onUpdateGame, onPatch, onDelete, onTagClick, t, lang, showToast }) => {
   const [isActive, setIsActive] = useState(false);
+  const [showAllTags, setShowAllTags] = useState(false);
+  // Звезда под курсором: подсвечиваем, какой будет оценка, ещё до клика
+  const [hoverStar, setHoverStar] = useState(0);
   // Номер раскрытой картинки или null. Раньше кадр открывался новой вкладкой —
   // игру при этом приходилось терять из виду и возвращаться назад руками.
   const [lightbox, setLightbox] = useState(null);
@@ -84,13 +131,6 @@ const GameModal = ({ game, index, onClose, onUpdateGame, onPatch, onTagClick, t,
     else alert(msg);
   };
 
-  const handleRjChange = (e) => {
-    const val = e.target.value;
-    // Ищем паттерн RJ-кода в любом вставленном тексте или ссылке
-    const match = val.match(/RJ\d{6,8}/i);
-    setEditRj(match ? match[0].toUpperCase() : val); // Используем твой setEditRj
-  };
-
   const [isEditing, setIsEditing] = useState(false);
   // «Искать сейчас» нажата: запоминаем время последней проверки на момент нажатия.
   // Пока оно не сменилось, воркер ещё не записал новый итог — поиск идёт.
@@ -109,7 +149,6 @@ const GameModal = ({ game, index, onClose, onUpdateGame, onPatch, onTagClick, t,
     }
   };
   const [editTitle, setEditTitle] = useState(game.title || '');
-  const [editRj, setEditRj] = useState('');
   // Кандидаты с F95 для ручного выбора: автомат ошибается на непохожих названиях,
   // а человек узнаёт свою игру с первого взгляда
   const [f95List, setF95List] = useState([]);
@@ -117,22 +156,44 @@ const GameModal = ({ game, index, onClose, onUpdateGame, onPatch, onTagClick, t,
   const [editDeveloper, setEditDeveloper] = useState(game.developer || '');
   const [editLanguage, setEditLanguage] = useState(game.language || '');
   const [editReleaseDate, setEditReleaseDate] = useState(game.releaseDate || '');
-  const [editLink, setEditLink] = useState(game.link || '');
+  // Источники списком. Раньше были два поля: строка всех ссылок через запятую и
+  // отдельное «RJ-код или ссылка» — какое за что отвечает, было не понять
+  const [editLinks, setEditLinks] = useState(() => splitLinks(game.link));
+  const [linkDraft, setLinkDraft] = useState('');
+  const [linkError, setLinkError] = useState('');
   
   const [isSaving, setIsSaving] = useState(false);
   const [isUploadingCover, setIsUploadingCover] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
 
-  useEffect(() => {
-    if (isEditing) {
-      setEditTitle(game.title || '');
-      setEditDeveloper(game.developer || '');
-      setEditLanguage(game.language || '');
-      setEditReleaseDate(game.releaseDate || '');
-      setEditLink(game.link || '');
-    }
-  }, [isEditing, game]);
+  // Поля заполняем в момент нажатия «Изменить», а не эффектом: эффект переписывал
+  // бы их при каждом обновлении игры с сервера — прямо поверх того, что человек печатает
+  const startEditing = () => {
+    setEditTitle(game.title || '');
+    setEditDeveloper(game.developer || '');
+    setEditLanguage(game.language || '');
+    setEditReleaseDate(game.releaseDate || '');
+    setEditLinks(splitLinks(game.link));
+    setLinkDraft('');
+    setLinkError('');
+    setF95List([]);
+    setIsEditing(true);
+  };
+
+  const addLinks = (urls) => {
+    const fresh = urls.filter(u => !editLinks.includes(u));
+    if (!fresh.length) { setLinkError(t.edit_link_dup); return false; }
+    setEditLinks(prev => [...prev, ...fresh]);
+    setLinkError('');
+    return true;
+  };
+
+  const addDraft = () => {
+    const parsed = parseLinkInput(linkDraft);
+    if (!parsed) { setLinkError(t.edit_link_bad); return; }
+    if (addLinks(parsed)) setLinkDraft('');
+  };
 
   const handleBackup = () => {
     // Бэкенд ждет путь /export/:id (с учетом префикса роутера это /api/saves/export/)
@@ -199,9 +260,8 @@ const GameModal = ({ game, index, onClose, onUpdateGame, onPatch, onTagClick, t,
     }
   };
 
-  const handleCoverDelete = async (e) => {
-    e.stopPropagation(); 
-    if (!window.confirm('Вернуть изначальную обложку?')) return;
+  const handleCoverDelete = async () => {
+    if (!window.confirm(`${t.cover_reset}?`)) return;
 
     setIsUploadingCover(true);
     try {
@@ -221,6 +281,12 @@ const GameModal = ({ game, index, onClose, onUpdateGame, onPatch, onTagClick, t,
   };
 
   const handleSave = async () => {
+    // Ссылку вписали, а «Добавить» не нажали — частая история. Забираем её сами
+    const pending = linkDraft.trim() ? parseLinkInput(linkDraft) : [];
+    if (pending === null) { setLinkError(t.edit_link_bad); return; }
+    const links = [...editLinks, ...pending.filter(u => !editLinks.includes(u))];
+    const linkStr = links.join(',');
+
     setIsSaving(true);
     try {
       const res = await fetch(`/api/games/${game.id}/edit`, {
@@ -228,11 +294,11 @@ const GameModal = ({ game, index, onClose, onUpdateGame, onPatch, onTagClick, t,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           title: editTitle, 
-          rjCode: editRj,
           developer: editDeveloper,
           language: editLanguage,
           releaseDate: editReleaseDate,
-          link: editLink
+          // По списку ссылок сервер и ищет: RJ-код уже стал ссылкой на DLsite
+          link: linkStr
         })
       });
       const data = await res.json();
@@ -243,14 +309,14 @@ const GameModal = ({ game, index, onClose, onUpdateGame, onPatch, onTagClick, t,
         // Раньше при неудаче здесь всё равно писалось «Успешно», хотя сервер в этот
         // момент стирал теги. Теперь данные не трогаются, а человек узнаёт, что поиск
         // ничего не дал. Молчим, если он искать и не просил — просто поправил поле.
-        const askedToSearch = !!editRj || editLink !== (game.link || '');
+        const askedToSearch = linkStr !== splitLinks(game.link).join(',');
         if (!data.found && askedToSearch) {
           notify(data.failed?.length ? t.edit_unreachable(data.failed.join(', ')) : t.edit_not_found, 'error');
         } else {
           notify(t.saved_ok, 'success');
         }
         setIsEditing(false);
-        setEditRj('');
+        setLinkDraft('');
       } else {
         notify(data.error || 'Ошибка при сохранении', 'error');
       }
@@ -281,6 +347,15 @@ const GameModal = ({ game, index, onClose, onUpdateGame, onPatch, onTagClick, t,
     await launchGame(game, (updated) => onUpdateGame(index, updated));
   };
 
+  // Удаление живёт здесь, а не на карточке: там корзина стояла вплотную к звезде
+  // «Избранное», и промахнуться было проще простого
+  const handleDelete = async () => {
+    if (await onDelete?.(game)) handleCloseModal();
+  };
+
+  // Повторный клик по той же звезде снимает оценку
+  const rate = (n) => onPatch(game.id, { rating: game.rating === n ? 0 : n });
+
   // --- НОВАЯ ЛОГИКА ОПРЕДЕЛЕНИЯ САЙТА ДЛЯ ССЫЛКИ ---
   const renderSourceLink = () => {
     if (!game.link) return null;
@@ -291,11 +366,7 @@ const GameModal = ({ game, index, onClose, onUpdateGame, onPatch, onTagClick, t,
     return (
       <div style={{ display: 'flex', gap: '10px' }}>
         {links.map((url, idx) => {
-          let iconSrc = '';
-          if (url.includes('dlsite.com')) iconSrc = '/dlsite-logo.png';
-          else if (url.includes('vndb.org')) iconSrc = '/vndb-logo.png';
-          else if (url.includes('steampowered.com')) iconSrc = '/steam-logo.png';
-          else if (url.includes('f95zone.to')) iconSrc = '/f95-logo.png';
+          const iconSrc = linkIcon(url);
 
           return (
             <a key={idx} href={url} target="_blank" rel="noopener noreferrer" className="grimoire-source-link" title={url}>
@@ -322,44 +393,190 @@ const GameModal = ({ game, index, onClose, onUpdateGame, onPatch, onTagClick, t,
         </div>
 
         <div className="modal-header">
-          <div className={`modal-cover-wrapper ${isEditing ? 'editable' : ''}`} onClick={handleCoverClick}>
-            {isEditing && game.cover && (
-              <div className="cover-delete-btn" onClick={handleCoverDelete} title="Сбросить на оригинал">✖</div>
+          {/* Левая колонка закреплена: обложка и всё, что делают с игрой, — «Играть»,
+              оценка, статус — остаются под рукой, пока справа читаешь описание */}
+          <aside className="modal-side">
+            <div className={`modal-cover-wrapper ${isEditing ? 'editable' : ''}`} onClick={handleCoverClick}>
+              {coverUrl ? (
+                <img id="modal-cover" src={coverUrl} alt={game.displayTitle || game.title} />
+              ) : (
+                <div className="cover-placeholder modal-placeholder"><span className="rune">{roman}</span></div>
+              )}
+              {isEditing && <div className="cover-edit-overlay">{isUploadingCover ? '⏳' : '📷'}</div>}
+              <input type="file" ref={coverInputRef} accept="image/*" style={{ display: 'none' }} onChange={handleCoverChange} disabled={isUploadingCover}/>
+            </div>
+
+            {isEditing && (
+              <div className="modal-cover-edit">
+                <p className="modal-cover-hint">{t.edit_cover_hint}</p>
+                {/* Раньше здесь был красный ✖ прямо на обложке — похож на «закрыть» или
+                    «удалить», а делал третье. Теперь это слова, и только когда есть что возвращать */}
+                {/cover_custom/.test(game.cover || '') && (
+                  <button type="button" className="cover-reset-btn" onClick={handleCoverDelete} disabled={isUploadingCover}>
+                    {t.cover_reset}
+                  </button>
+                )}
+              </div>
             )}
-            {coverUrl ? (
-              <img id="modal-cover" src={coverUrl} alt={game.title} />
-            ) : (
-              <div className="cover-placeholder modal-placeholder"><span className="rune">{roman}</span></div>
+
+            {!isEditing && (
+              <div className="modal-primary">
+                {/* Главное действие окна — первым и залитым. Раньше «Играть» стояла
+                    в самом низу контуром и выглядела второстепенной */}
+                <button id="modal-play-btn" onClick={handlePlay} disabled={isPlaying}>
+                  <span>{isPlaying ? t.launching : t.play}</span> <span className="launch-arrow">→</span>
+                </button>
+
+                {formatPlaytime(game.playtime, t) && (
+                  <div className="modal-progress">
+                    <span className="meta-label">{t.playtime}</span> <b>{formatPlaytime(game.playtime, t)}</b>
+                    {game.progress?.level != null && <> · <span className="meta-label">{t.progress_level}</span> <b>{game.progress.level}</b></>}
+                    {game.progress?.gold != null && <> · <span className="meta-label">{t.progress_gold}</span> <b>{game.progress.gold.toLocaleString(lang === 'en' ? 'en-US' : lang === 'de' ? 'de-DE' : 'ru-RU')}</b></>}
+                  </div>
+                )}
+
+                {/* Оценка: на карточке звёзды 16px, пальцем в них не попасть */}
+                <div className="modal-rating" role="group" aria-label={t.rating_label} onMouseLeave={() => setHoverStar(0)}>
+                  <span className="meta-label">{t.rating_label}</span>
+                  {[1, 2, 3, 4, 5].map(n => (
+                    <button
+                      key={n}
+                      type="button"
+                      className={`rating-star ${n <= (hoverStar || game.rating || 0) ? 'active' : ''}`}
+                      aria-label={t.rate_star(n)}
+                      aria-pressed={game.rating === n}
+                      onMouseEnter={() => setHoverStar(n)}
+                      onClick={() => rate(n)}
+                    >
+                      ★
+                    </button>
+                  ))}
+                </div>
+
+                <div className="status-row">
+                  <button
+                    type="button"
+                    className={`chip ${game.favorite ? 'active' : ''}`}
+                    aria-pressed={!!game.favorite}
+                    onClick={() => onPatch(game.id, { favorite: !game.favorite })}
+                  >
+                    ★ {t.filter_fav}
+                  </button>
+                  {['playing', 'done', 'dropped', 'wish'].map(key => (
+                    <button
+                      key={key}
+                      type="button"
+                      className={`chip ${game.status === key ? 'active' : ''}`}
+                      aria-pressed={game.status === key}
+                      onClick={() => onPatch(game.id, { status: game.status === key ? '' : key })}
+                    >
+                      {t[`status_${key}`]}
+                    </button>
+                  ))}
+                </div>
+              </div>
             )}
-            {isEditing && <div className="cover-edit-overlay">{isUploadingCover ? '⏳' : '📷'}</div>}
-            <input type="file" ref={coverInputRef} accept="image/*" style={{ display: 'none' }} onChange={handleCoverChange} disabled={isUploadingCover}/>
-          </div>
+          </aside>
 
           <div className="modal-info">
             {isEditing ? (
               <div className="grimoire-form">
-                {/* Код формы редактирования оставляй без изменений */}
-                <input type="text" value={editTitle} onChange={e => setEditTitle(e.target.value)} placeholder="Название игры..." />
-                <input type="text" value={editDeveloper} onChange={e => setEditDeveloper(e.target.value)} placeholder="Разработчик..." />
-                <input type="text" value={editReleaseDate} onChange={e => setEditReleaseDate(e.target.value)} placeholder="Дата выпуска (ГГГГ-ММ-ДД)..." />
-                <input type="text" value={editLanguage} onChange={e => setEditLanguage(e.target.value)} placeholder="Язык (RU, EN, JP)..." />
-                <input type="text" value={editLink} onChange={e => setEditLink(e.target.value)} placeholder="Ссылка на источник..." />
-                <input type="text" value={editRj} onChange={handleRjChange} placeholder="RJ-код или ссылка: DLsite, Steam, VNDB, F95zone" />
-                <button type="button" className="chip f95-search-btn" onClick={searchF95} disabled={f95Busy}>
-                  🔎 {f95Busy ? t.checking : t.f95_search}
-                </button>
-                {f95List.length > 0 && (
-                  <div className="f95-list">
-                    {f95List.map(item => (
-                      <button type="button" key={item.url} className="f95-item"
-                        onClick={() => { setEditRj(item.url); setF95List([]); }}>
-                        <span className="f95-title">{item.title}</span>
-                        <span className="f95-meta">{item.creator} · {t.f95_tags(item.tags)}{item.rating ? ` · ★${item.rating}` : ''}</span>
-                      </button>
-                    ))}
+                {/* Сведения: подписи над полями. Раньше были только подсказки внутри
+                    полей, и заполненное поле было не опознать — «ミライユカイ堂» что это? */}
+                <section className="edit-section">
+                  <h3 className="edit-section-title">{t.edit_section_info}</h3>
+                  <label className="edit-field">
+                    <span className="edit-label">{t.edit_f_title}</span>
+                    <input type="text" value={editTitle} onChange={e => setEditTitle(e.target.value)} />
+                  </label>
+                  <div className="edit-row">
+                    <label className="edit-field">
+                      <span className="edit-label">{t.edit_f_dev}</span>
+                      <input type="text" value={editDeveloper} onChange={e => setEditDeveloper(e.target.value)} />
+                    </label>
+                    <label className="edit-field">
+                      <span className="edit-label">{t.edit_f_release}</span>
+                      <input type="text" value={editReleaseDate} onChange={e => setEditReleaseDate(e.target.value)} placeholder={t.edit_f_release_ph} />
+                    </label>
                   </div>
-                )}
-                
+                  <label className="edit-field">
+                    <span className="edit-label">{t.edit_f_lang}</span>
+                    {/* Пустое поле — язык определяется по тексту игры; в подсказке видно, что определилось */}
+                    <input
+                      type="text"
+                      value={editLanguage}
+                      onChange={e => setEditLanguage(e.target.value)}
+                      placeholder={languageLine({ ...game, language: '' }, t, lang) ? t.edit_f_lang_auto(languageLine({ ...game, language: '' }, t, lang)) : t.edit_lang_auto_empty}
+                    />
+                  </label>
+                </section>
+
+                {/* Источники: список ссылок, одно поле «добавить» и поиск темы на F95,
+                    если ссылки нет. Всё про ссылки — в одном месте */}
+                <section className="edit-section">
+                  <h3 className="edit-section-title">{t.edit_section_sources}</h3>
+                  <p className="edit-hint">{t.edit_sources_hint}</p>
+
+                  {editLinks.length > 0 ? (
+                    <ul className="edit-links">
+                      {editLinks.map(url => {
+                        const info = describeLink(url);
+                        const icon = linkIcon(url);
+                        return (
+                          <li key={url} className="edit-link">
+                            <span className="edit-link-logo">{icon ? <img src={icon} alt="" /> : '🔗'}</span>
+                            <a href={url} target="_blank" rel="noopener noreferrer" className="edit-link-text" title={url}>
+                              <b>{info.host}</b>{info.label && <span> · {info.label}</span>}
+                            </a>
+                            <button
+                              type="button"
+                              className="edit-link-remove"
+                              aria-label={t.edit_remove}
+                              title={t.edit_remove}
+                              onClick={() => setEditLinks(prev => prev.filter(x => x !== url))}
+                            >×</button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  ) : (
+                    <p className="edit-empty">{t.edit_no_links}</p>
+                  )}
+
+                  <form className="edit-add" onSubmit={(e) => { e.preventDefault(); addDraft(); }}>
+                    <input
+                      type="text"
+                      value={linkDraft}
+                      onChange={e => { setLinkDraft(e.target.value); setLinkError(''); }}
+                      placeholder={t.edit_add_ph}
+                      aria-invalid={!!linkError}
+                    />
+                    <button type="submit" className="edit-add-btn" disabled={!linkDraft.trim()}>{t.edit_add}</button>
+                  </form>
+                  {linkError && <p className="edit-error" role="alert">{linkError}</p>}
+
+                  <div className="edit-f95">
+                    <span className="edit-hint">{t.f95_hint}</span>
+                    <button type="button" className="chip f95-search-btn" onClick={searchF95} disabled={f95Busy}>
+                      <IconSearch /> {f95Busy ? t.checking : t.f95_search}
+                    </button>
+                  </div>
+                  {f95List.length > 0 && (
+                    <>
+                      <p className="edit-hint">{t.f95_pick}</p>
+                      <div className="f95-list">
+                        {f95List.map(item => (
+                          <button type="button" key={item.url} className="f95-item"
+                            onClick={() => { addLinks([item.url]); setF95List([]); }}>
+                            <span className="f95-title">{item.title}</span>
+                            <span className="f95-meta">{item.creator} · {t.f95_tags(item.tags)}{item.rating ? ` · ★${item.rating}` : ''}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </section>
+
                 <div className="form-actions">
                   <button onClick={handleSave} disabled={isSaving} className="save-btn">{isSaving ? '⏳...' : t.save}</button>
                   <button onClick={() => setIsEditing(false)} className="cancel-btn">{t.cancel}</button>
@@ -367,12 +584,12 @@ const GameModal = ({ game, index, onClose, onUpdateGame, onPatch, onTagClick, t,
               </div>
             ) : (
               <>
-                {/* --- НОВЫЙ БЛОК ЗАГОЛОВКА С ЛОГОТИПОМ НА ОДНОЙ ЛИНИИ --- */}
                 <div className="modal-title-block">
-                  <h2 id="modal-title">{game.title}</h2>
+                  <h2 id="modal-title">{game.displayTitle || game.title}</h2>
+                  {/* Японское название, которое заменили английским, — мелко под ним */}
+                  {game.originalTitle && <div className="modal-original-title" lang="ja">{game.originalTitle}</div>}
                 </div>
-                
-                {/* --- ОЧИЩЕННЫЕ ОТ ССЫЛКИ СТРОКИ МЕТАДАННЫХ --- */}
+
                 <div className="grimoire-metadata">
                   <div className="meta-row">
                     <div className="meta-item">
@@ -385,11 +602,17 @@ const GameModal = ({ game, index, onClose, onUpdateGame, onPatch, onTagClick, t,
                     </div>
                     <div className="meta-item">
                       <span className="meta-label">{t.meta_lang}</span>
-                      <span className="meta-value gold">{describeLanguage(game, t, lang)?.full || '—'}</span>
+                      <span className="meta-value gold">{languageLine(game, t, lang) || '—'}</span>
                     </div>
                   </div>
 
                   <div className="meta-row">
+                    {game.version && (
+                      <div className="meta-item">
+                        <span className="meta-label">{t.meta_version}</span>
+                        <span className="meta-value">{game.version}</span>
+                      </div>
+                    )}
                     <div className="meta-item">
                       <span className="meta-label">{t.meta_size}</span>
                       <span className="meta-value">{formatSize(game.size)}</span>
@@ -401,10 +624,7 @@ const GameModal = ({ game, index, onClose, onUpdateGame, onPatch, onTagClick, t,
                   </div>
                 </div>
 
-                {/* --- ЛОГОТИП ТЕПЕРЬ ЗДЕСЬ (МЕЖДУ ДАТОЙ И БЭКАПОМ) --- */}
-                <div style={{ display: 'flex', justifyContent: 'left', marginBottom: '20px' }}>
-                  {renderSourceLink()}
-                </div> 
+                {game.link && <div className="modal-sources">{renderSourceLink()}</div>}
 
                 {/* Если метаданные не полные — видно, почему и что будет дальше. Раньше
                     это было не узнать: пометки «не найдено» жили в Redis и никуда не выводились */}
@@ -426,79 +646,58 @@ const GameModal = ({ game, index, onClose, onUpdateGame, onPatch, onTagClick, t,
                   );
                 })()}
 
-                {formatPlaytime(game.playtime, t) && (
-                  <div className="modal-progress">
-                    <span className="meta-label">{t.playtime}</span> <b>{formatPlaytime(game.playtime, t)}</b>
-                    {game.progress?.level != null && <> · <span className="meta-label">{t.progress_level}</span> <b>{game.progress.level}</b></>}
-                    {game.progress?.gold != null && <> · <span className="meta-label">{t.progress_gold}</span> <b>{game.progress.gold.toLocaleString(lang === 'en' ? 'en-US' : lang === 'de' ? 'de-DE' : 'ru-RU')}</b></>}
-                  </div>
+                {/* Сначала — о чём игра, потом кадры и теги. Раньше описание стояло
+                    последним, под тегами и кадрами */}
+                {game.description && (
+                  <div className="modal-description">{game.description}</div>
                 )}
-
-                <div className="status-row">
-                  <button
-                    type="button"
-                    className={`chip ${game.favorite ? 'active' : ''}`}
-                    onClick={() => onPatch(game.id, { favorite: !game.favorite })}
-                  >
-                    ★ {t.filter_fav}
-                  </button>
-                  {['playing', 'done', 'dropped', 'wish'].map(key => (
-                    <button
-                      key={key}
-                      type="button"
-                      className={`chip ${game.status === key ? 'active' : ''}`}
-                      onClick={() => onPatch(game.id, { status: game.status === key ? '' : key })}
-                    >
-                      {t[`status_${key}`]}
-                    </button>
-                  ))}
-                </div>
-
-                <div className="grimoire-actions-row">
-                  <button onClick={() => setIsEditing(true)} className="grimoire-action-btn" title={t.edit_meta}><IconEdit />{t.edit_btn}</button>
-                  <button onClick={handleBackup} className="grimoire-action-btn"><IconDownload />{t.backup}</button>
-                  <button onClick={() => importRef.current.click()} className="grimoire-action-btn"><IconUpload />{isImporting ? t.import_wait : t.import}</button>
-                  <input type="file" ref={importRef} accept=".zip" style={{ display: 'none' }} onChange={handleImportSelect} />
-                </div>
-
-                <div className="modal-tags">
-                  {game.tags && game.tags.length > 0 ? (
-                    game.tags.map(tag => (
-                      // Тег — кнопка, а не текст: клик уводит в библиотеку, отфильтрованную
-                      // по нему. Раньше «а что ещё есть такого же» приходилось искать руками
-                      // в выпадающем списке, хотя ответ был прямо перед глазами.
-                      <button
-                        key={tag}
-                        type="button"
-                        className="tag tag-link"
-                        onClick={() => onTagClick?.(tag)}
-                        title={t.tag_filter_by(tag)}
-                      >
-                        {tag}
-                      </button>
-                    ))
-                  ) : (
-                    <span className="tag" style={{ opacity: 0.5, borderColor: 'transparent' }}>{t.no_tags}</span>
-                  )}
-                </div>
 
                 {game.screens && game.screens.length > 0 && (
                   <div className="game-screens">
                     {game.screens.map((src, i) => (
                       <button key={src} type="button" className="screen-thumb" onClick={() => setLightbox(i)} title={t.screens_open}>
-                        <img src={getMediaUrl(src)} alt={`${game.title} — ${i + 1}`} loading="lazy" />
+                        <img src={getMediaUrl(src)} alt={`${game.displayTitle || game.title} — ${i + 1}`} loading="lazy" />
                       </button>
                     ))}
                   </div>
                 )}
 
-                {game.description && (
-                  <div className="modal-description">{game.description}</div>
-                )}
+                <div className="modal-tags">
+                  {game.tags && game.tags.length > 0 ? (
+                    <>
+                      {(showAllTags ? game.tags : game.tags.slice(0, TAGS_SHOWN)).map(tag => (
+                        // Тег — кнопка, а не текст: клик уводит в библиотеку, отфильтрованную
+                        // по нему. Раньше «а что ещё есть такого же» приходилось искать руками
+                        // в выпадающем списке, хотя ответ был прямо перед глазами.
+                        <button
+                          key={tag}
+                          type="button"
+                          className="tag tag-link"
+                          onClick={() => onTagClick?.(tag)}
+                          title={t.tag_filter_by(tag)}
+                        >
+                          {tag}
+                        </button>
+                      ))}
+                      {game.tags.length > TAGS_SHOWN && (
+                        <button type="button" className="tag tag-more" onClick={() => setShowAllTags(v => !v)}>
+                          {showAllTags ? t.tags_less : t.tags_more(game.tags.length - TAGS_SHOWN)}
+                        </button>
+                      )}
+                    </>
+                  ) : (
+                    <span className="tag" style={{ opacity: 0.5, borderColor: 'transparent' }}>{t.no_tags}</span>
+                  )}
+                </div>
 
-                <button id="modal-play-btn" onClick={handlePlay} style={{ opacity: isPlaying ? 0.7 : 1, pointerEvents: isPlaying ? 'none' : 'auto' }}>
-                  <span>{isPlaying ? t.launching : t.play}</span> <span className="launch-arrow">→</span>
-                </button>
+                {/* Редкие действия — внизу и мельче: ими пользуются раз в месяц */}
+                <div className="grimoire-actions-row">
+                  <button onClick={startEditing} className="grimoire-action-btn" title={t.edit_meta}><IconEdit />{t.edit_btn}</button>
+                  <button onClick={handleBackup} className="grimoire-action-btn"><IconDownload />{t.backup}</button>
+                  <button onClick={() => importRef.current.click()} className="grimoire-action-btn"><IconUpload />{isImporting ? t.import_wait : t.import}</button>
+                  <button onClick={handleDelete} className="grimoire-action-btn danger"><IconTrash />{t.delete_btn}</button>
+                  <input type="file" ref={importRef} accept=".zip" style={{ display: 'none' }} onChange={handleImportSelect} />
+                </div>
               </>
             )}
           </div>
@@ -530,7 +729,7 @@ const GameModal = ({ game, index, onClose, onUpdateGame, onPatch, onTagClick, t,
           {/* Клик по самой картинке не закрывает: промахнуться мимо мелкой кнопки легко */}
           <img
             src={getMediaUrl(game.screens[lightbox])}
-            alt={`${game.title} — ${lightbox + 1}`}
+            alt={`${game.displayTitle || game.title} — ${lightbox + 1}`}
             onClick={(e) => e.stopPropagation()}
           />
 

@@ -1,12 +1,39 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { languageTitle } from '../formatLanguage';
+import Picker from './Picker';
 
 const Toolbar = ({ 
   searchQuery, setSearchQuery, availableTags, selectedTag, setSelectedTag,
   currentSort, setCurrentSort, onUploadSuccess, socketMessage, t, showToast,
-  blurCovers, setBlurCovers, statusFilter, setStatusFilter, canUpload
+  blurCovers, setBlurCovers, canUpload,
+  availableLangs = [], langFilter, setLangFilter, lang, openUploadRef
 }) => {
   const fileInputRef = useRef(null);
+
+  // Варианты трёх списков панели. Жанры — самые частые первыми: по алфавиту
+  // нужное приходилось искать среди сотни строк
+  const genreOptions = useMemo(() => [
+    { value: 'all', label: t.all_genres },
+    ...[...availableTags]
+      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))
+      .map(tag => ({ value: tag.name, label: tag.name, count: tag.count })),
+  ], [availableTags, t]);
+  const langOptions = useMemo(() => [
+    { value: 'all', label: t.all_langs },
+    ...availableLangs.map(({ code, count }) => ({ value: code, label: languageTitle(code, lang), count })),
+  ], [availableLangs, lang, t]);
+  const sortOptions = [
+    ['newest', t.sort_new], ['oldest', t.sort_old], ['recent', t.sort_rec], ['playtime', t.sort_playtime],
+    ['rating_desc', t.sort_rat], ['name', t.sort_alp], ['size_desc', t.sort_size_desc], ['size_asc', t.sort_size_asc],
+  ].map(([value, label]) => ({ value, label }));
+
+  // На телефоне кнопка «Добавить игру» живёт в меню шапки — отдаём ему открытие выбора файла
+  useEffect(() => {
+    if (!openUploadRef) return undefined;
+    openUploadRef.current = () => fileInputRef.current?.click();
+    return () => { openUploadRef.current = null; };
+  }, [openUploadRef]);
   const [isDragging, setIsDragging] = useState(false);
   const [uploadState, setUploadState] = useState({ active: false, progress: 0, text: '', name: '' });
 
@@ -172,21 +199,23 @@ const Toolbar = ({
         <input type="text" placeholder={t.search} value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
       </div>
 
-      <select className="sort-box" value={selectedTag} onChange={(e) => setSelectedTag(e.target.value)}>
-        <option value="all">{t.all_genres}</option>
-        {availableTags.map(tag => <option key={tag.name} value={tag.name}>{tag.name} ({tag.count})</option>)}
-      </select>
+      {/* Три списка одного вида: жанры с поиском (их под сотню), языки и сортировка —
+          без него. Подсветка кнопки — знак, что фильтр включён */}
+      <Picker
+        options={genreOptions} value={selectedTag} onChange={setSelectedTag} label={t.list_genre}
+        searchable searchPlaceholder={t.genre_search} emptyText={t.genre_none}
+        highlight={selectedTag !== 'all'}
+      />
 
-      <select className="sort-box" value={currentSort} onChange={(e) => setCurrentSort(e.target.value)}>
-        <option value="newest">{t.sort_new}</option>
-        <option value="oldest">{t.sort_old}</option>
-        <option value="recent">{t.sort_rec}</option>
-        <option value="playtime">{t.sort_playtime}</option>
-        <option value="rating_desc">{t.sort_rat}</option>
-        <option value="name">{t.sort_alp}</option>
-        <option value="size_desc">{t.sort_size_desc}</option>
-        <option value="size_asc">{t.sort_size_asc}</option>
-      </select>
+      {/* Язык по тексту самой игры, а не по магазину */}
+      {availableLangs.length > 1 && (
+        <Picker
+          options={langOptions} value={langFilter} onChange={setLangFilter} label={t.list_lang}
+          highlight={langFilter !== 'all'} className="lang-filter"
+        />
+      )}
+
+      <Picker options={sortOptions} value={currentSort} onChange={setCurrentSort} label={t.list_sort} className="sort-order" />
 
       {/* Кнопка без текста, поэтому смысл — в подсказке и в aria-label:
           иначе назначение приходится угадывать, а экранный диктор читает «кнопка» */}
@@ -212,26 +241,6 @@ const Toolbar = ({
       >
         <svg viewBox="0 0 24 24"><path d="M9 16h6v-6h4l-7-7-7 7h4zm-4 2h14v2H5z"/></svg>
         {t.add_game}
-      </div>
-
-      <div className="filter-chips">
-        {[
-          ['all', t.filter_all],
-          ['fav', `★ ${t.filter_fav}`],
-          ['playing', t.status_playing],
-          ['done', t.status_done],
-          ['dropped', t.status_dropped],
-          ['wish', t.status_wish],
-        ].map(([key, label]) => (
-          <button
-            key={key}
-            type="button"
-            className={`chip ${statusFilter === key ? 'active' : ''}`}
-            onClick={() => setStatusFilter(key)}
-          >
-            {label}
-          </button>
-        ))}
       </div>
 
       <input type="file" ref={fileInputRef} style={{ display: 'none' }} accept=".zip,.7z,.rar,application/zip,application/x-rar-compressed,application/vnd.rar,application/x-7z-compressed,application/octet-stream" onChange={handleFileSelect}/>

@@ -341,3 +341,43 @@ test('gamelang: таблица переводов даёт все языки, к
   const found = await detectGameLanguages(dir);
   assert.deepStrictEqual([...found.langs].sort(), ['en', 'ja']);
 });
+
+// ============================================================================
+// Название для показа и версия
+// ============================================================================
+
+const { presentTitle, extractVersion } = require('./src/utils/title.js');
+
+test('presentTitle: срезает версии и подписи переводчиков, подзаголовок оставляет', () => {
+  const show = (raw, folder = '', link = '') => presentTitle(raw, { folder, link }).title;
+  assert.strictEqual(show('Unholy Maiden v1.0.9 | TL: DazedAnon & O&M'), 'Unholy Maiden');
+  assert.strictEqual(show("Fallen Priestess: My Sister's Demonic Bloodline 1.3.0 Steam 04/17/2342"), "Fallen Priestess: My Sister's Demonic Bloodline");
+  assert.strictEqual(show('Кошмар Рыцаря 2.01 (Перевод:Neriko)'), 'Кошмар Рыцаря');
+  assert.strictEqual(show('Labyrinth of Subjugation and Liberation Production Version 1.4'), 'Labyrinth of Subjugation and Liberation');
+  assert.strictEqual(show('Freya s Potion Shop ver1.03'), "Freya's Potion Shop");
+  assert.strictEqual(show('Tale of Salvation ~Even Fallen, Hero Erica Faces Tomorrow~ 1.04'), 'Tale of Salvation ~Even Fallen, Hero Erica Faces Tomorrow~');
+  assert.strictEqual(show('Nebel Geisterjäger ~ The First Lamb Steam EN1.12 | Перевод: Karabas Barabas'), 'Nebel Geisterjäger ~ The First Lamb');
+  // Число без точки — часть названия
+  assert.strictEqual(show('Total NTR 2'), 'Total NTR 2');
+});
+
+test('presentTitle: японское название заменяет английское из папки или ссылки F95', () => {
+  const listaria = presentTitle('リスタリア［メッセージ非表示：右クリック | 文章スキップ：Control］', { folder: 'Listaria_v26.08.02' });
+  assert.deepStrictEqual(listaria, { title: 'Listaria', original: 'リスタリア' });
+  const byLink = presentTitle('催堕的魔法使', { folder: 'RJ01548022', link: 'https://f95zone.to/threads/fallenmage-v1-0-0-other-side-of-the-sky.288905/,https://www.dlsite.com/x' });
+  assert.strictEqual(byLink.title, 'Fallenmage');
+  // Английского взять неоткуда — остаётся как есть
+  assert.strictEqual(presentTitle('フロンティアガーディアン最新', { folder: 'RJ01380813' }).title, 'フロンティアガーディアン最新');
+  // Сокращённое имя игры уступает полному из папки
+  assert.strictEqual(presentTitle('Dancer 1.2', { folder: 'My_Girlfriend_Advanced_to_the_Dancer_Class_and_She_Buffs_Everybody_v1.2_Windows' }).title,
+    'My Girlfriend Advanced to the Dancer Class and She Buffs Everybody');
+});
+
+test('extractVersion: из названия, иначе из папки; версия перевода после «|» не считается', () => {
+  assert.strictEqual(extractVersion('A Master Exorcist Never Yields to Tentacle Demons_v1.0.4', ''), '1.0.4');
+  assert.strictEqual(extractVersion('Star Witch （ver1.19）', ''), '1.19');
+  assert.strictEqual(extractVersion('Horny Adventurer Karen', 'RJ405415'), '');
+  assert.strictEqual(extractVersion('Going to the caves NTR', 'Going to the caves NTR 2.0.0v'), '2.0.0');
+  assert.strictEqual(extractVersion('Зверодевочки никогда не предадут v1', 'fox-girls-never-play-dirty-ver1.03-rus__hchan.live'), '1.03');
+  assert.strictEqual(extractVersion('Nebel | Версия перевода: 1.0', ''), '');
+});

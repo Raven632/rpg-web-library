@@ -4,15 +4,15 @@ import { formatPlaytime } from '../formatPlaytime';
 const ROMAN_NUMERALS = ['Ⅰ','Ⅱ','Ⅲ','Ⅳ','Ⅴ','Ⅵ','Ⅶ','Ⅷ','Ⅸ','Ⅹ','Ⅺ','Ⅻ'];
 
 import { getCoverUrl } from '../coverUrl';
-import { describeLanguage } from '../formatLanguage';
+import { languageBadge, languageLine } from '../formatLanguage';
 
-const GameCard = ({ game, index, onClick, onDelete, onRate, onToggleFavorite, t, lang }) => {
+const GameCard = ({ game, index, onClick, onRate, onToggleFavorite, t, lang }) => {
   const coverUrl = getCoverUrl(game);
   const roman = ROMAN_NUMERALS[index % ROMAN_NUMERALS.length] || String(index + 1);
-  const volumeStr = String(game.number || index + 1).padStart(2, '0');
+  const name = game.displayTitle || game.title;
   // Пустая строка означает «меньше минуты» — тогда не рисуем даже значок
   const played = formatPlaytime(game.playtime, t);
-  const language = describeLanguage(game, t, lang);
+  const language = languageBadge(game, lang);
 
   return (
     <div
@@ -24,13 +24,8 @@ const GameCard = ({ game, index, onClick, onDelete, onRate, onToggleFavorite, t,
     >
       <div className="card-corner-tl"></div>
       
-      <div 
-        className="card-delete" 
-        title={t.burn}
-        onClick={(e) => { e.stopPropagation(); onDelete(game); }}
-      >
-        <svg viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
-      </div>
+      {/* Корзины здесь больше нет: она стояла вплотную к «Избранному», а при наведении
+          поворачивалась боком и была похожа на видеокамеру. Удаление — в окне игры */}
 
       <div
         className={`card-fav ${game.favorite ? 'active' : ''}`}
@@ -54,7 +49,7 @@ const GameCard = ({ game, index, onClick, onDelete, onRate, onToggleFavorite, t,
         </div>
 
         {coverUrl ? (
-          <img src={coverUrl} alt={game.title} loading="lazy" />
+          <img src={coverUrl} alt={name} loading="lazy" />
         ) : (
           <div className="cover-placeholder">
             <span className="rune">{roman}</span>
@@ -62,26 +57,20 @@ const GameCard = ({ game, index, onClick, onDelete, onRate, onToggleFavorite, t,
           </div>
         )}
         <div className="card-cover-overlay"></div>
-        {/* Язык по тексту самой игры: видно, перевод это или оригинал, не открывая окно */}
-        {language && (
-          <span className={`card-lang ${language.translated ? 'translated' : ''}`} title={language.full}>
-            {language.short}
-          </span>
-        )}
+        {/* Язык по тексту самой игры; при наведении — все языки, как в окне игры */}
+        {language && <span className="card-lang" title={languageLine(game, t, lang)}>{language}</span>}
       </div>
 
+      {/* Раньше здесь стояли «ТОМ 01» — номер по дате добавления, который менялся
+          с каждой новой игрой, — и «Подробнее →», хотя открывает игру вся карточка.
+          Теперь под названием то, что полезно видеть в сетке: версия, статус, время */}
       <div className="card-info">
-        <div className="card-number">
-          <span>{t.vol} {volumeStr}</span>
-          {!game.scraped && <span style={{color: 'var(--gold-light)'}}>⏳</span>}
+        <h3 className="card-title" title={name}>{name}</h3>
+        <div className="card-meta">
+          {game.version && <span className="card-version">v{game.version}</span>}
           {game.status && <span className={`status-badge ${game.status}`}>{t[`status_${game.status}`]}</span>}
           {played && <span className="card-playtime">⏱ {played}</span>}
-        </div>
-        {/* Название обрезается на второй строке, а у этих игр смысл часто в хвосте */}
-        <h3 className="card-title" title={game.title}>{game.title}</h3>
-        
-        <div className="card-launch">
-          {t.details} <span className="launch-arrow">→</span>
+          {!game.scraped && <span className="card-pending" title={t.meta_line_new}>⏳</span>}
         </div>
       </div>
 

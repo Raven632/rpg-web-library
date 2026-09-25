@@ -3,7 +3,9 @@ import React, { useEffect, useRef, useState } from 'react';
 // Редкие действия — статистика, ревизия, дозагрузка, выход — раньше лежали
 // четырьмя кнопками над библиотекой и весили столько же, сколько поиск и фильтры.
 // Их место здесь: нажимают их раз в месяц, а место они занимали на каждом экране.
-const HeaderMenu = ({ items, label }) => {
+// children — то, что не действие, а настройка или справка: место на диске, язык.
+// Они стоят над пунктами и меню не закрывают — видно, что язык сменился
+const HeaderMenu = ({ items = [], label, children }) => {
   const [open, setOpen] = useState(false);
   const boxRef = useRef(null);
 
@@ -37,12 +39,13 @@ const HeaderMenu = ({ items, label }) => {
 
       {open && (
         <div className="header-menu-list" role="menu">
+          {children && <div className="header-menu-extras">{children}</div>}
           {items.map(item => (
             <button
               key={item.key}
               type="button"
               role="menuitem"
-              className="header-menu-item"
+              className={`header-menu-item ${item.className || ''}`}
               onClick={() => { setOpen(false); item.onClick(); }}
             >
               <span className="header-menu-icon">{item.icon}</span>

@@ -10,7 +10,7 @@ const { spawnExtract, findGameFolder, getFolderSize } = require('../utils/archiv
 const { validateIdParam } = require('../utils/validate.js');
 const { redisClient, invalidateGamesList, GAMES_LIST_KEY } = require('../utils/cache.js');
 const { normalizeTags } = require('../utils/tags.js');
-const { cleanTitle } = require('../utils/title.js');
+const { cleanTitle, presentTitle, extractVersion } = require('../utils/title.js');
 
 const router = express.Router();
 
@@ -21,6 +21,21 @@ let isCalculatingSizes = false; // Глобальный замок
 
 // Строку пишем мы сами, но битое значение в базе не должно ронять весь список
 const parseProgress = (raw) => { try { return raw ? JSON.parse(raw) : null; } catch { return null; } };
+
+// Как показывать название: без версий и подписей переводчиков, японское — английским
+// из папки или ссылки F95. Название, вписанное руками в «Изменить», — как есть.
+// Версия в колонке version у всех «1.0.0» по умолчанию, настоящая — в названии и папке
+function titleFields(row) {
+    const locked = parseProgress(row.meta_locked) || [];
+    const shown = locked.includes('title')
+        ? { title: row.title, original: '' }
+        : presentTitle(row.title || row.id, { folder: row.id, link: row.link || '' });
+    return {
+        displayTitle: shown.title,
+        originalTitle: shown.original,
+        version: extractVersion(row.title, row.id),
+    };
+}
 
 // --- 1. ПОЛУЧЕНИЕ ВСЕХ ИГР (С КЭШИРОВАНИЕМ REDIS) ---
 router.get('/', async (req, res) => {
@@ -71,7 +86,7 @@ router.get('/', async (req, res) => {
             releaseDate: row.releaseDate || '',
             link: row.link || '',
             size: row.size || 0,
-            version: row.version || '1.0.0',
+            ...titleFields(row),
             // Без этого поля значок «ждёт метаданные» горел на каждой карточке
             scraped: !!row.scraped,
             tags: normalizeTags(row.tags ? JSON.parse(row.tags) : []),
@@ -297,11 +312,12 @@ router.post('/:id/edit', async (req, res) => {
         for (const [key, value] of Object.entries(sent)) {
             if (value !== undefined && String(value) !== String(current[key] || '')) manual[key] = value;
         }
+        // Название тоже запоминаем как ручное: его показываем как есть, без чистки
+        if (title !== undefined && title !== current.title) manual.title = title;
 
         // Поменянное пишем сразу: оно главнее всего, что найдётся, и должно остаться,
         // даже если поиск ничего не даст
         const direct = { ...manual };
-        if (title !== undefined && title !== current.title) direct.title = title;
         const directKeys = Object.keys(direct);
         if (directKeys.length) {
             await dbService.get().run(
@@ -331,6 +347,7 @@ router.post('/:id/edit', async (req, res) => {
             failed: result.failed,
             game: {
                 title: g.title,
+                ...titleFields(g),
                 cover: g.cover,
                 developer: g.developer || '',
                 language: g.language || '',
