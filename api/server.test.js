@@ -175,6 +175,48 @@ test('findRJCode: находит RJ внутри текстового файла
   assert.strictEqual(code, 'RJ999999', 'Должен найти RJ-код внутри readme.txt');
 });
 
+test('findRJCode: чужие коды из титров и карт игры не берёт', async (t) => {
+  const originalReaddir = fsp.readdir;
+  const originalStat = fsp.stat;
+  const originalReadFile = fsp.readFile;
+
+  // readme с титрами (два кода купленных ассетов) и папка data с рекламой в карте
+  fsp.readdir = async (dir) => dir.endsWith('data')
+    ? [{ name: 'Map044.json', isFile: () => true, isDirectory: () => false }]
+    : [
+        { name: 'Readme.txt', isFile: () => true, isDirectory: () => false },
+        { name: 'data', isFile: () => false, isDirectory: () => true },
+      ];
+  fsp.stat = async () => ({ size: 1024 });
+  fsp.readFile = async (file) => String(file).endsWith('Map044.json')
+    ? '《Tail Touch Girl——RJ310249》 Да... это всего лишь реклама.'
+    : 'Звуки: RJ01470050\nИнтерфейс: RJ01026120';
+
+  t.after(() => {
+    fsp.readdir = originalReaddir;
+    fsp.stat = originalStat;
+    fsp.readFile = originalReadFile;
+  });
+
+  assert.strictEqual(await scraperService.findRJCode('UnknownFolder', '/fake/path'), null);
+});
+
+test('titleFromFolder: всё после номера версии — служебный хвост', () => {
+  const t = (f) => scraperService.titleFromFolder(f);
+  assert.strictEqual(t('Labyrinth_of_Subjugation_and_Liberation_1.4-Naughty_Insomniac'), 'Labyrinth of Subjugation and Liberation');
+  assert.strictEqual(t('nightmare-knight-2.01-rus__hchan.live'), 'nightmare knight');
+  assert.strictEqual(t('celesphonia-ver-1.07-cn-mod-55.6-fixed2-rus__hchan.live'), 'celesphonia');
+  // Число без точки — часть названия, а не версия
+  assert.strictEqual(t('Total_NTR_2-v1.0'), 'Total NTR 2');
+  assert.strictEqual(t('RJ01364780'), 'RJ01364780');
+});
+
+test('buildF95Queries: слово с умлаутом выпадает целиком, а не обрубком', () => {
+  const queries = scraperService.buildF95Queries('Nebel Geisterjäger ~ The First Lamb');
+  assert.ok(queries.includes('Nebel'), JSON.stringify(queries));
+  assert.ok(!queries.some(q => /Geisterj/.test(q)), JSON.stringify(queries));
+});
+
 // ============================================================================
 // translateText tests (Проверка переводчика)
 // ============================================================================

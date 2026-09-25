@@ -149,8 +149,17 @@ class ScraperService {
         } catch (e) {}
     }
 
+    // В имени папки за номером версии идёт только служебное: разработчик, язык,
+    // сайт-источник («…_1.4-Naughty_Insomniac», «…-v1.07-rus__hchan.live»). cleanTitle
+    // срезает хвосты лишь с конца, поэтому здесь обрываем название на самой версии.
     titleFromFolder(folder) {
-        return folder.replace(/\[?RJ\d{6,8}\]?/gi, '').replace(/[-_]/g, ' ').replace(/\s+/g, ' ').trim() || folder;
+        const name = folder
+            .replace(/\[?RJ\d{6,8}\]?/gi, '')
+            .replace(/[-_]/g, ' ')
+            .replace(/\s(?:v(?:er)?\.?\s?\d+(?:\.\d+)*|\d+(?:\.\d+)+)\b.*$/i, '')
+            .replace(/\s+/g, ' ')
+            .trim();
+        return name || folder;
     }
 
     // Что искать для игры: сохранённая ссылка, RJ-код из папки и название из самой игры
@@ -371,17 +380,23 @@ class ScraperService {
                     try {
                         const stats = await fsp.stat(full);
                         if (stats.size < 300000) {
-                            const inFile = (await fsp.readFile(full, 'utf8')).match(rjRegex);
-                            if (inFile) return inFile[0];
+                            const text = await fsp.readFile(full, 'utf8');
+                            const codes = new Set((text.match(/RJ\d{6,8}/gi) || []).map(c => c.toUpperCase()));
+                            // Несколько кодов в одном файле — это титры: readme перечисляет
+                            // купленные на DLsite звуки и интерфейс, и первым шёл чужой код
+                            if (codes.size === 1) return [...codes][0];
                         }
                     } catch (e) {}
                 }
             }
 
-            // Папки с картинками и звуком пропускаем: кода там не бывает, а файлов тысячи
+            // Папки с картинками и звуком пропускаем: кода там не бывает, а файлов тысячи.
+            // data и js — тоже: в картах встречается реклама других игр автора
+            // («Tail Touch Girl — RJ310249» в Map044.json), в плагинах — ссылки на
+            // купленные плагины, и игра получала чужие теги, описание и обложку
             for (const entry of entries) {
                 if (!entry.isDirectory()) continue;
-                if (/^(img|audio|movies|fonts|effects|icon|node_modules)$/i.test(entry.name)) continue;
+                if (/^(img|audio|movies|fonts|effects|icon|node_modules|data|js)$/i.test(entry.name)) continue;
                 const found = await scan(path.join(dir, entry.name), depth + 1);
                 if (found) return found;
             }
@@ -561,6 +576,9 @@ class ScraperService {
         // она осталась неиспользованной, и в галерее не хватало одного скриншота.
         const shots = [...(data.screens || [])];
         if (data.coverUrl && !coverUrlUsed) shots.unshift(data.coverUrl);
+        // Кадры форума бывают превьюшками, которые отсеет minWidth, — добираем до шести
+        // семплами магазина. Повторы одной картинки отсечёт отпечаток в grab
+        shots.push(...(data.spareScreens || []));
 
         // Сначала собираем кадры в памяти и только потом переписываем папку: если в
         // этот раз ничего не нашлось, старая галерея останется на месте, а если
@@ -772,18 +790,21 @@ class ScraperService {
             const res = await sourceFetch('https://api.vndb.org/kana/vn', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ filters: filter, fields: "title, description, image.url, tags.name" })
+                body: JSON.stringify({ filters: filter, fields: "title, released, description, image.url, tags.name" })
             });
             const data = await res.json();
             if (data.results && data.results.length > 0) {
                 const vn = data.results[0];
-                
+
                 if (!/^v\d+$/.test(query)) {
-                    const vnTitle = vn.title.toLowerCase().replace(/[^a-z0-9а-яぁ-んァ-ン一-龯]/gi, '')
-                    const searchTitle = query.toLowerCase().replace(/[^a-z0-9а-яぁ-んァ-ン一-龯]/gi, '')
-                    if (!vnTitle.includes(searchTitle) && !searchTitle.includes(vnTitle)) {
-                        return null; 
-                    }
+                    // Раньше хватало вхождения: игра «Dancer» получала описание новеллы
+                    // «My Pet Dancer». Теперь порог тот же, что у поиска на F95
+                    if (titleSimilarity(query, vn.title) < 0.75) return null;
+                    // Вся библиотека — игры на MV и MZ, а MV вышел в конце 2015-го.
+                    // Новелла старше — однофамилица: «SisterSister» (RPG) получала
+                    // описание «Sister Sister» 2006 года
+                    const year = parseInt(String(vn.released || ''), 10);
+                    if (year && year < 2015) return null;
                 }
 
                 let desc = (vn.description || '').replace(/\[\/?(b|i|u|url|spoiler|quote)[^\]]*\]/gi, '').trim();
@@ -961,6 +982,9 @@ class ScraperService {
         // Дефис — тоже граница слова: «Brand-New» на форуме это «Brand» и «New»
         const searchable = (str) => String(str).replace(/[-–—]/g, ' ').split(/\s+/)
             .map(w => w.replace(/['’].*$/, ''))
+            // Слово с «ä» или «é» выбрасываем целиком: каталог не находит ни
+            // «Geisterjäger», ни обрубок «Geisterjger», а без него хватает остальных
+            .filter(w => !/[^\x00-\x7F]/.test(w.replace(/[^\p{L}\p{N}]/gu, '')))
             .map(w => w.replace(/[^\w]/g, ''))
             .filter(w => w.length >= 1 && !STOP.test(w));
 
@@ -1093,13 +1117,9 @@ class ScraperService {
                 const searchData = await searchRes.json();
                 if (searchData.total > 0 && searchData.items?.length > 0) {
                     const item = searchData.items[0];
-                    
-                    const steamTitle = item.name.toLowerCase().replace(/[^a-z0-9а-яぁ-んァ-ン一-龯]/gi, '')
-                    const searchTitle = query.toLowerCase().replace(/[^a-z0-9а-яぁ-んァ-ン一-龯]/gi, '')
-                    
-                    if (!steamTitle.includes(searchTitle) && !searchTitle.includes(steamTitle)) {
-                        return null; 
-                    }
+                    // Порог как у F95: простого вхождения хватало, чтобы «Dancer»
+                    // превратилась в «Rift of the NecroDancer»
+                    if (titleSimilarity(query, item.name) < 0.75) return null;
                     appId = item.id;
                 } else {
                     return null;
@@ -1108,8 +1128,12 @@ class ScraperService {
             
             const detailRes = await sourceFetch(`https://store.steampowered.com/api/appdetails?appids=${appId}&cc=US&l=english`, { headers: STEAM_HEADERS });
             const detailData = await detailRes.json();
-            if (detailData[appId]?.success) {
-                const game = detailData[appId].data;
+            // Переизданную игру магазин отдаёт под номером новой страницы: на запрос
+            // 3938710 ответ приходит с ключом 5257330. Спрашивали один номер — берём
+            // единственный ответ, как бы он ни был подписан
+            const detail = detailData?.[appId] || Object.values(detailData || {})[0];
+            if (detail?.success) {
+                const game = detail.data;
                 const desc = (game.short_description || game.about_the_game || '').replace(/<[^>]*>?/gm, '').trim();
 
                 // Обложка: сначала вертикальная витрина 600×900 — она по форме как
@@ -1145,6 +1169,8 @@ class ScraperService {
     async fetchUniversalMetadata(title, inputQuery, { altTitle = '' } = {}) {
         const aggregatedData = {
             tags: [], description: '', coverUrl: '', screens: [], developer: '', releaseDate: '', language: '',
+            // Семплы DLsite — запас после кадров форума, см. saveGameMedia
+            spareScreens: [],
             links: []
         };
         let foundAny = false;
@@ -1237,8 +1263,10 @@ class ScraperService {
                 aggregatedData.releaseDate = dlsiteData.releaseDate || '';
                 aggregatedData.language = dlsiteData.language || '';
                 if (dlsiteData.link) aggregatedData.links.push(dlsiteData.link);
-                // Картинки форума в приоритете, но если их нет — берём семплы магазина
-                if (!aggregatedData.screens.length && dlsiteData.screens?.length) aggregatedData.screens = dlsiteData.screens;
+                // Картинки форума в приоритете, семплы магазина — запасом. Раньше их брали,
+                // только если форум не дал ни одной ссылки, а он даёт и превью 384×216:
+                // те не проходили фильтр по размеру, и галерея оставалась пустой
+                if (dlsiteData.screens?.length) aggregatedData.spareScreens.push(...dlsiteData.screens);
             }
         }
 
@@ -1265,7 +1293,11 @@ class ScraperService {
                 if (aggregatedData.tags.length === 0 && steamData.tags) aggregatedData.tags = steamData.tags;
                 
                 aggregatedData.coverUrl = aggregatedData.coverUrl || steamData.coverUrl || '';
-                if (!aggregatedData.screens.length && steamData.screens?.length) aggregatedData.screens = steamData.screens;
+                // Steam ищется по названию, а не по точному коду, как DLsite, — его кадры
+                // в запас к чужим не подмешиваем, берём только когда других нет вовсе
+                if (!aggregatedData.screens.length && !aggregatedData.spareScreens.length && steamData.screens?.length) {
+                    aggregatedData.screens = steamData.screens;
+                }
                 aggregatedData.description = aggregatedData.description || steamData.description || '';
                 aggregatedData.developer = aggregatedData.developer || steamData.developer || '';
                 aggregatedData.releaseDate = aggregatedData.releaseDate || steamData.releaseDate || '';
