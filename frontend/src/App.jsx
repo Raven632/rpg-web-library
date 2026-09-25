@@ -364,7 +364,7 @@ function App() {
                   onClick={() => setSelectedGame({ game, index })} 
                   onDelete={handleDeleteGame} onRate={handleRateGame}
                   onToggleFavorite={(id, value) => patchGame(id, { favorite: value })}
-                  t={t}
+                  t={t} lang={lang}
                 />
               ))}
               {processedGames.length === 0 && (

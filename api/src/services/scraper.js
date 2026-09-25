@@ -213,7 +213,9 @@ class ScraperService {
         if (found) {
             if (data.tags?.length) fields.tags = JSON.stringify(data.tags);
             if (data.description) fields.description = data.description;
-            for (const key of ['developer', 'language', 'releaseDate']) {
+            // Язык отсюда не берём: магазин знает язык своего издания, а не того, что
+            // лежит в папке. Его определяет utils/gamelang.js по тексту самой игры
+            for (const key of ['developer', 'releaseDate']) {
                 if (!locked.includes(key) && data[key]) fields[key] = data[key];
             }
             // Ссылки, введённые руками, остаются первыми; найденные дописываются следом

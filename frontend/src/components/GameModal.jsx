@@ -10,6 +10,7 @@ import { launchGame } from '../launchGame';
 import { IconEdit, IconDownload, IconUpload } from './icons';
 
 import { describeMeta } from '../formatRetry';
+import { describeLanguage } from '../formatLanguage';
 
 // Логотипы (пути относительно папки public)
 const STEAM_LOGO = 'steam_logo.png';
@@ -384,7 +385,7 @@ const GameModal = ({ game, index, onClose, onUpdateGame, onPatch, onTagClick, t,
                     </div>
                     <div className="meta-item">
                       <span className="meta-label">{t.meta_lang}</span>
-                      <span className="meta-value gold">{game.language || '—'}</span>
+                      <span className="meta-value gold">{describeLanguage(game, t, lang)?.full || '—'}</span>
                     </div>
                   </div>
 

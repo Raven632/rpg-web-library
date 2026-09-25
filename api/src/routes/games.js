@@ -86,6 +86,9 @@ router.get('/', async (req, res) => {
             playtime: row.playtime || 0,
             progress: parseProgress(row.progress),
             screens: parseProgress(row.screens) || [],
+            // Язык по тексту самой игры: { main, langs, original }. language выше —
+            // только ручная правка, она главнее
+            textLang: parseProgress(row.text_lang),
             // Состояние поиска метаданных — для строчки в окне игры и для ревизии
             meta: {
                 status: row.meta_status || 'new',

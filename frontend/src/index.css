@@ -567,6 +567,16 @@ h1 {
 .game-card:hover .cover-placeholder .folder-name { color: var(--gold-light); }
 .card-cover-overlay { position: absolute; inset: 0; background: linear-gradient(to top, rgba(19,17,26,1) 0%, transparent 60%); z-index: 1; pointer-events: none;}
 
+/* Язык игры в нижнем углу обложки. Перевод выделен холодным цветом, чтобы его
+   было видно в сетке сразу, без чтения подписи */
+.card-lang {
+  position: absolute; right: 12px; bottom: 10px; z-index: 2;
+  font-size: 0.62rem; font-weight: 700; letter-spacing: 0.08em; white-space: nowrap;
+  padding: 3px 8px; border-radius: 10px; border: 1px solid currentColor;
+  background: rgba(19, 17, 26, 0.75); color: var(--gold); pointer-events: none;
+}
+.card-lang.translated { color: #8fb7d9; }
+
 .card-delete { 
   position: absolute; top: 12px; right: 12px; z-index: 10; width: 32px; height: 32px; 
   background: rgba(20,10,10,0.8); border: 1px solid rgba(220,60,60,0.5); border-radius: 50%; 

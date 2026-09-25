@@ -4,13 +4,15 @@ import { formatPlaytime } from '../formatPlaytime';
 const ROMAN_NUMERALS = ['Ⅰ','Ⅱ','Ⅲ','Ⅳ','Ⅴ','Ⅵ','Ⅶ','Ⅷ','Ⅸ','Ⅹ','Ⅺ','Ⅻ'];
 
 import { getCoverUrl } from '../coverUrl';
+import { describeLanguage } from '../formatLanguage';
 
-const GameCard = ({ game, index, onClick, onDelete, onRate, onToggleFavorite, t }) => {
+const GameCard = ({ game, index, onClick, onDelete, onRate, onToggleFavorite, t, lang }) => {
   const coverUrl = getCoverUrl(game);
   const roman = ROMAN_NUMERALS[index % ROMAN_NUMERALS.length] || String(index + 1);
   const volumeStr = String(game.number || index + 1).padStart(2, '0');
   // Пустая строка означает «меньше минуты» — тогда не рисуем даже значок
   const played = formatPlaytime(game.playtime, t);
+  const language = describeLanguage(game, t, lang);
 
   return (
     <div
@@ -60,6 +62,12 @@ const GameCard = ({ game, index, onClick, onDelete, onRate, onToggleFavorite, t 
           </div>
         )}
         <div className="card-cover-overlay"></div>
+        {/* Язык по тексту самой игры: видно, перевод это или оригинал, не открывая окно */}
+        {language && (
+          <span className={`card-lang ${language.translated ? 'translated' : ''}`} title={language.full}>
+            {language.short}
+          </span>
+        )}
       </div>
 
       <div className="card-info">

@@ -295,3 +295,49 @@ test('lookupMetadata: «нигде нет» и «не смогли спроси�
     const limited = await scraperService.lookupMetadata('Totally Unknown Game', '');
     assert.ok(limited.failed.length > 0);
 });
+
+// ============================================================================
+// gamelang: язык по тексту самой игры
+// ============================================================================
+
+const os = require('os');
+const path = require('path');
+const { detectGameLanguages } = require('./src/utils/gamelang.js');
+
+// Настоящая папка игры во временном каталоге: детектор читает файлы сам
+async function makeGame(t, files) {
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rpg-lang-'));
+  t.after(() => fsp.rm(dir, { recursive: true, force: true }));
+  for (const [name, content] of Object.entries(files)) {
+    await fsp.mkdir(path.dirname(path.join(dir, name)), { recursive: true });
+    await fsp.writeFile(path.join(dir, name), typeof content === 'string' ? content : JSON.stringify(content));
+  }
+  return dir;
+}
+const say = (lines) => ({ events: [null, { pages: [{ list: lines.map(s => ({ code: 401, parameters: [s] })) }] }] });
+
+test('gamelang: русский перевод японской игры', async (t) => {
+  const phrase = 'Ты правда думаешь, что мы успеем дойти до города до заката? Нам ещё идти через лес.';
+  const dir = await makeGame(t, {
+    'data/System.json': { locale: 'ja_JP' },
+    // Имена карт видит только автор — по ним и узнаём язык оригинала
+    'data/MapInfos.json': [null, { name: 'はじまりの村' }, { name: 'まおうのしろ' }],
+    'data/Map001.json': say(Array(20).fill(phrase)),
+  });
+  assert.deepStrictEqual(await detectGameLanguages(dir), { main: 'ru', langs: ['ru'], original: 'ja' });
+});
+
+test('gamelang: таблица переводов даёт все языки, коды \\REM_MAP[...] — не текст', async (t) => {
+  const ja = 'はぁ……いい天気だな。今日はどこへ行こうか。';
+  const en = 'Hah… the weather feels great. Where should we go today, and what do you want to do?';
+  const csv = ['Original,jp,en', ...Array(40).fill(`"${ja}","${ja}","${en}"`)].join('\n');
+  const dir = await makeGame(t, {
+    'data/System.json': { locale: 'en_US' },
+    'data/MapInfos.json': [null, { name: 'Town' }],
+    // Карты Karryn's Prison: вместо реплик ссылки на файлы перевода
+    'data/Map001.json': say(Array(50).fill('\\REM_MAP[map17_ev63_p2_karryn_15]')),
+    'game_messages.csv': csv,
+  });
+  const found = await detectGameLanguages(dir);
+  assert.deepStrictEqual([...found.langs].sort(), ['en', 'ja']);
+});

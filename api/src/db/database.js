@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const fsp = fs.promises;
 const { invalidateGamesList } = require('../utils/cache.js');
+const { detectGameLanguages } = require('../utils/gamelang.js');
 
 class DatabaseService {
     constructor() {
@@ -14,6 +15,8 @@ class DatabaseService {
         this.io = null;
         this.scraperService = null;
         this.GAMES_DIR = '';
+        this.textLangRunning = false;
+        this.textLangAgain = false;
     }
 
     setDependencies(io, scraperService, gamesDir) {
@@ -72,6 +75,17 @@ class DatabaseService {
         // Поля, которые человек поправил руками: автопоиск их больше не трогает
         try { await this.db.exec("ALTER TABLE games ADD COLUMN meta_locked TEXT DEFAULT '[]'"); } catch(e){}
         if (metaAdded) await this.migrateMetaStatus();
+
+        // Язык по тексту самой игры (см. utils/gamelang.js). NULL — ещё не считали,
+        // пустая строка — посчитали, но текста не нашлось
+        let textLangAdded = false;
+        try { await this.db.exec('ALTER TABLE games ADD COLUMN text_lang TEXT'); textLangAdded = true; } catch(e){}
+        // Поле language раньше заполнял автопоиск: DLsite про любую игру пишет «Japanese»,
+        // даже про русский перевод, а Steam — «Multi». Теперь в нём только ручная правка,
+        // найденное на сайтах стираем один раз
+        if (textLangAdded) {
+            await this.db.run(`UPDATE games SET language = '' WHERE COALESCE(meta_locked, '') NOT LIKE '%"language"%'`);
+        }
         
         console.log('🗄️ [DB] База данных инициализирована.');
         return this.db;
@@ -174,6 +188,32 @@ class DatabaseService {
 
         // Новая игра сразу «созрела» для поиска — воркер возьмёт её первой
         this.scraperService.requestScrape([folder]);
+        // INSERT OR REPLACE обнулил text_lang — и у новой игры, и у перезалитой поверх
+        this.fillTextLang().catch(e => console.error('[Lang]', e.message));
+    }
+
+    // Досчитывает язык игр, у которых его ещё нет. Одна игра — доли секунды, но вся
+    // библиотека — полминуты чтения карт, поэтому фоном, а не в запросе.
+    // Повторный вызов во время прохода не теряется: проход просто повторится
+    async fillTextLang() {
+        if (this.textLangRunning) { this.textLangAgain = true; return; }
+        this.textLangRunning = true;
+        try {
+            do {
+                this.textLangAgain = false;
+                const rows = await this.db.all('SELECT id FROM games WHERE text_lang IS NULL AND ready = 1');
+                for (const { id } of rows) {
+                    const found = await detectGameLanguages(path.join(this.GAMES_DIR, id)).catch(() => null);
+                    await this.db.run('UPDATE games SET text_lang = ? WHERE id = ?', [found ? JSON.stringify(found) : '', id]);
+                }
+                if (rows.length) {
+                    console.log(`[Lang] Язык определён: ${rows.length} игр`);
+                    await invalidateGamesList();
+                }
+            } while (this.textLangAgain);
+        } finally {
+            this.textLangRunning = false;
+        }
     }
 
     async syncDatabase() {
