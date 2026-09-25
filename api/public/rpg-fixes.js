@@ -330,6 +330,9 @@ if (!window.__rpgPluginHookInstalled) {
         const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
         if (!isIOS) return;
         const TARGET = 1;
+        // Настоящую плотность запоминаем до подмены: по ней масштабирование решает,
+        // чёткими пикселями рисовать картинку или со сглаживанием (см. applyScale)
+        window.__realDevicePixelRatio = window.devicePixelRatio;
         try { Object.defineProperty(window, 'devicePixelRatio', { get: () => TARGET, configurable: true }); } catch(e) {}
         const pixi_t = setInterval(() => {
             if (typeof PIXI === 'undefined') return;
@@ -357,21 +360,55 @@ if (!window.__rpgPluginHookInstalled) {
         const style = document.createElement('style');
         style.textContent = `
             html, body { margin:0!important; padding:0!important; width:100vw!important; height:100dvh!important; background:#000!important; overflow:hidden!important; touch-action:none!important; overscroll-behavior: none; -webkit-text-size-adjust: none; }
-            #GameCanvas, canvas { display:block!important; position:absolute!important; top:50%!important; left:50%!important; transform-origin:center center!important; margin:0!important; padding:0!important; image-rendering:pixelated; will-change: transform; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+            #GameCanvas, canvas { display:block!important; position:absolute!important; top:50%!important; left:50%!important; transform-origin:center center!important; margin:0!important; padding:0!important; will-change: transform; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
         `;
         document.head.appendChild(style);
 
         let isStretched = false; let targetCanvas = null;
         window.__toggleRpgStretch = () => { isStretched = !isStretched; forceScaleUpdate(); };
 
+        // Сглаживание при растягивании. Раньше картинка всегда растягивалась без него
+        // (image-rendering: pixelated), и при дробном увеличении — 1,5 на экране 1080p —
+        // каждый второй пиксель игры становился двойным: буквы разной толщины, края
+        // лесенкой. Теперь «auto»: чёткие пиксели, только когда увеличение целое
+        // (×2, ×3 — там они ровные), иначе плавно. «off» — всегда чёткие, как раньше.
+        // Выбор общий для всех игр: они открываются с одного адреса
+        const SMOOTH_KEY = 'rpgfix_smoothing';
+        let smoothMode = 'auto';
+        try { if (localStorage.getItem(SMOOTH_KEY) === 'off') smoothMode = 'off'; } catch(e) {}
+        window.__rpgSmoothing = () => smoothMode;
+        window.__toggleRpgSmoothing = () => {
+            smoothMode = smoothMode === 'auto' ? 'off' : 'auto';
+            try { localStorage.setItem(SMOOTH_KEY, smoothMode); } catch(e) {}
+            forceScaleUpdate();
+            return smoothMode;
+        };
+
         const resizeObserver = new ResizeObserver(() => { if (targetCanvas) requestAnimationFrame(applyScale); });
         function applyScale() {
             if (!targetCanvas || !targetCanvas.width) return;
-            targetCanvas.style.setProperty('width', targetCanvas.width + 'px', 'important');
-            targetCanvas.style.setProperty('height', targetCanvas.height + 'px', 'important');
-            let scaleX = window.innerWidth / targetCanvas.width; let scaleY = window.innerHeight / targetCanvas.height;
+            const w = targetCanvas.width, h = targetCanvas.height;
+            targetCanvas.style.setProperty('width', w + 'px', 'important');
+            targetCanvas.style.setProperty('height', h + 'px', 'important');
+            let scaleX = window.innerWidth / w; let scaleY = window.innerHeight / h;
             if (!isStretched) { const scale = Math.min(scaleX, scaleY); scaleX = scaleY = scale; }
-            targetCanvas.style.setProperty('transform', `translate(-50%, -50%) scale(${scaleX}, ${scaleY})`, 'important');
+
+            // Считаем в настоящих пикселях экрана: на iPhone и ноутбуке с масштабом 125%
+            // один пиксель CSS — это 3 и 1,25 физических. На iPhone devicePixelRatio
+            // подменён на 1 (fixDevicePixelRatio), поэтому берём сохранённый
+            const dpr = window.__realDevicePixelRatio || window.devicePixelRatio || 1;
+            const whole = (v) => v >= 1 && Math.abs(v - Math.round(v)) < 0.01;
+            const crisp = smoothMode === 'off' || (whole(scaleX * dpr) && whole(scaleY * dpr));
+            targetCanvas.style.setProperty('image-rendering', crisp ? 'pixelated' : 'auto', 'important');
+
+            // По центру, но с точностью до пикселя экрана: при центровке через 50% холст
+            // на нечётной ширине окна вставал на полпикселя, и даже при ×2 пиксели выходили неровными
+            const left = Math.round((window.innerWidth - w * scaleX) / 2 * dpr) / dpr;
+            const top = Math.round((window.innerHeight - h * scaleY) / 2 * dpr) / dpr;
+            targetCanvas.style.setProperty('left', '0px', 'important');
+            targetCanvas.style.setProperty('top', '0px', 'important');
+            targetCanvas.style.setProperty('transform-origin', '0 0', 'important');
+            targetCanvas.style.setProperty('transform', `translate(${left}px, ${top}px) scale(${scaleX}, ${scaleY})`, 'important');
         }
         function forceScaleUpdate() { if (targetCanvas) requestAnimationFrame(applyScale); }
 
@@ -707,6 +744,7 @@ if (!window.__rpgPluginHookInstalled) {
                     <div id="_sys_panel">
                         <div class="_sys_item" id="_sys_home">🏠 В библиотеку</div>
                         <div class="_sys_item" id="_sys_stretch">📺 Растянуть экран</div>
+                        <div class="_sys_item" id="_sys_smooth"></div>
                         <div class="_sys_item" id="_sys_turbo">⏩ Турбо-режим (3x)</div>
                         ${isIOS ? '' : '<div class="_sys_item" id="_sys_fs">⛶ На весь экран</div>'}
                     </div>
@@ -741,6 +779,22 @@ if (!window.__rpgPluginHookInstalled) {
             sysBtn.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); sysPanel.classList.toggle('_open'); }, { passive: false });
             document.getElementById('_sys_home').addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); window.location.href = '/'; }, { passive: false });
             document.getElementById('_sys_stretch').addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); window.__toggleRpgStretch(); sysPanel.classList.remove('_open'); }, { passive: false });
+
+            // Сглаживание картинки: «вкл» — плавно при дробном увеличении и чётко при целом,
+            // «выкл» — всегда чёткие пиксели. Выбор запоминается (см. setupModernViewport)
+            const smoothItem = document.getElementById('_sys_smooth');
+            const showSmoothing = () => {
+                const on = !window.__rpgSmoothing || window.__rpgSmoothing() === 'auto';
+                smoothItem.textContent = on ? '✨ Сглаживание: вкл' : '✨ Сглаживание: выкл';
+                smoothItem.classList.toggle('_active', on);
+            };
+            showSmoothing();
+            smoothItem.addEventListener('pointerdown', (e) => {
+                e.preventDefault(); e.stopPropagation();
+                if (window.__toggleRpgSmoothing) window.__toggleRpgSmoothing();
+                showSmoothing();
+                sysPanel.classList.remove('_open');
+            }, { passive: false });
 
             if (!isIOS) {
                 document.getElementById('_sys_fs')?.addEventListener('pointerdown', (e) => {
