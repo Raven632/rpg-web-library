@@ -21,15 +21,6 @@ export const IconStats = () => (
   </Icon>
 );
 
-export const IconRefresh = () => (
-  <Icon>
-    <path d="M19.5 10.5A7.5 7.5 0 0 0 6.2 6.9L4.5 8.5" />
-    <path d="M4.5 4.5v4h4" />
-    <path d="M4.5 13.5a7.5 7.5 0 0 0 13.3 3.6l1.7-1.6" />
-    <path d="M19.5 19.5v-4h-4" />
-  </Icon>
-);
-
 export const IconAudit = () => (
   <Icon>
     <rect x="5" y="4.5" width="14" height="16" rx="2" />

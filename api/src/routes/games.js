@@ -85,7 +85,15 @@ router.get('/', async (req, res) => {
             favorite: !!row.favorite,
             playtime: row.playtime || 0,
             progress: parseProgress(row.progress),
-            screens: parseProgress(row.screens) || []
+            screens: parseProgress(row.screens) || [],
+            // Состояние поиска метаданных — для строчки в окне игры и для ревизии
+            meta: {
+                status: row.meta_status || 'new',
+                attempts: row.meta_attempts || 0,
+                retryAt: row.meta_retry_at || null,
+                checkedAt: row.meta_checked_at || 0,
+                error: row.meta_error || '',
+            },
         })).sort((a, b) => b.addedAt - a.addedAt); 
         games.forEach((g, i) => g.number = i + 1);
 
@@ -97,29 +105,32 @@ router.get('/', async (req, res) => {
 });
 
 // --- ДОГОН МЕТАДАННЫХ: ставим в очередь всех, у кого их нет ---
+// Искать заново сразу для группы игр. Вызывается из ревизии: сначала видно,
+// чего не хватает, и там же это чинится — раньше кнопка работала вслепую.
+//   missing — не найденные и те, где источники не ответили
+//   partial — с тегами, но без картинок или ссылки
 router.post('/rescan', async (req, res) => {
+    const scope = req.body?.scope === 'partial' ? ['partial'] : ['new', 'not_found', 'error'];
     try {
-        // Берём и те игры, у которых нет картинок: кнопка называется «дозагрузить»,
-        // а не «дозагрузить теги», и после появления галереи это стало заметно.
         const rows = await dbService.get().all(
-            `SELECT id FROM games WHERE ready = 1 AND (
-                tags IS NULL OR tags = '' OR tags = '[]'
-                OR scraped = 0 OR link = ''
-                OR screens IS NULL OR screens = '' OR screens = '[]'
-            )`
+            `SELECT id FROM games WHERE ready = 1 AND meta_status IN (${scope.map(() => '?').join(',')})`,
+            scope
         );
-        // Очередь живёт в Redis и сама держит паузу в 4 секунды между играми,
-        // поэтому просто складываем туда всё и отвечаем сразу, не дожидаясь обхода.
-        // force: недельная память о неудачах существует для автоматических обходов.
-        // Кнопку человек нажимает сам и обычно как раз после того, как парсер починили,
-        // так что старый отрицательный ответ здесь только мешает.
-        let queued = 0, skipped = 0;
-        for (const row of rows) {
-            // Вернёт false, только если игра уже стоит в очереди
-            const added = await scraperService.queueScrape(row.id, { force: true });
-            added ? queued++ : skipped++;
-        }
-        res.json({ success: true, queued, skipped });
+        const queued = await scraperService.requestScrape(rows.map(r => r.id));
+        await invalidateGamesList();
+        res.json({ success: true, queued });
+    } catch (e) {
+        res.status(500).json({ error: 'Не удалось поставить в очередь' });
+    }
+});
+
+// «Искать сейчас» для одной игры из её окна
+router.post('/:id/rescrape', async (req, res) => {
+    try {
+        const queued = await scraperService.requestScrape([path.basename(req.params.id)]);
+        if (!queued) return res.status(404).json({ error: 'Игра не найдена' });
+        await invalidateGamesList();
+        res.json({ success: true });
     } catch (e) {
         res.status(500).json({ error: 'Не удалось поставить в очередь' });
     }
@@ -161,7 +172,14 @@ router.get('/audit', async (req, res) => {
 
         const never = rows.filter(g => !g.lastPlayed && !g.playtime).map(slim).sort(bySize);
         const heavy = rows.map(slim).sort(bySize).slice(0, 10);
-        const nometa = rows.filter(g => !g.tags || g.tags === '[]' || !g.link).map(slim).sort(bySize);
+
+        // Поиск метаданных: берём готовое состояние, а не угадываем по пустым полям.
+        // Раньше ревизия и кнопка «Дозагрузить» считали «без метаданных» по-разному.
+        const withMeta = (g) => ({ ...slim(g), status: g.meta_status, retryAt: g.meta_retry_at || null, error: g.meta_error || '' });
+        const missing = rows.filter(g => g.meta_status === 'not_found' || g.meta_status === 'error').map(withMeta).sort(bySize);
+        const partial = rows.filter(g => g.meta_status === 'partial').map(withMeta).sort(bySize);
+        const now = Date.now();
+        const pending = rows.filter(g => g.meta_status === 'new' || (g.meta_retry_at && g.meta_retry_at <= now)).length;
 
         // Папки, игры к которым уже нет. Сейвы в таком случае — единственное, что
         // осталось от прохождения, поэтому показываем отдельно и ничего не трогаем.
@@ -179,7 +197,7 @@ router.get('/audit', async (req, res) => {
             ...await orphanDirs(path.join(GAMES_DIR, '_media'), 'media'),
         ];
 
-        res.json({ total: rows.length, broken, duplicates, nometa, orphans, never, heavy });
+        res.json({ total: rows.length, broken, duplicates, missing, partial, pending, orphans, never, heavy });
     } catch (e) {
         console.error('[Audit] Ошибка:', e.message);
         res.status(500).json({ error: 'Не удалось собрать ревизию' });
@@ -265,88 +283,66 @@ router.post('/:id/edit', async (req, res) => {
     const { title, rjCode, developer, language, releaseDate, link } = req.body;
 
     try {
-        let scrapeWarning = null;
-        
-        // Обновляем только те поля, что реально пришли. Раньше частичный запрос
-        // (например, одна лишь ссылка) затирал название и остальное пустыми строками.
-        const manual = { title, developer, language, releaseDate, link };
-        const manualKeys = Object.keys(manual).filter(k => manual[k] !== undefined);
-        if (manualKeys.length > 0) {
+        const current = await dbService.get().get('SELECT * FROM games WHERE id = ?', [folder]);
+        if (!current) return res.status(404).json({ error: 'Игра не найдена' });
+
+        // Что человек действительно поменял. Форма присылает все поля разом, и если
+        // считать ручным всё присланное, автопоиск навсегда перестал бы обновлять
+        // поля, которые просто стояли в форме с прошлого раза.
+        const sent = { developer, language, releaseDate, link };
+        const manual = {};
+        for (const [key, value] of Object.entries(sent)) {
+            if (value !== undefined && String(value) !== String(current[key] || '')) manual[key] = value;
+        }
+
+        // Поменянное пишем сразу: оно главнее всего, что найдётся, и должно остаться,
+        // даже если поиск ничего не даст
+        const direct = { ...manual };
+        if (title !== undefined && title !== current.title) direct.title = title;
+        const directKeys = Object.keys(direct);
+        if (directKeys.length) {
             await dbService.get().run(
-                `UPDATE games SET ${manualKeys.map(k => `${k} = ?`).join(', ')} WHERE id = ?`,
-                [...manualKeys.map(k => manual[k]), folder]
+                `UPDATE games SET ${directKeys.map(k => `${k} = ?`).join(', ')} WHERE id = ?`,
+                [...directKeys.map(k => direct[k]), folder]
             );
         }
 
-        // Искать будем по тому названию, что сейчас в базе, если своё не прислали
-        const current = await dbService.get().get('SELECT title FROM games WHERE id = ?', [folder]);
-        const searchFrom = title || current?.title || folder;
+        const searchFrom = title || current.title || folder;
+        const rawQuery = rjCode || link;
+        const typedRj = (String(rawQuery || '').match(/RJ\d{6,8}/i) || [])[0];
 
-        const rawQuery = rjCode || link; 
-        const actualRjCode = (rawQuery && rawQuery.match(/RJ\d{6,8}/i)) ? rawQuery.match(/RJ\d{6,8}/i)[0].toUpperCase() : null;
-        let coverUpdated = false;
+        const lookup = await scraperService.lookupMetadata(searchFrom, rawQuery, {
+            altTitle: scraperService.titleFromFolder(folder),
+        });
+        if (lookup.data && !lookup.data.rjCode && typedRj) lookup.data.rjCode = typedRj.toUpperCase();
 
-        const scrapedData = await scraperService.fetchUniversalMetadata(searchFrom, rawQuery);
-        
-        if (scrapedData) {
-            // Все картинки сохраняет saveGameMedia и только в _media. Раньше обложка
-            // писалась ещё и в папку игры, а потом перетиралась картинкой с форума —
-            // из-за этого вместо обложки магазина в карточке оказывалась анимация темы.
-            const currentRow = await dbService.get().get('SELECT cover FROM games WHERE id = ?', [folder]);
-            const media = await scraperService.saveGameMedia(
-                folder,
-                { ...scrapedData, rjCode: scrapedData.rjCode || actualRjCode },
-                currentRow?.cover
-            );
-            if (media.cover) {
-                await dbService.get().run('UPDATE games SET cover = ? WHERE id = ?', [media.cover, folder]);
-                coverUpdated = true;
-            }
-            if (media.screens.length) {
-                await dbService.get().run('UPDATE games SET screens = ? WHERE id = ?', [JSON.stringify(media.screens), folder]);
-            }
+        // Раньше при неудаче здесь выполнялось tags = '[]', description = '' — опечатка
+        // в RJ-коде стирала хорошие теги и описание. Теперь неудача ничего не трогает.
+        const result = await scraperService.applyLookup(folder, lookup, { manual });
 
-            const t_tags = scrapedData.tags?.length > 0 ? JSON.stringify(scrapedData.tags) : '[]';
-            const t_desc = scrapedData.description || '';
-            const t_dev = scrapedData.developer || developer || '';
-            const t_lang = scrapedData.language || language || '';
-            const t_rel = scrapedData.releaseDate || releaseDate || '';
-            const t_link = scrapedData.link || link || '';
-
-            await dbService.get().run(
-                `UPDATE games SET tags = ?, description = ?, developer = ?, language = ?, releaseDate = ?, link = ?, scraped = 1 WHERE id = ?`,
-                [t_tags, t_desc, t_dev, t_lang, t_rel, t_link, folder]
-            );
-            
-            if (!scrapedData.tags?.length && coverUpdated) {
-                scrapeWarning = 'Обложка обновлена, но теги не найдены.';
-            }
-        } else {
-            await dbService.get().run(
-                `UPDATE games SET tags = '[]', description = '', scraped = 0 WHERE id = ?`,
-                [folder]
-            );
-            if (rawQuery) {
-                scrapeWarning = 'Данные на внешних сервисах не найдены. Старые метаданные очищены.';
-            }
-        }
-
-        // [REDIS] Сбрасываем кэш, так как метаданные игры изменились
-        await invalidateGamesList();
-
-        const updatedGame = await dbService.get().get('SELECT * FROM games WHERE id = ?', [folder]);
+        // Текст сообщения собирает интерфейс на языке пользователя: отсюда — только факты
+        const g = result.row;
         res.json({
-            success: true, 
-            warning: scrapeWarning, 
+            success: true,
+            found: result.found,
+            failed: result.failed,
             game: {
-                title: updatedGame.title, 
-                cover: updatedGame.cover,
-                developer: updatedGame.developer,
-                language: updatedGame.language,
-                releaseDate: updatedGame.releaseDate,
-                link: updatedGame.link,
-                tags: normalizeTags(updatedGame.tags ? JSON.parse(updatedGame.tags) : []),
-                description: updatedGame.description
+                title: g.title,
+                cover: g.cover,
+                developer: g.developer || '',
+                language: g.language || '',
+                releaseDate: g.releaseDate || '',
+                link: g.link || '',
+                tags: normalizeTags(g.tags ? JSON.parse(g.tags) : []),
+                description: g.description || '',
+                screens: parseProgress(g.screens) || [],
+                meta: {
+                    status: g.meta_status,
+                    attempts: g.meta_attempts || 0,
+                    retryAt: g.meta_retry_at || null,
+                    checkedAt: g.meta_checked_at || 0,
+                    error: g.meta_error || '',
+                },
             }
         });
     } catch (e) { 

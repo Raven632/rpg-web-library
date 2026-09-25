@@ -1105,6 +1105,36 @@ footer {
 .audit-item-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .audit-item-size { flex-shrink: 0; font-size: 0.75rem; color: var(--text-dim); }
 .audit-more { font-size: 0.75rem; color: var(--text-dim); margin: -12px 0 18px; }
+/* «Искать ещё раз» для целой группы — под её списком */
+.audit-retry {
+  margin: -6px 0 22px; padding: 8px 16px; cursor: pointer;
+  background: rgba(201,168,76,0.08); border: 1px solid rgba(201,168,76,0.4); border-radius: 6px;
+  color: var(--gold-light); font-family: 'Cinzel', serif; font-size: 0.72rem;
+  letter-spacing: 0.08em; text-transform: uppercase; transition: all 0.2s;
+}
+.audit-retry:disabled { opacity: 0.5; cursor: default; }
+@media (hover: hover) { .audit-retry:not(:disabled):hover { background: var(--gold); color: var(--bg-deep); } }
+.audit-retry-done { margin: -6px 0 22px; font-size: 0.8rem; color: var(--gold-muted); }
+
+/* Состояние поиска метаданных в окне игры. Показывается, только если что-то не так:
+   у готовых игр строки нет, чтобы не шуметь */
+.meta-status {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px 18px; flex-wrap: wrap;
+  margin: -4px 0 20px; padding: 12px 14px; border-radius: 6px;
+  border: 1px dashed rgba(201,168,76,0.35); background: rgba(201,168,76,0.05);
+}
+.meta-status.error { border-color: rgba(214, 120, 96, 0.5); background: rgba(214, 120, 96, 0.06); }
+.meta-status-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; font-size: 0.88rem; color: var(--text-dim); }
+.meta-status-text b { color: var(--text); font-weight: 600; }
+.meta-status-hint { font-size: 0.8rem; font-style: italic; }
+.meta-status-btn {
+  flex-shrink: 0; padding: 8px 14px; cursor: pointer;
+  background: transparent; border: 1px solid var(--gold); border-radius: 6px;
+  color: var(--gold-light); font-family: 'Cinzel', serif; font-size: 0.72rem;
+  letter-spacing: 0.08em; text-transform: uppercase; transition: all 0.2s;
+}
+@media (hover: hover) { .meta-status-btn:hover { background: var(--gold); color: var(--bg-deep); } }
+.meta-status-btn:focus-visible, .audit-retry:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
 
 @media (max-width: 700px) {
   .stats-content { padding: 28px 18px 24px; width: 94vw; }

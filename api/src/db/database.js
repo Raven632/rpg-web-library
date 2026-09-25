@@ -1,6 +1,7 @@
 const sqlite3 = require('sqlite3');
 const { open } = require('sqlite');
 const path = require('path');
+const { statusOfRow, planNext } = require('../utils/scrapeplan.js');
 const crypto = require('crypto');
 const fs = require('fs');
 const fsp = fs.promises;
@@ -58,6 +59,19 @@ class DatabaseService {
         try { await this.db.exec('ALTER TABLE games ADD COLUMN playtime INTEGER DEFAULT 0'); } catch(e){}
         try { await this.db.exec('ALTER TABLE games ADD COLUMN progress TEXT DEFAULT ""'); } catch(e){}
         try { await this.db.exec('ALTER TABLE games ADD COLUMN screens TEXT DEFAULT ""'); } catch(e){}
+
+        // Состояние поиска метаданных. Раньше «нашли / не нашли» было размазано по
+        // трём местам: флаг scraped здесь, пометка «не найдено» и сама очередь в Redis.
+        // Теперь всё в одной строке таблицы, и очередь — это просто «чей срок подошёл».
+        let metaAdded = false;
+        try { await this.db.exec("ALTER TABLE games ADD COLUMN meta_status TEXT DEFAULT 'new'"); metaAdded = true; } catch(e){}
+        try { await this.db.exec('ALTER TABLE games ADD COLUMN meta_attempts INTEGER DEFAULT 0'); } catch(e){}
+        try { await this.db.exec('ALTER TABLE games ADD COLUMN meta_checked_at INTEGER DEFAULT 0'); } catch(e){}
+        try { await this.db.exec('ALTER TABLE games ADD COLUMN meta_retry_at INTEGER'); } catch(e){}
+        try { await this.db.exec("ALTER TABLE games ADD COLUMN meta_error TEXT DEFAULT ''"); } catch(e){}
+        // Поля, которые человек поправил руками: автопоиск их больше не трогает
+        try { await this.db.exec("ALTER TABLE games ADD COLUMN meta_locked TEXT DEFAULT '[]'"); } catch(e){}
+        if (metaAdded) await this.migrateMetaStatus();
         
         console.log('🗄️ [DB] База данных инициализирована.');
         return this.db;
@@ -66,6 +80,27 @@ class DatabaseService {
     get() {
         if (!this.db) throw new Error('База данных еще не инициализирована!');
         return this.db;
+    }
+
+    // Разовый перенос старого состояния в новые колонки. Игры с тегами, ссылкой и
+    // картинками считаются готовыми; «не найденные» получают первую попытку завтра,
+    // а не прямо сейчас — иначе обновление запустило бы разом обход всей библиотеки.
+    async migrateMetaStatus() {
+        const rows = await this.db.all('SELECT id, tags, description, link, screens, scraped FROM games');
+        const now = Date.now();
+        for (const row of rows) {
+            let status = statusOfRow(row);
+            let plan = planNext(status, 0, now);
+            if (!row.scraped && status === 'not_found') {
+                status = 'new';
+                plan = { attempts: 0, retryAt: now };
+            }
+            await this.db.run(
+                'UPDATE games SET meta_status = ?, meta_attempts = ?, meta_retry_at = ? WHERE id = ?',
+                [status, plan.attempts, plan.retryAt, row.id]
+            );
+        }
+        console.log(`🗄️ [DB] Состояние метаданных перенесено: ${rows.length} игр`);
     }
 
     // До init() токен пустой — requireAuth в этом случае никого не пускает
@@ -137,8 +172,8 @@ class DatabaseService {
 
         if (this.io) this.io.emit('scrape-success', { message: `✅ Игра "${title}" добавлена в библиотеку!` });
 
-        // Отправляем в фоновую очередь парсера
-        this.scraperService.queueScrape(folder);
+        // Новая игра сразу «созрела» для поиска — воркер возьмёт её первой
+        this.scraperService.requestScrape([folder]);
     }
 
     async syncDatabase() {

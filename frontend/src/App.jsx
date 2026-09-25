@@ -10,7 +10,7 @@ import { locales } from './components/locales'
 import StorageMonitor from './components/StorageMonitor';
 import ContinueCard from './components/ContinueCard';
 import StatsModal from './components/StatsModal';
-import { IconStats, IconRefresh, IconAudit, IconLogout } from './components/icons';
+import { IconStats, IconAudit, IconLogout } from './components/icons';
 import AuditModal from './components/AuditModal';
 
 const socket = io();
@@ -212,7 +212,8 @@ function App() {
   // и на телефоне, и на компьютере. Предупреждаем, чтобы это не было сюрпризом.
   const handleLogout = async () => {
     if (!window.confirm(t.logout_confirm)) return;
-    try { await fetch('/api/logout', { method: 'POST' }); } catch (e) {}
+    // Сеть упала — всё равно выходим локально: кука без ключа на сервере бесполезна
+    try { await fetch('/api/logout', { method: 'POST' }); } catch { /* см. выше */ }
     setIsAuthed(false);
     setAuthMode('login');
   };
@@ -234,17 +235,6 @@ function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const handleRescan = async () => {
-    try {
-      const res = await fetch('/api/games/rescan', { method: 'POST' });
-      const data = await res.json();
-      if (data.queued) showToast(t.rescan_queued(data.queued), 'success');
-      else if (data.skipped) showToast(t.rescan_skipped(data.skipped), 'error');
-      else showToast(t.rescan_none, 'error');
-    } catch (err) {
-      showToast(t.err_net, 'error');
-    }
-  };
 
   const availableTags = useMemo(() => {
     const tagCounts = {};
@@ -331,7 +321,6 @@ function App() {
         t={t}
         menuItems={isAuthed ? [
           { key: 'stats', icon: <IconStats />, label: t.stats, onClick: () => setStatsOpen(true) },
-          { key: 'rescan', icon: <IconRefresh />, label: t.rescan, onClick: handleRescan },
           { key: 'audit', icon: <IconAudit />, label: t.audit, onClick: () => setAuditOpen(true) },
           { key: 'logout', icon: <IconLogout />, label: t.logout, onClick: handleLogout },
         ] : []}
@@ -406,7 +395,7 @@ function App() {
       
       {statsOpen && <StatsModal games={games} t={t} lang={lang} onClose={() => setStatsOpen(false)} />}
 
-      {auditOpen && <AuditModal t={t} onClose={() => setAuditOpen(false)} onOpenGame={handleOpenGameById} />}
+      {auditOpen && <AuditModal t={t} lang={lang} onClose={() => setAuditOpen(false)} onOpenGame={handleOpenGameById} />}
 
       {selectedGame && (
         <GameModal 

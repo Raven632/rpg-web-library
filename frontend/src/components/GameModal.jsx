@@ -9,6 +9,8 @@ import { launchGame } from '../launchGame';
 
 import { IconEdit, IconDownload, IconUpload } from './icons';
 
+import { describeMeta } from '../formatRetry';
+
 // Логотипы (пути относительно папки public)
 const STEAM_LOGO = 'steam_logo.png';
 const DLSITE_LOGO = 'dlsite_logo.png';
@@ -89,6 +91,22 @@ const GameModal = ({ game, index, onClose, onUpdateGame, onPatch, onTagClick, t,
   };
 
   const [isEditing, setIsEditing] = useState(false);
+  // «Искать сейчас» нажата: запоминаем время последней проверки на момент нажатия.
+  // Пока оно не сменилось, воркер ещё не записал новый итог — поиск идёт.
+  // Вычисляем, а не сбрасываем эффектом: так не бывает лишнего прохода рендера.
+  const [queuedFrom, setQueuedFrom] = useState(null);
+  const searchQueued = queuedFrom !== null && (game.meta?.checkedAt || 0) === queuedFrom;
+
+  const handleRescrape = async () => {
+    setQueuedFrom(game.meta?.checkedAt || 0);
+    try {
+      const res = await fetch(`/api/games/${encodeURIComponent(game.id)}/rescrape`, { method: 'POST' });
+      if (!res.ok) throw new Error();
+    } catch {
+      setQueuedFrom(null);
+      showToast?.(t.err_net, 'error');
+    }
+  };
   const [editTitle, setEditTitle] = useState(game.title || '');
   const [editRj, setEditRj] = useState('');
   // Кандидаты с F95 для ручного выбора: автомат ошибается на непохожих названиях,
@@ -130,7 +148,7 @@ const GameModal = ({ game, index, onClose, onUpdateGame, onPatch, onTagClick, t,
       const res = await fetch(`/api/saves/import/${game.id}`, { method: 'POST', body: formData });
       const data = await res.json();
       if (data.success) {
-        notify(t.import_success || 'Импорт завершен успешно!', 'success');
+        notify(t.import_success, 'success');
         onUpdateGame(index, game);
       } else {
         notify(data.error || 'Ошибка импорта', 'error');
@@ -218,25 +236,20 @@ const GameModal = ({ game, index, onClose, onUpdateGame, onPatch, onTagClick, t,
       });
       const data = await res.json();
       if (data.success) {
-        onUpdateGame(index, {
-          ...game,
-          title: editTitle,
-          developer: editDeveloper,
-          language: editLanguage,
-          releaseDate: editReleaseDate,
-          
-          // ИСПРАВЛЕНО: Сначала берем агрегированные ссылки от сервера!
-          link: data.game?.link || editLink, 
-          
-          ...(data.game?.cover && { cover: data.game.cover }),
-          ...(data.game?.tags && { tags: data.game.tags }),
-          ...(data.game?.description && { description: data.game.description }),
-          updatedAt: Date.now()
-        });
-        
+        // Сервер возвращает итог целиком: что человек ввёл, что нашлось и состояние поиска
+        onUpdateGame(index, { ...game, ...(data.game || {}), updatedAt: Date.now() });
+
+        // Раньше при неудаче здесь всё равно писалось «Успешно», хотя сервер в этот
+        // момент стирал теги. Теперь данные не трогаются, а человек узнаёт, что поиск
+        // ничего не дал. Молчим, если он искать и не просил — просто поправил поле.
+        const askedToSearch = !!editRj || editLink !== (game.link || '');
+        if (!data.found && askedToSearch) {
+          notify(data.failed?.length ? t.edit_unreachable(data.failed.join(', ')) : t.edit_not_found, 'error');
+        } else {
+          notify(t.saved_ok, 'success');
+        }
         setIsEditing(false);
         setEditRj('');
-        notify(t.save + ' Успешно!', 'success');
       } else {
         notify(data.error || 'Ошибка при сохранении', 'error');
       }
@@ -391,6 +404,26 @@ const GameModal = ({ game, index, onClose, onUpdateGame, onPatch, onTagClick, t,
                 <div style={{ display: 'flex', justifyContent: 'left', marginBottom: '20px' }}>
                   {renderSourceLink()}
                 </div> 
+
+                {/* Если метаданные не полные — видно, почему и что будет дальше. Раньше
+                    это было не узнать: пометки «не найдено» жили в Redis и никуда не выводились */}
+                {(() => {
+                  const info = describeMeta(game.meta, t, lang);
+                  if (!info) return null;
+                  const busy = info.searching || searchQueued;
+                  return (
+                    <div className={`meta-status ${game.meta.status}`}>
+                      <div className="meta-status-text">
+                        <b>{busy ? t.meta_line_new : info.text}</b>
+                        {!busy && info.details && <span>{info.details}</span>}
+                        {!busy && game.meta.status !== 'partial' && <span className="meta-status-hint">{t.meta_manual_hint}</span>}
+                      </div>
+                      {!busy && (
+                        <button type="button" className="meta-status-btn" onClick={handleRescrape}>{t.meta_search_now}</button>
+                      )}
+                    </div>
+                  );
+                })()}
 
                 {formatPlaytime(game.playtime, t) && (
                   <div className="modal-progress">

@@ -336,10 +336,17 @@ if (require.main === module) {
         // Разовый проход по существующим сейвам, чтобы прогресс появился у старых игр
         setTimeout(() => backfillProgress().catch(e => console.error('[Progress]', e.message)), 3000);
 
-        // Очередь сбора метаданных живёт в Redis и переживает перезапуск, но сама себя
-        // не будит: после рестарта её некому запустить, пока не добавят новую задачу.
-        // Поэтому подталкиваем её на старте — иначе деплой посреди обхода тихо всё останавливает.
-        setTimeout(() => scraperService.processBackgroundScrape().catch(e => console.error('[Queue]', e.message)), 5000);
+        // Поиск метаданных: воркер берёт из базы игры, чей срок подошёл. На старте —
+        // догнать то, что созрело, пока сервер лежал; дальше раз в полчаса проверять,
+        // не подошёл ли срок у отложенных (повторы идут с паузами от часа до месяца).
+        // Ключи старой очереди в Redis больше не нужны — убираем разово.
+        setTimeout(async () => {
+            await scraperService.cleanupLegacyQueue();
+            scraperService.processBackgroundScrape().catch(e => console.error('[Queue]', e.message));
+        }, 5000);
+        setInterval(() => {
+            scraperService.processBackgroundScrape().catch(e => console.error('[Queue]', e.message));
+        }, 30 * 60 * 1000).unref();
 
         // Настройка "наблюдателя" (Watcher) за папкой игр для автообновления библиотеки
         let syncTimer = null;

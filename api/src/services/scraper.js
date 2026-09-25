@@ -7,6 +7,34 @@ const { execFile, spawn } = require('child_process');
 const execFilePromise = util.promisify(execFile);
 const { redisClient, invalidateGamesList } = require('../utils/cache.js');
 const { cleanTitle } = require('../utils/title.js');
+const { statusOfRow, planNext } = require('../utils/scrapeplan.js');
+const { AsyncLocalStorage } = require('async_hooks');
+
+// У каждого поиска метаданных свой «протокол»: какие источники не ответили.
+// AsyncLocalStorage держит его отдельно для каждого поиска, даже когда фоновый
+// воркер и ручная правка ищут одновременно, и не требует протаскивать параметр
+// через все функции источников.
+const lookupRun = new AsyncLocalStorage();
+
+function noteFailed(label) {
+    lookupRun.getStore()?.failed.add(label);
+}
+
+// fetch для источников. Отличает «ответили: нет такой игры» от «не смогли спросить»:
+// сетевой сбой и таймаут, 403 (Cloudflare), 429 (лимит), 5xx (сервер лёг).
+// global.fetch берём в момент вызова — так его по-прежнему можно подменять в тестах.
+async function sourceFetch(url, options) {
+    let host = 'источник';
+    try { host = new URL(String(url)).hostname.replace(/^www\./, ''); } catch (e) {}
+    try {
+        const res = await globalThis.fetch(url, options);
+        if (res.status === 403 || res.status === 429 || res.status >= 500) noteFailed(host);
+        return res;
+    } catch (e) {
+        noteFailed(host);
+        throw e;
+    }
+}
 
 // Steam прячет игры 18+ за возрастным подтверждением. Без этих кук appdetails
 // отвечает success: false, и вся ветка Steam молча возвращает пустоту —
@@ -33,6 +61,17 @@ function fullSizeImage(url) {
     let u = String(url || '').replace(/^https?:\/\/preview\.f95zone\.to\//i, 'https://attachments.f95zone.to/');
     if (/attachments\.f95zone\.to\//i.test(u)) u = u.replace('/thumb/', '/');
     return u;
+}
+
+// Каталог F95 ищет только по запросу не длиннее 30 символов. На 31-м он молча
+// выключает фильтр и отдаёт всю ленту — больше 1800 страниц свежих тем, и нужной
+// среди них нет. Проверено перебором длины: 30 ищет, 31 уже нет.
+const F95_QUERY_MAX = 30;
+
+// Ответ «вся лента вместо результатов поиска». Настоящая выдача по названию —
+// от силы пара страниц; тысячи страниц означают, что фильтр не сработал.
+function f95SearchIgnored(data) {
+    return (data?.msg?.pagination?.total || 0) > 50;
 }
 
 function titleSimilarity(a, b) {
@@ -78,124 +117,182 @@ class ScraperService {
         this.dbService = dbService; 
     }
 
-    // --- НОВОЕ: Очередь на базе Redis ---
-    async queueScrape(folder, { force = false } = {}) {
-        // Игры, по которым неделю назад ничего не нашлось, заново не дёргаем:
-        // источники те же, лимиты общие, результат будет тот же.
-        if (!force) {
-            const missed = await redisClient.exists(`scrape:miss:${folder}`).catch(() => 0);
-            if (missed) return false;
-        } else {
-            // Разбор запросили руками — забываем прошлую неудачу, иначе она всплывёт
-            // при следующем автоматическом обходе и снова закроет игре дорогу
-            await redisClient.del(`scrape:miss:${folder}`).catch(() => {});
-        }
-        try {
-            // Защита от дубликатов (sAdd вернет 1, если элемента не было)
-            const isAdded = await redisClient.sAdd('scrape:queued_set', folder);
-            
-            if (isAdded) {
-                // Добавляем задачу в конец очереди
-                await redisClient.rPush('scrape:queue', folder);
-                this.processBackgroundScrape();
-            }
-            return !!isAdded;
-        } catch (e) {
-            console.error('[Queue] Ошибка добавления в Redis:', e);
-        }
+    // Попросить поиск для игр прямо сейчас: срок «подошёл», счётчик неудач обнулён.
+    // Это и импорт новой игры, и кнопка «Искать сейчас» — очередь как отдельной
+    // сущности больше нет, воркер просто берёт из базы тех, чей срок настал.
+    async requestScrape(ids) {
+        if (!this.dbService || !ids.length) return 0;
+        const marks = ids.map(() => '?').join(',');
+        const res = await this.dbService.get().run(
+            `UPDATE games SET meta_retry_at = ?, meta_attempts = 0 WHERE id IN (${marks})`,
+            [Date.now(), ...ids]
+        );
+        this.processBackgroundScrape();
+        return res?.changes || 0;
     }
 
-    async processBackgroundScrape() {
-        if (this.isBackgroundScraping) return;
-        
-        // Проверяем, есть ли задачи в очереди
-        const queueLength = await redisClient.lLen('scrape:queue').catch(() => 0);
-        if (queueLength === 0) return;
+    async countDue() {
+        const row = await this.dbService.get().get(
+            'SELECT COUNT(*) AS n FROM games WHERE ready = 1 AND meta_retry_at IS NOT NULL AND meta_retry_at <= ?',
+            [Date.now()]
+        ).catch(() => null);
+        return row?.n || 0;
+    }
 
-        this.isBackgroundScraping = true;
-        
+    // Старые ключи Redis от прошлой очереди. Разово убираем, чтобы не путали
+    async cleanupLegacyQueue() {
         try {
-            while (await redisClient.lLen('scrape:queue') > 0) {
-                // Берем самую старую задачу из начала списка
-                const folder = await redisClient.lPop('scrape:queue');
-                if (!folder) break;
-                
+            await redisClient.del(['scrape:queue', 'scrape:queued_set']);
+            for await (const key of redisClient.scanIterator({ MATCH: 'scrape:miss:*', COUNT: 200 })) {
+                await redisClient.del(key);
+            }
+        } catch (e) {}
+    }
+
+    titleFromFolder(folder) {
+        return folder.replace(/\[?RJ\d{6,8}\]?/gi, '').replace(/[-_]/g, ' ').replace(/\s+/g, ' ').trim() || folder;
+    }
+
+    // Что искать для игры: сохранённая ссылка, RJ-код из папки и название из самой игры
+    async lookupInputs(folder) {
+        const gamePath = path.join(this.GAMES_DIR, folder);
+        const saved = await this.dbService.get().get('SELECT link FROM games WHERE id = ?', [folder]);
+        // Все известные ссылки, а не только первая. Раньше дальше первой (обычно F95)
+        // ничего не проходило: DLsite и Steam искались заново по названию, и если в
+        // этот раз не находились — их ссылки выпадали из карточки при повторном проходе.
+        const savedLinks = (saved?.link || '').split(',').map(x => x.trim()).filter(Boolean);
+        const fromFolder = await this.findRJCode(folder, gamePath);
+        // Всё одной строкой: разбор вытащит оттуда и код, и каждую ссылку.
+        const query = [...savedLinks, fromFolder].filter(Boolean).join(' ');
+
+        const folderTitle = this.titleFromFolder(folder);
+        let title = folderTitle;
+        try {
+            const sys = JSON.parse(await fsp.readFile(path.join(gamePath, 'data', 'System.json'), 'utf8'));
+            if (sys.gameTitle && !sys.gameTitle.toLowerCase().includes('rmmz')) title = sys.gameTitle;
+        } catch (e) {}
+        // Имя папки не выбрасываем: оно часто совпадает с темой на форуме лучше,
+        // чем название, которое игра пишет о себе сама
+        return { title, query, altTitle: folderTitle };
+    }
+
+    // Поиск с отчётом: кроме найденного — список источников, которые не ответили.
+    // Только так «игры нигде нет» отличается от «F95 упёрся в лимит»: раньше
+    // оба случая выглядели одинаково и получали одинаковую недельную пометку.
+    async lookupMetadata(title, query, { altTitle = '' } = {}) {
+        const run = { failed: new Set() };
+        const data = await lookupRun.run(run, () => this.fetchUniversalMetadata(title, query, { altTitle }));
+        return { data, failed: [...run.failed] };
+    }
+
+    // Записать итог поиска в игру. Одно место и для фоновой очереди, и для ручной
+    // правки: раньше у них были свои правила, и ручная при неудаче стирала теги.
+    //   manual       — поля, которые человек только что поменял сам: они главнее
+    //                  найденного и дальше защищены от автопоиска
+    //   prevAttempts — неудач подряд до этой попытки; ручной поиск передаёт 0
+    async applyLookup(folder, { data, failed }, { manual = {}, prevAttempts = 0 } = {}) {
+        const db = this.dbService.get();
+        const row = await db.get('SELECT * FROM games WHERE id = ?', [folder]);
+        if (!row) return null;
+
+        let locked = [];
+        try { locked = JSON.parse(row.meta_locked || '[]'); } catch (e) {}
+        locked = [...new Set([...locked, ...Object.keys(manual)])];
+
+        const found = !!(data && (data.tags?.length || data.description));
+        const fields = {};
+        if (found) {
+            if (data.tags?.length) fields.tags = JSON.stringify(data.tags);
+            if (data.description) fields.description = data.description;
+            for (const key of ['developer', 'language', 'releaseDate']) {
+                if (!locked.includes(key) && data[key]) fields[key] = data[key];
+            }
+            // Ссылки, введённые руками, остаются первыми; найденные дописываются следом
+            const split = (v) => String(v || '').split(',').map(x => x.trim()).filter(Boolean);
+            // Повторный поиск не должен терять то, что уже было известно: источник мог
+            // не ответить именно сейчас. Найденное идёт первым, известное — следом
+            const discovered = split(data.link);
+            if (locked.includes('link')) {
+                fields.link = [...new Set([...split(manual.link ?? row.link), ...discovered])].join(',');
+            } else if (discovered.length) {
+                fields.link = [...new Set([...discovered, ...split(row.link)])].join(',');
+            }
+
+            const media = await this.saveGameMedia(folder, data, row.cover);
+            if (media.cover) fields.cover = media.cover;
+            if (media.screens.length) fields.screens = JSON.stringify(media.screens);
+        }
+
+        // Итог считаем по тому, что лежит у игры после записи: если поиск ничего
+        // не дал, но теги остались с прошлого раза, игра не становится «не найденной»
+        const status = statusOfRow({ ...row, ...fields }, failed);
+        const plan = planNext(status, prevAttempts);
+        Object.assign(fields, {
+            meta_status: status,
+            meta_attempts: plan.attempts,
+            meta_retry_at: plan.retryAt,
+            meta_checked_at: Date.now(),
+            meta_error: status === 'error' ? failed.join(', ') : '',
+            meta_locked: JSON.stringify(locked),
+            scraped: 1,
+        });
+
+        const keys = Object.keys(fields);
+        await db.run(
+            `UPDATE games SET ${keys.map(k => `${k} = ?`).join(', ')} WHERE id = ?`,
+            [...keys.map(k => fields[k]), folder]
+        );
+        await invalidateGamesList();
+        return { found, status, retryAt: plan.retryAt, failed, row: { ...row, ...fields } };
+    }
+
+    // Воркер. Берёт из базы игру, у которой подошёл срок, ищет, записывает итог
+    // и срок следующей попытки. Если сервер перезапустят посреди поиска, ничего
+    // не потеряется: пока итог не записан, срок у игры по-прежнему «подошёл».
+    async processBackgroundScrape() {
+        if (this.isBackgroundScraping || !this.dbService) return;
+        this.isBackgroundScraping = true;
+
+        try {
+            for (;;) {
+                const game = await this.dbService.get().get(
+                    `SELECT id, meta_attempts FROM games
+                     WHERE ready = 1 AND meta_retry_at IS NOT NULL AND meta_retry_at <= ?
+                     ORDER BY meta_retry_at LIMIT 1`,
+                    [Date.now()]
+                );
+                if (!game) break;
+                const folder = game.id;
+
                 try {
-                    console.log(`[Queue] ⏳ Фоновый парсинг для: ${folder}`);
-                    const gamePath = path.join(this.GAMES_DIR, folder);
-                    
-                    // Если источник для игры уже известен (ты вставил ссылку руками либо его
-                    // нашли раньше) — берём его, а не угадываем заново.
-                    const saved = await this.dbService.get().get('SELECT link FROM games WHERE id = ?', [folder]);
-                    const savedLink = (saved?.link || '').split(',')[0].trim();
-                    const fromFolder = await this.findRJCode(folder, gamePath);
-                    // Передаём оба источника одной строкой: разбор вытащит и код, и ссылку.
-                    // Иначе ссылка на тему F95 «съедала» код из имени папки, и DLsite не работал.
-                    const rjCode = [savedLink, fromFolder].filter(Boolean).join(' ');
-                    
-                    let title = folder.replace(/\[?RJ\d{6,8}\]?/gi, '').replace(/[-_]/g, ' ').replace(/\s+/g, ' ').trim() || folder;
-                    try {
-                        const sys = JSON.parse(await fsp.readFile(path.join(gamePath, 'data', 'System.json'), 'utf8'));
-                        if (sys.gameTitle && !sys.gameTitle.toLowerCase().includes('rmmz')) title = sys.gameTitle;
-                    } catch(e) {}
+                    console.log(`[Queue] ⏳ Поиск метаданных: ${folder}`);
+                    const { title, query, altTitle } = await this.lookupInputs(folder);
+                    const lookup = await this.lookupMetadata(title, query, { altTitle });
+                    const result = await this.applyLookup(folder, lookup, { prevAttempts: game.meta_attempts || 0 });
 
-                    const scrapedData = await this.fetchUniversalMetadata(title, rjCode);
-                    
-                    if (scrapedData && (scrapedData.tags?.length > 0 || scrapedData.description)) {
-                        const tagsJson = JSON.stringify(scrapedData.tags || []);
-                        const desc = scrapedData.description || '';
-
-                        // Раньше сохранялись только теги и описание, поэтому у игр из фоновой
-                        // очереди не было ни ссылки на источник, ни разработчика. Пишем всё,
-                        // но только то, что реально нашлось: пустым значением затирать уже
-                        // имеющееся нельзя.
-                        const fields = { tags: tagsJson, description: desc, scraped: 1 };
-                        if (scrapedData.developer) fields.developer = scrapedData.developer;
-                        if (scrapedData.language) fields.language = scrapedData.language;
-                        if (scrapedData.releaseDate) fields.releaseDate = scrapedData.releaseDate;
-                        if (scrapedData.link) fields.link = scrapedData.link;   // все найденные ссылки, через запятую
-
-                        const keys = Object.keys(fields);
-                        await this.dbService.get().run(
-                            `UPDATE games SET ${keys.map(k => `${k} = ?`).join(', ')} WHERE id = ?`,
-                            [...keys.map(k => fields[k]), folder]
-                        );
-
-                        // Обложка и скриншоты: с форума они красивее, чем кадр из самой игры
-                        const current = await this.dbService.get().get('SELECT cover FROM games WHERE id = ?', [folder]);
-                        const media = await this.saveGameMedia(folder, scrapedData, current?.cover);
-                        if (media.cover) {
-                            await this.dbService.get().run('UPDATE games SET cover = ? WHERE id = ?', [media.cover, folder]);
-                        }
-                        if (media.screens.length) {
-                            await this.dbService.get().run('UPDATE games SET screens = ? WHERE id = ?', [JSON.stringify(media.screens), folder]);
-                        }
-
-                        // Сбрасываем кэш UI, так как игра получила новые теги!
-                        await invalidateGamesList();
-
-                        await redisClient.del(`scrape:miss:${folder}`).catch(() => {});
-                        if (this.io) this.io.emit('scrape-success', { message: `✅ Данные для "${title}" успешно загружены!` });
-                        console.log(`[Queue] ✅ Успешно обновлено: ${folder}`);
-                    } else {
-                        await this.dbService.get().run('UPDATE games SET scraped = 1 WHERE id = ?', [folder]);
-                        // Помним неудачу неделю, чтобы следующий массовый догон не тратил
-                        // на неё запросы к источникам впустую
-                        await redisClient.set(`scrape:miss:${folder}`, '1', { EX: 7 * 24 * 3600 }).catch(() => {});
-                        console.log(`[Queue] ⚠️ Данные не найдены для: ${folder}`);
+                    const next = result.retryAt ? new Date(result.retryAt).toISOString().slice(0, 16).replace('T', ' ') : 'не будет';
+                    console.log(`[Queue] ${result.found ? '✅' : '⚠️'} ${folder}: ${result.status}` +
+                        (result.failed.length ? ` (не ответили: ${result.failed.join(', ')})` : '') +
+                        `, следующая попытка: ${next}`);
+                    if (result.found && this.io) {
+                        this.io.emit('scrape-success', { message: `✅ Данные для "${title}" успешно загружены!` });
                     }
                 } catch (e) {
+                    // Сбой нашего кода, а не источника. Срок сдвигаем по той же политике,
+                    // иначе цикл тут же схватил бы эту игру снова и крутился на ней вечно.
                     console.error(`[Queue] ❌ Ошибка для ${folder}:`, e.message);
-                } finally {
-                    // Удаляем защиту от дубликатов ТОЛЬКО когда закончили обработку
-                    await redisClient.sRem('scrape:queued_set', folder).catch(() => {});
+                    const plan = planNext('error', game.meta_attempts || 0);
+                    await this.dbService.get().run(
+                        'UPDATE games SET meta_status = ?, meta_attempts = ?, meta_retry_at = ?, meta_error = ?, meta_checked_at = ? WHERE id = ?',
+                        ['error', plan.attempts, plan.retryAt, String(e.message).slice(0, 200), Date.now(), folder]
+                    ).catch(() => {});
+                    await invalidateGamesList();
                 }
-                
-                // Показываем ход дела в интерфейсе: сколько игр ещё ждёт обработки
-                const left = await redisClient.lLen('scrape:queue').catch(() => 0);
-                if (this.io) this.io.emit('scrape-progress', { left });
 
-                // Пауза, чтобы не получить бан от API
+                // Показываем ход дела в интерфейсе: сколько игр ещё ждёт
+                if (this.io) this.io.emit('scrape-progress', { left: await this.countDue() });
+
+                // Пауза, чтобы не получить бан от источников
                 await new Promise(r => setTimeout(r, 4000));
             }
         } finally {
@@ -213,7 +310,7 @@ class ScraperService {
             const proxied = `http://api.scraperapi.com?api_key=${process.env.SCRAPER_API_KEY}`
                 + `&url=${encodeURIComponent(url)}`
                 + (country ? `&country_code=${country}` : '');
-            const res = await fetch(proxied, { signal: AbortSignal.timeout(timeoutMs) });
+            const res = await sourceFetch(proxied, { signal: AbortSignal.timeout(timeoutMs) });
             if (!res.ok) return null;
             return await res.text();
         } catch (e) {
@@ -232,7 +329,7 @@ class ScraperService {
 
         // Сначала бесплатное зеркало
         try {
-            const res = await fetch(`https://r.jina.ai/${target}`, {
+            const res = await sourceFetch(`https://r.jina.ai/${target}`, {
                 headers: { 'User-Agent': 'Mozilla/5.0' },
                 signal: AbortSignal.timeout(25000),
             });
@@ -525,7 +622,7 @@ class ScraperService {
                 const scraperUrl = `http://api.scraperapi.com?api_key=${process.env.SCRAPER_API_KEY}&url=${encodeURIComponent(url)}&country_code=jp`;
                 const controller = new AbortController();
                 const timeoutId = setTimeout(() => controller.abort(), 15000); 
-                const res = await fetch(scraperUrl, { signal: controller.signal });
+                const res = await sourceFetch(scraperUrl, { signal: controller.signal });
                 clearTimeout(timeoutId);
                 const data = await res.json();
                 if (data?.[0]?.work_name) return data;
@@ -617,10 +714,14 @@ class ScraperService {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), timeoutMs);
         try {
+            // Обычный fetch, без учёта сбоев: зеркал два, и то, что моргнуло одно,
+            // не значит, что DLsite не ответил. Итог по DLsite решается ниже, целиком.
             const res = await fetch(url, { signal: controller.signal, headers: { 'User-Agent': 'Mozilla/5.0' } });
             const text = await res.text();
             // r.jina.ai отдаёт JSON внутри текста, поэтому вырезаем массив из ответа
             const match = text.match(/\[\s*\{[\s\S]*\}\s*\]/);
+            // Пустой массив — магазин ответил «такой работы нет». Это ответ, а не сбой
+            if (!match && res.ok && /\[\s*\]/.test(text)) throw Object.assign(new Error('нет такой работы'), { empty: true });
             const data = JSON.parse(match ? match[0] : text);
             if (!data?.[0]?.work_name) throw new Error('пустой ответ');
             return data;
@@ -648,11 +749,17 @@ class ScraperService {
         try {
             const data = await Promise.any(gateways.map(url => this.fetchDLsiteJson(url)));
             return await this.processParsedData(data[0], rjCode);
-        } catch (e) {}
+        } catch (e) {
+            // Хоть одно зеркало сказало «такой работы нет» — это ответ. Платный запасной
+            // путь тут только потратил бы кредит ScraperAPI на заведомо пустой результат.
+            if (e?.errors?.some(err => err?.empty)) return null;
+        }
 
         // Не вышло — платный ScraperAPI и бесплатные японские прокси: надёжно, но медленно
         const jpData = await this.fetchViaJapanProxy(targetUrl);
         if (jpData?.[0]?.work_name) return await this.processParsedData(jpData[0], rjCode);
+        // Не ответили ни зеркала, ни прокси — «не смогли спросить», а не «работы нет»
+        noteFailed('dlsite.com');
         return null;
     }
 
@@ -662,7 +769,7 @@ class ScraperService {
             if (/^v\d+$/.test(query)) {
                 filter = ["id", "=", query]; 
             }
-            const res = await fetch('https://api.vndb.org/kana/vn', {
+            const res = await sourceFetch('https://api.vndb.org/kana/vn', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ filters: filter, fields: "title, description, image.url, tags.name" })
@@ -719,7 +826,7 @@ class ScraperService {
         };
 
         try {
-            const formRes = await fetch('https://f95zone.to/search/', {
+            const formRes = await sourceFetch('https://f95zone.to/search/', {
                 headers: { 'User-Agent': UA, Cookie: cookieStr() },
                 signal: AbortSignal.timeout(25000),
             });
@@ -728,7 +835,7 @@ class ScraperService {
             const token = ((await formRes.text()).match(/name="_xfToken"\s+value="([^"]+)"/) || [])[1];
             if (!token) return null;
 
-            const res = await fetch('https://f95zone.to/search/search', {
+            const res = await sourceFetch('https://f95zone.to/search/search', {
                 method: 'POST',
                 headers: {
                     'User-Agent': UA,
@@ -795,7 +902,7 @@ class ScraperService {
 
             let data = null;
             try {
-                const res = await fetch(url, { headers, signal: AbortSignal.timeout(20000) });
+                const res = await sourceFetch(url, { headers, signal: AbortSignal.timeout(20000) });
                 data = await res.json();
             } catch (e) {}
 
@@ -805,6 +912,8 @@ class ScraperService {
                 try { data = viaScraper ? JSON.parse(viaScraper) : data; } catch (e) {}
             }
 
+            // Вся лента вместо результатов — человеку показали бы случайные свежие темы
+            if (f95SearchIgnored(data)) continue;
             for (const item of (data?.msg?.data || [])) {
                 if (!found.has(item.thread_id)) found.set(item.thread_id, item);
             }
@@ -824,25 +933,59 @@ class ScraperService {
     // Поиск темы по RJ-коду через поиск форума. Код живёт в тексте сообщения, а не в
     // заголовке, поэтому каталог его не находит — а форумный поиск находит. Но он
     // доступен только залогиненным, поэтому работает лишь при заданном F95_COOKIE.
+    // Варианты запроса к каталогу F95, каждый не длиннее F95_QUERY_MAX. Раньше первые
+    // два варианта — полное название и оно же без предлогов — почти всегда были
+    // длиннее 30 символов, каталог отвечал всей лентой, и длинные названия RPG
+    // не находились, хотя по короткому запросу тема находится сразу.
     buildF95Queries(title) {
         const out = [];
-        const push = (s) => {
-            const clean = String(s).replace(/[^\w\s]/g, ' ').replace(/\s{2,}/g, ' ').trim();
-            if (clean.length >= 4 && !out.some(x => x.toLowerCase() === clean.toLowerCase())) out.push(clean);
+        // Слова по порядку, пока влезает в лимит
+        const push = (words) => {
+            let q = '';
+            for (const w of words) {
+                const next = q ? `${q} ${w}` : w;
+                if (next.length > F95_QUERY_MAX) break;
+                q = next;
+            }
+            if (q.length >= 4 && !out.some(x => x.toLowerCase() === q.toLowerCase())) out.push(q);
         };
-        push(title);
-        for (const sep of [':', ' - ', '~', ',']) {
-            if (title.includes(sep)) push(title.split(sep)[0]);
-        }
-        // Их поиск спотыкается о предлоги: «Noble of Pride» не находит ничего,
-        // а «Noble Pride» — находит нужную тему.
-        const STOP = /^(of|the|a|an|and|in|on|for|to|de|le|la)$/i;
-        const meaningful = title.split(/\s+/).filter(w => !STOP.test(w));
-        if (meaningful.length >= 2) push(meaningful.join(' '));
+        // Каталог требует совпадения ВСЕХ слов запроса. Проверено запросами, от чего
+        // выдача падает в ноль:
+        //  — служебные слова: «Me and Succubus» — ноль, «Me Succubus» — нужная тема;
+        //    «A Master Exorcist Never» — ноль, «Master Exorcist Never Yields» — тема;
+        //    «There Cheat Hero» и «No Way Cheat Hero» — ноль, «Way Cheat Hero» — тема;
+        //  — апостроф в запросе: «Karryn's Prison» — ноль, а «Karryn Prison» находит
+        //    «Karryn's Prison». Поэтому слово обрезаем по апостроф, а не выбрасываем.
+        // Короткие обычные слова вроде «Me» или «x» при этом работают — их оставляем.
+        const STOP = /^(of|the|a|an|and|or|in|on|for|to|from|de|le|la|is|are|was|be|it|i|my|with|at|by|as|that|this|there|no)$/i;
+        // Дефис — тоже граница слова: «Brand-New» на форуме это «Brand» и «New»
+        const searchable = (str) => String(str).replace(/[-–—]/g, ' ').split(/\s+/)
+            .map(w => w.replace(/['’].*$/, ''))
+            .map(w => w.replace(/[^\w]/g, ''))
+            .filter(w => w.length >= 1 && !STOP.test(w));
 
-        const words = title.split(/\s+/);
-        if (words.length > 4) push(words.slice(0, 4).join(' '));
-        if (words.length > 2) push(words.slice(0, 2).join(' '));
+        const meaningful = searchable(title);
+
+        // 1. Значимые слова по порядку — сколько влезет. Для коротких названий это
+        //    и есть название целиком, только без предлогов
+        push(meaningful);
+
+        // 2. Самые длинные слова в исходном порядке. Длинные слова обычно и самые
+        //    редкие: трёх-четырёх хватает, чтобы из тысяч тем осталась одна
+        const picked = new Set();
+        let used = 0;
+        for (const w of [...meaningful].sort((a, b) => b.length - a.length)) {
+            const add = (used ? 1 : 0) + w.length;
+            if (used + add > F95_QUERY_MAX) continue;
+            picked.add(w);
+            used += add;
+        }
+        push(meaningful.filter(w => picked.has(w)));
+
+        // 3. Часть до разделителя: подзаголовки после «:» и « - » на форуме часто другие
+        for (const sep of [':', ' - ', '~', ',']) {
+            if (title.includes(sep)) push(searchable(title.split(sep)[0]));
+        }
         return out;
     }
 
@@ -857,9 +1000,11 @@ class ScraperService {
             try {
                 const url = `https://f95zone.to/sam/latest_alpha/latest_data.php?cmd=list&cat=games&page=1&rows=15&search=${encodeURIComponent(q)}`;
                 const headers = { 'User-Agent': 'Mozilla/5.0' };
-                if (hasCookie) headers.Cookie = process.env.F95_COOKIE;
+                // f95Cookie(), а не сырая переменная: в .env может лежать один токен без
+                // имени xf_user, и тогда форум видел гостя и резал часовым лимитом
+                if (hasCookie) headers.Cookie = f95Cookie();
 
-                const res = await fetch(url, { headers });
+                const res = await sourceFetch(url, { headers });
                 let data = await res.json();
 
                 // Лимит анонимных запросов исчерпан — пробуем тот же запрос через ScraperAPI
@@ -869,10 +1014,16 @@ class ScraperService {
                 }
                 if (typeof data?.msg === 'string') {
                     console.warn('[F95] Лимит исчерпан и обойти не удалось:', data.msg.slice(0, 50));
+                    // Каталог ответил 200, но это отказ, а не «такой игры нет»
+                    noteFailed('f95zone.to');
                     break;
                 }
+                // Вся лента вместо результатов — сравнивать не с чем, пробуем следующий вариант
+                if (f95SearchIgnored(data)) continue;
                 for (const item of (data?.msg?.data || [])) {
-                    const s = titleSimilarity(title, item.title);
+                    // Темы часто называются с подзаголовком: «Gal x Magical Girl Marina
+                    // ~Transformation Heroine…~». Сравниваем и так, и без него
+                    const s = Math.max(titleSimilarity(title, item.title), titleSimilarity(title, cleanTitle(item.title)));
                     if (s > score) { best = item; score = s; usedQuery = q; }
                 }
                 // Точное совпадение — дальше искать незачем, экономим запросы
@@ -898,7 +1049,7 @@ class ScraperService {
 
     async fetchF95Metadata(threadUrl) {
         try {
-            const res = await fetch(threadUrl, {
+            const res = await sourceFetch(threadUrl, {
                 headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
                 redirect: 'follow',
                 signal: AbortSignal.timeout(30000),
@@ -938,7 +1089,7 @@ class ScraperService {
         try {
             let appId = query;
             if (!/^\d+$/.test(query)) {
-                const searchRes = await fetch(`https://store.steampowered.com/api/storesearch/?term=${encodeURIComponent(query)}&l=english&cc=US`, { headers: STEAM_HEADERS });
+                const searchRes = await sourceFetch(`https://store.steampowered.com/api/storesearch/?term=${encodeURIComponent(query)}&l=english&cc=US`, { headers: STEAM_HEADERS });
                 const searchData = await searchRes.json();
                 if (searchData.total > 0 && searchData.items?.length > 0) {
                     const item = searchData.items[0];
@@ -955,7 +1106,7 @@ class ScraperService {
                 }
             }
             
-            const detailRes = await fetch(`https://store.steampowered.com/api/appdetails?appids=${appId}&cc=US&l=english`, { headers: STEAM_HEADERS });
+            const detailRes = await sourceFetch(`https://store.steampowered.com/api/appdetails?appids=${appId}&cc=US&l=english`, { headers: STEAM_HEADERS });
             const detailData = await detailRes.json();
             if (detailData[appId]?.success) {
                 const game = detailData[appId].data;
@@ -967,7 +1118,7 @@ class ScraperService {
                 let coverUrl = game.header_image;
                 try {
                     const capsule = `https://cdn.cloudflare.steamstatic.com/steam/apps/${appId}/library_600x900.jpg`;
-                    const head = await fetch(capsule, { method: 'HEAD', headers: STEAM_HEADERS, signal: AbortSignal.timeout(10000) });
+                    const head = await sourceFetch(capsule, { method: 'HEAD', headers: STEAM_HEADERS, signal: AbortSignal.timeout(10000) });
                     if (head.ok) coverUrl = capsule;
                 } catch (e) {}
 
@@ -988,7 +1139,10 @@ class ScraperService {
         return null;
     }
 
-    async fetchUniversalMetadata(title, inputQuery) {
+    // altTitle — название из имени папки. Игра сама себя часто называет иначе, чем
+    // тема на форуме («Rozeliam» против «Roseliam», «Strip Knight Nympholia» против
+    // «Flash Knight Nymphelia»), а папку обычно называют так, как было при скачивании.
+    async fetchUniversalMetadata(title, inputQuery, { altTitle = '' } = {}) {
         const aggregatedData = {
             tags: [], description: '', coverUrl: '', screens: [], developer: '', releaseDate: '', language: '',
             links: []
@@ -1003,7 +1157,10 @@ class ScraperService {
         if (inputQuery) {
             if (inputQuery.match(/RJ\d{6,8}/i)) explicitRj = inputQuery.match(/RJ\d{6,8}/i)[0].toUpperCase();
             if (inputQuery.match(/app\/(\d+)/i)) explicitSteam = inputQuery.match(/app\/(\d+)/i)[1];
-            if (inputQuery.match(/v(\d+)/i) && inputQuery.includes('vndb')) explicitVndb = 'v' + inputQuery.match(/v(\d+)/i)[1];
+            // Номер новеллы — только из самой ссылки vndb.org. Иначе в строке с несколькими
+            // ссылками «v1» из адреса темы F95 («…-v1-08-…») принимался за номер новеллы
+            const vndb = inputQuery.match(/vndb\.org\/(v\d+)/i);
+            if (vndb) explicitVndb = vndb[1].toLowerCase();
             // Сюда часто приходит не одна ссылка, а «ссылка на тему + RJ-код» одной
             // строкой (так их склеивает фоновая очередь). Целиком это не URL, и
             // запрос по нему падал — игра уходила в неточный поиск по названию.
@@ -1031,7 +1188,16 @@ class ScraperService {
         // Его словарь самый аккуратный, поэтому он в приоритете; при неуверенном совпадении
         // функция вернёт null и мы спокойно пойдём дальше по остальным источникам.
         if (!explicitF95 && !aggregatedData.tags.length && searchTitle.length >= 4) {
-            const f95Auto = await this.fetchF95ByTitle(searchTitle);
+            const norm = (x) => String(x).toLowerCase().replace(/[^a-z0-9]/g, '');
+            const candidates = [searchTitle];
+            const fromFolder = cleanTitle(altTitle);
+            if (fromFolder.length >= 4 && norm(fromFolder) !== norm(searchTitle)) candidates.push(fromFolder);
+
+            let f95Auto = null;
+            for (const candidate of candidates) {
+                f95Auto = await this.fetchF95ByTitle(candidate);
+                if (f95Auto) break;
+            }
             if (f95Auto) {
                 foundAny = true;
                 aggregatedData.tags = f95Auto.tags;

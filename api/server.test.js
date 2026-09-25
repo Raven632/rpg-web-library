@@ -195,3 +195,61 @@ test('translateText: возвращает оригинальный текст п
   const result = await scraperService.translateText('Original text');
   assert.strictEqual(result, 'Original text', 'При сбое сети должен вернуться оригинал');
 });
+
+// ============================================================================
+// Политика поиска метаданных (итог попытки и срок следующей)
+// ============================================================================
+
+const plan = require('./src/utils/scrapeplan.js');
+
+test('scrapeplan: итог считается по тому, что у игры осталось после попытки', () => {
+    const full = { tags: '["rpg"]', link: 'https://f95zone.to/threads/1/', screens: '["a.jpg"]' };
+    assert.strictEqual(plan.statusOfRow(full), 'ok');
+    assert.strictEqual(plan.statusOfRow({ ...full, screens: '[]' }), 'partial', 'теги есть, картинок нет');
+    // Поиск упал, но теги остались с прошлого раза — игра не становится «не найденной»
+    assert.strictEqual(plan.statusOfRow({ ...full, screens: '[]' }, ['f95zone.to']), 'partial');
+    assert.strictEqual(plan.statusOfRow({ tags: '[]' }), 'not_found', 'все ответили «нет»');
+    assert.strictEqual(plan.statusOfRow({ tags: '[]' }, ['f95zone.to']), 'error', 'кто-то не ответил');
+});
+
+test('scrapeplan: паузы растут, а после последней автопоиск останавливается', () => {
+    const now = 1_000_000;
+    assert.deepStrictEqual(plan.planNext('ok', 3, now), { attempts: 0, retryAt: null }, 'успех обнуляет счётчик');
+
+    let attempts = 0;
+    const delays = [];
+    for (;;) {
+        const next = plan.planNext('not_found', attempts, now);
+        attempts = next.attempts;
+        if (next.retryAt === null) break;
+        delays.push(next.retryAt - now);
+    }
+    assert.deepStrictEqual(delays, plan.DELAYS.not_found);
+    for (let i = 1; i < delays.length; i++) assert.ok(delays[i] > delays[i - 1], 'каждая пауза длиннее предыдущей');
+
+    // Сбой источника — временная беда: первая повторная попытка через час, а не через сутки
+    assert.strictEqual(plan.planNext('error', 0, now).retryAt - now, plan.HOUR);
+});
+
+test('lookupMetadata: «нигде нет» и «не смогли спросить» — разные итоги', async (t) => {
+    const originalFetch = global.fetch;
+    t.after(() => { global.fetch = originalFetch; });
+
+    // Все источники ответили, но пусто
+    global.fetch = async () => ({ ok: true, status: 200, json: async () => ({}), text: async () => '' });
+    const none = await scraperService.lookupMetadata('Totally Unknown Game', '');
+    assert.strictEqual(none.data, null);
+    assert.deepStrictEqual(none.failed, [], 'никто не упал — значит честное «не найдено»');
+
+    // Сеть лежит
+    global.fetch = async () => { throw new Error('ECONNRESET'); };
+    const down = await scraperService.lookupMetadata('Totally Unknown Game', '');
+    assert.strictEqual(down.data, null);
+    assert.ok(down.failed.length > 0, 'упавшие источники попали в отчёт');
+    assert.ok(down.failed.includes('f95zone.to'), `ожидали f95zone.to в ${JSON.stringify(down.failed)}`);
+
+    // Лимит 429 — тоже «не смогли спросить», хотя сеть в порядке
+    global.fetch = async () => ({ ok: false, status: 429, json: async () => ({}), text: async () => '' });
+    const limited = await scraperService.lookupMetadata('Totally Unknown Game', '');
+    assert.ok(limited.failed.length > 0);
+});

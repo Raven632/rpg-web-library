@@ -13,7 +13,7 @@ RUN npm ci --no-audit --no-fund \
  && rm -rf /var/lib/apt/lists/* /root/.npm
 
 # Скрипт копируем последним: правка скрипта не пересобирает браузер (кэш слоёв)
-COPY check-games.mjs ./
+COPY check-games.mjs check-options.mjs ./
 
 USER node
 CMD ["node", "check-games.mjs"]
