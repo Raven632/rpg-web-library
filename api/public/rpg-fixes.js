@@ -170,6 +170,65 @@ if (!window.__rpgPluginHookInstalled) {
     if (window.__RPG_FIXES_ULTIMATE__) return;
     window.__RPG_FIXES_ULTIMATE__ = true;
 
+    // Надписи меню и кнопок — на языке, выбранном в библиотеке. Библиотека хранит его
+    // в localStorage (rpg_lang), а игры в проде открываются с того же адреса, так что
+    // выбор виден и здесь. В dev игры живут на другом порту со своим localStorage —
+    // туда язык приходит в адресе: ?lang=en
+    const UI_TEXT = {
+        ru: {
+            settings: 'Настройки', home: 'В библиотеку', turbo: 'Турбо ×3', cheats: 'Чит-меню',
+            stretch: 'Растянуть экран', smooth: 'Сглаживание', fullscreen: 'На весь экран',
+            keys_zx: 'Кнопки A и B как Z и X', touch: 'Касания по игре',
+            fps: 'Счётчик кадров', spikes: 'Журнал подтормаживаний',
+            stick: 'Джойстик', prev: 'Предыдущий (Q)', next: 'Следующий (W)',
+            skip: 'Пропуск', skip_hint: 'Пропуск текста (Ctrl)', dash: 'Бег', dash_hint: 'Бег (Shift)',
+            back: 'назад', back_hint: 'Назад, меню', ok: 'ок', ok_hint: 'ОК',
+            sync_busy: '☁️ Синхронизация…', sync_ok: '✅ Сохранено',
+            sync_offline: '📡 Ждём сеть (сохранено локально)',
+            sync_lost: '⚠️ Нет связи с сервером, а в браузере нет места — не закрывайте игру, пока не вернётся сеть',
+            sync_error: '⚠️ Ошибка сервера',
+            fps_frame: 'кадр', fps_spikes: 'спайки',
+            spikes_total: 'всего', spikes_clear: 'Очистить', spikes_cleared: '— Лог очищен —',
+        },
+        en: {
+            settings: 'Settings', home: 'Back to library', turbo: 'Turbo ×3', cheats: 'Cheat menu',
+            stretch: 'Stretch to screen', smooth: 'Smoothing', fullscreen: 'Full screen',
+            keys_zx: 'A and B as Z and X', touch: 'Touch input in game',
+            fps: 'FPS counter', spikes: 'Stutter log',
+            stick: 'Joystick', prev: 'Previous (Q)', next: 'Next (W)',
+            skip: 'Skip', skip_hint: 'Skip text (Ctrl)', dash: 'Run', dash_hint: 'Run (Shift)',
+            back: 'back', back_hint: 'Back, menu', ok: 'ok', ok_hint: 'OK',
+            sync_busy: '☁️ Syncing…', sync_ok: '✅ Saved',
+            sync_offline: '📡 Waiting for network (saved locally)',
+            sync_lost: '⚠️ No connection to the server and no space left in the browser — keep the game open until the network is back',
+            sync_error: '⚠️ Server error',
+            fps_frame: 'frame', fps_spikes: 'spikes',
+            spikes_total: 'total', spikes_clear: 'Clear', spikes_cleared: '— Log cleared —',
+        },
+        de: {
+            settings: 'Einstellungen', home: 'Zur Bibliothek', turbo: 'Turbo ×3', cheats: 'Cheat-Menü',
+            stretch: 'Bild strecken', smooth: 'Glättung', fullscreen: 'Vollbild',
+            keys_zx: 'A und B als Z und X', touch: 'Touch-Eingabe im Spiel',
+            fps: 'FPS-Anzeige', spikes: 'Ruckel-Protokoll',
+            stick: 'Joystick', prev: 'Vorheriger (Q)', next: 'Nächster (W)',
+            skip: 'Vorspulen', skip_hint: 'Text vorspulen (Strg)', dash: 'Rennen', dash_hint: 'Rennen (Umschalt)',
+            back: 'zurück', back_hint: 'Zurück, Menü', ok: 'ok', ok_hint: 'OK',
+            sync_busy: '☁️ Synchronisiere…', sync_ok: '✅ Gespeichert',
+            sync_offline: '📡 Warte auf Netz (lokal gespeichert)',
+            sync_lost: '⚠️ Keine Verbindung zum Server und kein Platz im Browser — Spiel nicht schließen, bis das Netz zurück ist',
+            sync_error: '⚠️ Serverfehler',
+            fps_frame: 'Frame', fps_spikes: 'Ruckler',
+            spikes_total: 'gesamt', spikes_clear: 'Leeren', spikes_cleared: '— Protokoll geleert —',
+        },
+    };
+    const T = UI_TEXT[(() => {
+        const known = (v) => Object.keys(UI_TEXT).includes(v);
+        let lang = null;
+        try { lang = new URLSearchParams(location.search).get('lang'); } catch (_) {}
+        if (!known(lang)) try { lang = localStorage.getItem('rpg_lang'); } catch (_) {}
+        return known(lang) ? lang : 'ru';   // 'ru' — как и в самой библиотеке по умолчанию
+    })()];
+
     function applyConsoleFixes() {
         function applyCanvasReadFrequently(proto) {
             if (!proto || !proto.getContext) return;
@@ -366,6 +425,7 @@ if (!window.__rpgPluginHookInstalled) {
 
         let isStretched = false; let targetCanvas = null;
         window.__toggleRpgStretch = () => { isStretched = !isStretched; forceScaleUpdate(); };
+        window.__rpgIsStretched = () => isStretched;
 
         // Сглаживание при растягивании. Раньше картинка всегда растягивалась без него
         // (image-rendering: pixelated), и при дробном увеличении — 1,5 на экране 1080p —
@@ -532,7 +592,15 @@ if (!window.__rpgPluginHookInstalled) {
 
         const QUEUE_KEY = `_rpg_offline_queue_${gameId}`;
         function getQueue() { try { return JSON.parse(localStorage.getItem(QUEUE_KEY) || '{}'); } catch(e) { return {}; } }
-        function saveQueue(q) { localStorage.setItem(QUEUE_KEY, JSON.stringify(q)); }
+        // localStorage один на все игры библиотеки и всего около 5 МБ, а сейв большой
+        // игры — мегабайт. Не влезло — не повод срывать сохранение: отправка на сервер
+        // всё равно уходит. Раньше исключение отсюда прерывало сохранение ещё до отправки
+        function saveQueue(q) {
+            try { localStorage.setItem(QUEUE_KEY, JSON.stringify(q)); return true; }
+            catch (e) { return false; }
+        }
+        // То, что не влезло в очередь, держим в памяти вкладки: вернётся сеть — отправим
+        const memQueue = {};
 
         const syncDiv = document.createElement('div');
         syncDiv.id = '_cloud_sync_ui';
@@ -543,15 +611,17 @@ if (!window.__rpgPluginHookInstalled) {
         function showSync(active, status = 'ok') {
             if (!syncDiv) return;
             if (active) { 
-                syncCount++; syncDiv.textContent = '☁️ Синхронизация...'; syncDiv.style.background = 'rgba(0,0,0,0.85)'; syncDiv.style.display = 'block'; 
+                syncCount++; syncDiv.textContent = T.sync_busy; syncDiv.style.background = 'rgba(0,0,0,0.85)'; syncDiv.style.display = 'block'; 
             } else { 
                 syncCount--; 
                 if (syncCount <= 0) { 
                     syncCount = 0; 
-                    if (status === 'ok') { syncDiv.textContent = '✅ Сохранено'; syncDiv.style.background = 'rgba(40,140,40,0.9)'; }
-                    else if (status === 'offline') { syncDiv.textContent = '📡 Ждем сеть (сохранено локально)'; syncDiv.style.background = 'rgba(200,140,20,0.9)'; }
-                    else { syncDiv.textContent = '⚠️ Ошибка сервера'; syncDiv.style.background = 'rgba(170,60,60,0.9)'; }
-                    setTimeout(() => { if (syncCount === 0) syncDiv.style.display = 'none'; }, 2000); 
+                    if (status === 'ok') { syncDiv.textContent = T.sync_ok; syncDiv.style.background = 'rgba(40,140,40,0.9)'; }
+                    else if (status === 'offline') { syncDiv.textContent = T.sync_offline; syncDiv.style.background = 'rgba(200,140,20,0.9)'; }
+                    else if (status === 'lost') { syncDiv.textContent = T.sync_lost; syncDiv.style.background = 'rgba(170,60,60,0.95)'; }
+                    else { syncDiv.textContent = T.sync_error; syncDiv.style.background = 'rgba(170,60,60,0.9)'; }
+                    // Предупреждение о несохранённом висит дольше: его нельзя пропустить
+                    setTimeout(() => { if (syncCount === 0) syncDiv.style.display = 'none'; }, status === 'lost' ? 8000 : 2000); 
                 } 
             }
         }
@@ -582,7 +652,9 @@ if (!window.__rpgPluginHookInstalled) {
         async function processOfflineQueue() {
             if (!navigator.onLine) return;
             const q = getQueue();
-            const keys = Object.keys(q);
+            const pending = { ...q };
+            for (const k of Object.keys(memQueue)) pending[k] = chooseNewer(pending[k], memQueue[k]);
+            const keys = Object.keys(pending);
             if (keys.length === 0) return;
 
             showSync(true);
@@ -591,9 +663,12 @@ if (!window.__rpgPluginHookInstalled) {
             for (const key of keys) {
                 try {
                     const res = await retryFetch(`${CLOUD_BASE}/${encodeURIComponent(gameId)}/${encodeURIComponent(key)}`, { 
-                        method: 'POST', credentials: 'same-origin', cache: 'no-store', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(q[key]) 
+                        method: 'POST', credentials: 'same-origin', cache: 'no-store', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(pending[key]) 
                     });
-                    if (res.ok) delete q[key]; else allOk = false;
+                    if (res.ok) {
+                        delete q[key];
+                        if (memQueue[key] && memQueue[key].updatedAt <= pending[key].updatedAt) delete memQueue[key];
+                    } else allOk = false;
                 } catch(e) { allOk = false; }
             }
             saveQueue(q);
@@ -626,15 +701,22 @@ if (!window.__rpgPluginHookInstalled) {
         function uploadToCloud(key, value) {
             const payload = { value: String(value), updatedAt: Date.now() };
             pulledSaves[key] = chooseNewer(pulledSaves[key], payload); 
-            const q = getQueue(); q[key] = payload; saveQueue(q);
+            const q = getQueue(); q[key] = payload;
+            // Не влезло в localStorage — сейв держится в памяти, пока вкладка открыта
+            const queued = saveQueue(q);
+            if (queued) delete memQueue[key]; else memQueue[key] = payload;
             showSync(true);
-            if (!navigator.onLine) { showSync(false, 'offline'); return; }
+            if (!navigator.onLine) { showSync(false, queued ? 'offline' : 'lost'); return; }
 
             retryFetch(`${CLOUD_BASE}/${encodeURIComponent(gameId)}/${encodeURIComponent(key)}`, { 
                 method: 'POST', credentials: 'same-origin', cache: 'no-store', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) 
             }).then(r => {
-                if (r.ok) { const qNew = getQueue(); delete qNew[key]; saveQueue(qNew); showSync(false, 'ok'); } else showSync(false, 'error');
-            }).catch(() => showSync(false, 'offline'));
+                if (r.ok) {
+                    const qNew = getQueue(); delete qNew[key]; saveQueue(qNew);
+                    if (memQueue[key] === payload) delete memQueue[key];
+                    showSync(false, 'ok');
+                } else showSync(false, queued ? 'error' : 'lost');
+            }).catch(() => showSync(false, queued ? 'offline' : 'lost'));
         }
 
         function deleteFromCloud(key) {
@@ -680,10 +762,50 @@ if (!window.__rpgPluginHookInstalled) {
                 const _webStorageExists = StorageManager.webStorageExists; 
                 StorageManager.webStorageExists = function(saveFileId) { const local = _webStorageExists.apply(this, arguments); if (!cloudReady) return canOptimisticallyShowExists(local); return hasEntry(this.webStorageKey(saveFileId)) || local; }; 
             }
+            // Копия в браузере — запасная: сейв уже ушёл на сервер (или в очередь).
+            // localStorage один на все игры и быстро кончается: у MV-игр ключи общие
+            // («RPG File1»), а слот большой игры весит мегабайт. Раньше переполнение здесь
+            // бросало исключение, движок считал сохранение проваленным и в блоке спасения
+            // удалял слот — вместе с его копией на сервере
             const _saveToWebStorage = StorageManager.saveToWebStorage; 
-            StorageManager.saveToWebStorage = function(saveFileId, json) { uploadToCloud(this.webStorageKey(saveFileId), json); return _saveToWebStorage.apply(this, arguments); };
+            StorageManager.saveToWebStorage = function(saveFileId, json) {
+                uploadToCloud(this.webStorageKey(saveFileId), json);
+                try { return _saveToWebStorage.apply(this, arguments); }
+                catch (e) { console.warn('[RPG Fixes] Копия сейва в браузере не записана (нет места), на сервере он есть:', e && e.name); }
+            };
+            // Резервная копия слота перед записью — тоже только в браузере и тоже не повод
+            // срывать сохранение
+            if (StorageManager.backup) {
+                const _backup = StorageManager.backup;
+                StorageManager.backup = function() {
+                    try { return _backup.apply(this, arguments); }
+                    catch (e) { console.warn('[RPG Fixes] Резервная копия слота в браузере не записана:', e && e.name); }
+                };
+            }
+
+            // Если сохранение всё же упало (например, ошибка плагина), MV в блоке спасения
+            // удаляет слот и возвращает резервную копию. Это удаление на сервер не пускаем:
+            // там лежит предыдущий, целый сейв этого слота. Обёртку ставим и сейчас, и
+            // после загрузки плагинов — плагин мог заменить saveGame своей версией
+            let saving = 0;
+            const guardSaveGame = () => {
+                if (typeof DataManager === 'undefined' || !DataManager.saveGame || DataManager.saveGame.__rpgGuarded) return;
+                const _saveGame = DataManager.saveGame;
+                DataManager.saveGame = function() {
+                    saving++;
+                    try { return _saveGame.apply(this, arguments); } finally { saving--; }
+                };
+                DataManager.saveGame.__rpgGuarded = true;
+            };
+            guardSaveGame();
+            const guardTimer = setInterval(guardSaveGame, 500);
+            setTimeout(() => clearInterval(guardTimer), 30000);
+
             const _removeWebStorage = StorageManager.removeWebStorage; 
-            StorageManager.removeWebStorage = function(saveFileId) { deleteFromCloud(this.webStorageKey(saveFileId)); return _removeWebStorage.apply(this, arguments); };
+            StorageManager.removeWebStorage = function(saveFileId) {
+                if (!saving) deleteFromCloud(this.webStorageKey(saveFileId));
+                return _removeWebStorage.apply(this, arguments);
+            };
         }
 
         fetchCloudSaves();
@@ -697,121 +819,199 @@ if (!window.__rpgPluginHookInstalled) {
     }
 
     // ============================================================================
-    // 5. ИНТЕРФЕЙС, ЭКРАННЫЕ КНОПКИ И ГЕЙМПАД
+    // 5. ИНТЕРФЕЙС: МЕНЮ ⚙ И ЭКРАННОЕ УПРАВЛЕНИЕ
     // ============================================================================
+    const IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    const IS_MOBILE = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || IS_IOS;
+
+    // Значки одной тонкой линией, цвет берут от текста. Раньше у каждого пункта был
+    // свой смайлик: на каждой платформе они рисуются по-своему и выглядели случайными
+    const ICONS = {
+        gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
+        home: '<path d="M3 11l9-7 9 7"/><path d="M5.5 9.5V20h13V9.5"/><path d="M10 20v-5h4v5"/>',
+        fullscreen: '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>',
+        stretch: '<path d="M3 12h18"/><path d="M7 8l-4 4 4 4M17 8l4 4-4 4"/>',
+        smooth: '<path d="M3 15c3-6 6-6 9 0s6 6 9 0"/>',
+        turbo: '<path d="M4 6l7 6-7 6zM13 6l7 6-7 6z"/>',
+        tap: '<circle cx="12" cy="12" r="2.5"/><circle cx="12" cy="12" r="7"/>',
+        keys: '<rect x="3" y="7" width="18" height="10" rx="2"/><path d="M7 11h.01M11 11h.01M15 11h.01M8 14h8"/>',
+        wand: '<path d="M4 20L15 9"/><path d="M15 3v3M18.5 5.5l-2 2M21 9h-3M18.5 12.5l-2-2"/>',
+        fps: '<path d="M4 20h16M7 16v-4M12 16V8M17 16v-6"/>',
+        pulse: '<path d="M3 12h4l2.5-6 4 12 2.5-6H21"/>',
+        chevron: '<path d="M7 14.5l5-5 5 5"/>',
+        prev: '<path d="M14.5 6l-6 6 6 6"/>',
+        next: '<path d="M9.5 6l6 6-6 6"/>',
+    };
+    const icon = (name) => `<svg viewBox="0 0 24 24" aria-hidden="true">${ICONS[name] || ''}</svg>`;
+
+    // Нажатие — когда палец отпустили там же, где коснулись. Раньше пункт срабатывал
+    // в момент касания: лёжа на телефоне меню не влезает по высоте, и, листая его,
+    // человек включал всё, до чего дотронулся. Сдвинул палец — это прокрутка, не нажатие
+    function onTap(el, fn) {
+        let start = null;
+        el.addEventListener('pointerdown', (e) => {
+            start = e.button === 0 ? { id: e.pointerId, x: e.clientX, y: e.clientY } : null;
+        });
+        el.addEventListener('pointermove', (e) => {
+            if (start && e.pointerId === start.id && Math.hypot(e.clientX - start.x, e.clientY - start.y) > 10) start = null;
+        });
+        // Браузер начал прокрутку — касание уже не наше
+        el.addEventListener('pointercancel', () => { start = null; });
+        el.addEventListener('pointerup', (e) => {
+            if (!start || e.pointerId !== start.id) return;
+            start = null;
+            fn();
+        });
+    }
+
+    // Пункты меню приходят из разных частей файла (экран, управление, диагностика,
+    // читы), а рисуются здесь, по разделам и всегда в одном порядке. Разделы собраны
+    // в две колонки: на высоком экране они идут одна под другой, на низком (телефон
+    // лёжа) — рядом, и листать меню не нужно
+    const MENU_COLUMNS = [['nav', 'game', 'screen'], ['controls', 'debug']];
+    const menuItems = [];
+    function addMenuItem(item) { menuItems.push(item); renderMenu(); }
+    function closeMenu() {
+        document.getElementById('_sys_panel')?.classList.remove('_open');
+        document.getElementById('_sys_btn')?.classList.remove('_open');
+    }
+    function menuButton(item) {
+        const el = document.createElement('button');
+        el.type = 'button';
+        el.className = '_sys_item';
+        el.id = item.id;
+        el.innerHTML = `<span class="_sys_ico">${icon(item.icon)}</span><span class="_sys_label">${item.label}</span>` + (item.isOn ? '<span class="_sys_switch"></span>' : '');
+        if (item.isOn) el.classList.toggle('_on', !!item.isOn());
+        onTap(el, () => {
+            item.onClick();
+            if (item.isOn) el.classList.toggle('_on', !!item.isOn());
+            else closeMenu();
+        });
+        return el;
+    }
+    function renderMenu() {
+        const panel = document.getElementById('_sys_panel');
+        if (!panel) return;
+        panel.innerHTML = '';
+        for (const sections of MENU_COLUMNS) {
+            const col = document.createElement('div');
+            col.className = '_sys_col';
+            for (const section of sections) {
+                const items = menuItems.filter(i => i.section === section);
+                if (!items.length) continue;
+                const group = document.createElement('div');
+                group.className = '_sys_group';
+                items.forEach(item => group.appendChild(menuButton(item)));
+                col.appendChild(group);
+            }
+            if (col.childElementCount) panel.appendChild(col);
+        }
+    }
+
     function setupUIAndGamepad() {
         document.addEventListener('DOMContentLoaded', () => {
             if (document.getElementById('_sys_menu_container')) return;
-            const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-            const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || isIOS;
-            
+
             const style = document.createElement('style');
             style.textContent = `
-                #_sys_menu_container { position: fixed; top: max(16px, env(safe-area-inset-top)); right: max(16px, env(safe-area-inset-right)); z-index: 2147483647; display: flex; flex-direction: column; align-items: flex-end; touch-action: none; -webkit-touch-callout: none; -webkit-user-select: none; }
-                #_sys_btn { width: 44px; height: 44px; background: rgba(0,0,0,0.6); border: 1px solid rgba(255,255,255,0.25); border-radius: 50%; display: flex; justify-content: center; align-items: center; font-size: 24px; color: white; cursor: pointer; transition: background 0.2s; }
-                #_sys_btn:active { background: rgba(255,255,255,0.2); }
-                #_sys_panel { display: none; background: rgba(0,0,0,0.85); border: 1px solid rgba(255,255,255,0.15); border-radius: 12px; margin-top: 8px; padding: 6px; flex-direction: column; gap: 4px; box-shadow: 0 8px 16px rgba(0,0,0,0.5); backdrop-filter: blur(4px); }
-                #_sys_panel._open { display: flex; }
-                ._sys_item { padding: 12px 16px; color: #fff; font-family: sans-serif; font-size: 14px; font-weight: 600; background: rgba(255,255,255,0.05); border-radius: 8px; white-space: nowrap; transition: background 0.2s; display: flex; align-items: center; gap: 8px; }
-                ._sys_item:active { background: rgba(255,255,255,0.2); }
-                ._sys_item._active { background: rgba(200, 150, 40, 0.4); border: 1px solid rgba(200, 150, 40, 0.8); }
+                #_sys_menu_container, #_mob_ctrl { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+                #_sys_menu_container svg, #_mob_ctrl svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 
-                #_layout_toggle { position: fixed; top: max(16px, env(safe-area-inset-top)); left: max(16px, env(safe-area-inset-left)); z-index: 2147483647; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.6); border: 1px solid rgba(255,255,255,0.25); border-radius: 8px; color: white; padding: 8px 12px; font-family: sans-serif; font-size: 14px; font-weight: bold; cursor: pointer; touch-action: none; user-select: none; transition: background 0.2s; }
-                #_layout_toggle:active { background: rgba(255,255,255,0.2); }
-
-                #_mob_ctrl { position:fixed; bottom:0; left:0; right:0; z-index:2147483646; pointer-events:none; padding:16px; height:220px; touch-action:none; -webkit-touch-callout:none; -webkit-user-select:none; user-select:none; }
-                #_dpad { position:absolute; bottom:20px; left:20px; width:190px; height:190px; pointer-events:auto; touch-action:none; }
-                #_d_center { position:absolute; top:75px; left:75px; width:40px; height:40px; background:rgba(255,255,255,0.05); border-radius:50%; pointer-events:none; }
-                ._dpad_btn { position:absolute; width:58px; height:58px; background:rgba(0,0,0,0.4); border:1px solid rgba(255,255,255,0.3); border-radius:10px; display:flex; align-items:center; justify-content:center; }
-                ._dpad_btn._on { background:rgba(255,255,255,0.6); }
-                ._dpad_btn svg { width:24px; fill:rgba(255,255,255,0.95); pointer-events:none; }
-                #_d_up { top:0; left:66px; } #_d_down { bottom:0; left:66px; } #_d_left { top:66px; left:0; } #_d_right { top:66px; right:0; }
-                #_act_btns { position:absolute; bottom:20px; right:20px; display:grid; grid-template-columns:1fr 1fr; gap:12px; pointer-events:auto; touch-action:none; }
-                ._act_btn { width:70px; height:70px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:700; color:#fff; border:1.5px solid rgba(255,255,255,0.3); }
-                ._act_btn._on { filter:brightness(1.5); }
-                #_a_ok { background:rgba(40,160,40,0.6); } #_a_esc { background:rgba(200,40,40,0.6); }
-                #_a_menu { background:rgba(40,100,200,0.6); } #_a_shift { background:rgba(180,140,20,0.6); }
-                
-                @media (pointer: fine) { 
-                    #_mob_ctrl, #_layout_toggle, #_touch_mode_item { display: none !important; } 
+                #_sys_menu_container { position: fixed; top: max(12px, env(safe-area-inset-top)); right: max(12px, env(safe-area-inset-right)); z-index: 2147483647; display: flex; flex-direction: column; align-items: flex-end; font-size: 14px; font-weight: 500; touch-action: manipulation; }
+                #_sys_btn { width: 40px; height: 40px; padding: 0; border-radius: 50%; border: 1px solid rgba(255,255,255,0.22); background: rgba(14,14,18,0.45); color: rgba(255,255,255,0.9); display: flex; align-items: center; justify-content: center; cursor: pointer; opacity: 0.65; transition: opacity .2s, background .2s; -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
+                #_sys_btn svg { width: 20px; height: 20px; }
+                #_sys_btn._open, #_sys_btn:hover { opacity: 1; background: rgba(14,14,18,0.7); }
+                #_sys_panel { display: none; margin-top: 8px; min-width: 250px; max-height: calc(100vh - 80px); max-height: calc(100dvh - 80px); overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; touch-action: pan-y; padding: 6px; border-radius: 14px; background: rgba(14,14,18,0.88); border: 1px solid rgba(255,255,255,0.12); box-shadow: 0 16px 40px rgba(0,0,0,0.5); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); }
+                #_sys_panel._open { display: block; }
+                ._sys_item { display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px; border: 0; border-radius: 9px; background: transparent; color: rgba(255,255,255,0.9); font: inherit; text-align: left; cursor: pointer; }
+                ._sys_item:active { background: rgba(255,255,255,0.12); }
+                @media (hover: hover) { ._sys_item:hover { background: rgba(255,255,255,0.07); } }
+                ._sys_ico { display: flex; flex-shrink: 0; color: rgba(255,255,255,0.55); }
+                ._sys_ico svg { width: 20px; height: 20px; }
+                ._sys_label { flex: 1; white-space: nowrap; }
+                ._sys_switch { position: relative; flex-shrink: 0; width: 30px; height: 18px; border-radius: 9px; background: rgba(255,255,255,0.16); transition: background .2s; }
+                ._sys_switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: rgba(255,255,255,0.75); transition: transform .2s; }
+                ._sys_item._on ._sys_switch { background: #d9b45e; }
+                ._sys_item._on ._sys_switch::after { transform: translateX(12px); background: #fff; }
+                ._sys_group + ._sys_group::before, ._sys_col + ._sys_col::before { content: ''; display: block; height: 1px; margin: 5px 8px; background: rgba(255,255,255,0.08); }
+                /* Лёжа на телефоне меню в одну колонку не влезает по высоте — колонки встают рядом */
+                @media (max-height: 500px) and (min-width: 560px) {
+                    #_sys_panel._open { display: grid; grid-template-columns: 1fr 1fr; }
+                    ._sys_col + ._sys_col { margin-left: 5px; padding-left: 5px; border-left: 1px solid rgba(255,255,255,0.08); }
+                    ._sys_col + ._sys_col::before { display: none; }
+                    ._sys_item { padding: 8px 10px; }
                 }
+
+                /* Экранное управление. Единица --u — от короткой стороны экрана: на телефоне
+                   кнопки не закрывают полэкрана, на планшете не теряются в углу */
+                #_mob_ctrl { --u: clamp(42px, 11vmin, 62px); position: fixed; left: 0; right: 0; bottom: 0; height: 0; z-index: 2147483646; pointer-events: none; touch-action: none; opacity: 0.92; transition: opacity .4s; }
+                /* Без касаний управление гаснет, чтобы не закрывать текст диалогов */
+                #_mob_ctrl._idle { opacity: 0.38; }
+                ._glass { background: rgba(14,14,18,0.3); border: 1.5px solid rgba(255,255,255,0.26); color: rgba(255,255,255,0.92); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+
+                #_stick { position: fixed; left: calc(max(14px, env(safe-area-inset-left)) + 6px); bottom: calc(max(14px, env(safe-area-inset-bottom)) + 6px); width: calc(var(--u) * 2.55); height: calc(var(--u) * 2.55); border-radius: 50%; pointer-events: auto; touch-action: none; }
+                ._stick_dir { position: absolute; width: 22%; height: 22%; color: rgba(255,255,255,0.4); transition: color .12s; }
+                ._stick_dir svg { display: block; width: 100%; height: 100%; }
+                ._stick_dir[data-dir="up"] { top: 3%; left: 39%; }
+                ._stick_dir[data-dir="down"] { bottom: 3%; left: 39%; transform: rotate(180deg); }
+                ._stick_dir[data-dir="left"] { left: 3%; top: 39%; transform: rotate(-90deg); }
+                ._stick_dir[data-dir="right"] { right: 3%; top: 39%; transform: rotate(90deg); }
+                ._stick_dir._on { color: #fff; }
+                #_stick_knob { position: absolute; left: 29%; top: 29%; width: 42%; height: 42%; border-radius: 50%; background: rgba(255,255,255,0.18); border: 1.5px solid rgba(255,255,255,0.5); box-shadow: 0 2px 10px rgba(0,0,0,0.35); transition: transform .14s ease-out; }
+                #_stick._drag #_stick_knob { transition: none; background: rgba(255,255,255,0.28); }
+
+                #_pad { position: fixed; right: calc(max(14px, env(safe-area-inset-right)) + 6px); bottom: calc(max(14px, env(safe-area-inset-bottom)) + 6px); width: calc(var(--u) * 2.7); height: calc(var(--u) * 3.35); pointer-events: none; }
+                ._btn { position: absolute; padding: 0; border-radius: 50%; display: flex; align-items: center; justify-content: center; font: 600 calc(var(--u) * 0.42) -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; pointer-events: auto; touch-action: none; transition: transform .08s, background .08s; }
+                ._btn._on { transform: scale(0.93); background: rgba(255,255,255,0.3); }
+                /* A и B по диагонали, как на Game Boy: A выше и правее, под большой палец */
+                #_btn_a { right: 0; bottom: calc(var(--u) * 0.6); width: calc(var(--u) * 1.3); height: calc(var(--u) * 1.3); border-color: rgba(255,255,255,0.42); }
+                #_btn_b { right: calc(var(--u) * 1.48); bottom: calc(var(--u) * 0.06); width: calc(var(--u) * 1.08); height: calc(var(--u) * 1.08); font-size: calc(var(--u) * 0.36); }
+                ._cap { position: absolute; top: 100%; left: 50%; transform: translateX(-50%); margin-top: 3px; font-size: 10px; font-weight: 500; letter-spacing: .08em; text-transform: uppercase; color: rgba(255,255,255,0.6); white-space: nowrap; pointer-events: none; }
+                ._pills { position: absolute; right: 0; display: flex; gap: 8px; pointer-events: none; }
+                ._pills._row1 { bottom: calc(var(--u) * 2.1); }
+                ._pills._row2 { bottom: calc(var(--u) * 2.76); }
+                ._pill { display: flex; align-items: center; justify-content: center; height: calc(var(--u) * 0.56); min-width: calc(var(--u) * 0.56); padding: 0 calc(var(--u) * 0.26); border-radius: 999px; font: 600 11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; letter-spacing: .06em; text-transform: uppercase; pointer-events: auto; touch-action: none; transition: transform .08s, background .12s, color .12s; }
+                ._pill svg { width: 16px; height: 16px; }
+                ._pill._on { transform: scale(0.93); }
+                /* «Бег» и «Пропуск» — переключатели: включённый видно издалека */
+                ._pill._latched { background: rgba(255,255,255,0.9); color: #141414; border-color: transparent; }
+
+                @media (pointer: fine) { #_mob_ctrl { display: none !important; } }
             `;
             document.head.appendChild(style);
 
-            const sysMenuHtml = `
-                <div id="_sys_menu_container">
-                    <div id="_sys_btn">⚙️</div>
-                    <div id="_sys_panel">
-                        <div class="_sys_item" id="_sys_home">🏠 В библиотеку</div>
-                        <div class="_sys_item" id="_sys_stretch">📺 Растянуть экран</div>
-                        <div class="_sys_item" id="_sys_smooth"></div>
-                        <div class="_sys_item" id="_sys_turbo">⏩ Турбо-режим (3x)</div>
-                        ${isIOS ? '' : '<div class="_sys_item" id="_sys_fs">⛶ На весь экран</div>'}
-                    </div>
-                </div>
-            `;
-
-            const mobCtrlHtml = `
-                <div id="_mob_ctrl">
-                    <div id="_dpad">
-                        <div class="_dpad_btn" id="_d_up"><svg viewBox="0 0 24 24"><path d="M12 8l-6 6 1.41 1.41L12 10.83l4.59 4.58L18 14z"/></svg></div>
-                        <div class="_dpad_btn" id="_d_down"><svg viewBox="0 0 24 24"><path d="M16.59 8.59L12 13.17 7.41 8.59 6 10l6 6 6-6z"/></svg></div>
-                        <div class="_dpad_btn" id="_d_left"><svg viewBox="0 0 24 24"><path d="M15.41 16.59L10.83 12l4.58-4.59L14 6l-6 6 6 6z"/></svg></div>
-                        <div class="_dpad_btn" id="_d_right"><svg viewBox="0 0 24 24"><path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z"/></svg></div>
-                    </div>
-                    <div id="_act_btns">
-                        <div class="_act_btn" id="_a_shift">SHIFT</div><div class="_act_btn" id="_a_ok">OK</div>
-                        <div class="_act_btn" id="_a_menu">MENU</div><div class="_act_btn" id="_a_esc">ESC</div>
-                    </div>
-                </div>
-            `;
-
-            const layoutToggleHtml = isMobile ? `<div id="_layout_toggle">🔄 Раскладка: Стандарт</div>` : '';
-
-            const ui = document.createElement('div');
-            ui.innerHTML = layoutToggleHtml + sysMenuHtml + (isMobile ? mobCtrlHtml : '');
-            document.body.appendChild(ui);
-
-            // Обработчики меню
+            // --- Меню ⚙ ---
+            const menu = document.createElement('div');
+            menu.id = '_sys_menu_container';
+            menu.innerHTML = `<button type="button" id="_sys_btn" aria-label="${T.settings}" title="${T.settings}">${icon('gear')}</button><div id="_sys_panel" role="menu"></div>`;
+            document.body.appendChild(menu);
             const sysBtn = document.getElementById('_sys_btn');
             const sysPanel = document.getElementById('_sys_panel');
+            onTap(sysBtn, () => {
+                const open = !sysPanel.classList.contains('_open');
+                sysPanel.classList.toggle('_open', open);
+                sysBtn.classList.toggle('_open', open);
+                if (open) renderMenu();   // состояние переключателей могло поменяться с клавиатуры
+            });
+            // Касания и прокрутка меню — не игре: иначе MV принял бы их за касание экрана,
+            // а MZ отменял бы прокрутку колесом. mousedown без действия по умолчанию —
+            // чтобы кнопка не забирала фокус: иначе пробел в игре снова нажимал бы её
+            ['pointerdown', 'pointermove', 'pointerup', 'pointercancel', 'mousedown', 'mousemove', 'mouseup',
+             'touchstart', 'touchmove', 'touchend', 'touchcancel', 'wheel', 'click', 'contextmenu'].forEach(t => menu.addEventListener(t, (e) => {
+                e.stopPropagation();
+                if (t === 'contextmenu' || t === 'mousedown') e.preventDefault();
+            }, { passive: !(t === 'contextmenu' || t === 'mousedown') }));
+            document.addEventListener('pointerdown', (e) => { if (!menu.contains(e.target)) closeMenu(); });
 
-            sysBtn.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); sysPanel.classList.toggle('_open'); }, { passive: false });
-            document.getElementById('_sys_home').addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); window.location.href = '/'; }, { passive: false });
-            document.getElementById('_sys_stretch').addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); window.__toggleRpgStretch(); sysPanel.classList.remove('_open'); }, { passive: false });
-
-            // Сглаживание картинки: «вкл» — плавно при дробном увеличении и чётко при целом,
-            // «выкл» — всегда чёткие пиксели. Выбор запоминается (см. setupModernViewport)
-            const smoothItem = document.getElementById('_sys_smooth');
-            const showSmoothing = () => {
-                const on = !window.__rpgSmoothing || window.__rpgSmoothing() === 'auto';
-                smoothItem.textContent = on ? '✨ Сглаживание: вкл' : '✨ Сглаживание: выкл';
-                smoothItem.classList.toggle('_active', on);
-            };
-            showSmoothing();
-            smoothItem.addEventListener('pointerdown', (e) => {
-                e.preventDefault(); e.stopPropagation();
-                if (window.__toggleRpgSmoothing) window.__toggleRpgSmoothing();
-                showSmoothing();
-                sysPanel.classList.remove('_open');
-            }, { passive: false });
-
-            if (!isIOS) {
-                document.getElementById('_sys_fs')?.addEventListener('pointerdown', (e) => {
-                    e.preventDefault(); e.stopPropagation(); sysPanel.classList.remove('_open');
-                    const el = document.documentElement;
-                    (!document.fullscreenElement) ? (el.requestFullscreen || el.webkitRequestFullscreen).call(el).catch(()=>{}) : (document.exitFullscreen || document.webkitExitFullscreen).call(document);
-                }, { passive: false });
-            }
+            addMenuItem({ id: '_sys_home', section: 'nav', icon: 'home', label: T.home, onClick: () => { window.location.href = '/'; } });
 
             window.__rpgTurbo = false;
-            document.getElementById('_sys_turbo').addEventListener('pointerdown', (e) => {
-                e.preventDefault(); e.stopPropagation();
-                window.__rpgTurbo = !window.__rpgTurbo;
-                e.currentTarget.classList.toggle('_active', window.__rpgTurbo);
-                sysPanel.classList.remove('_open');
-
-                if (!window.__turboHookInjected) {
+            addMenuItem({
+                id: '_sys_turbo', section: 'game', icon: 'turbo', label: T.turbo,
+                isOn: () => window.__rpgTurbo,
+                onClick: () => {
+                    window.__rpgTurbo = !window.__rpgTurbo;
+                    if (window.__turboHookInjected) return;
                     window.__turboHookInjected = true;
                     const turboHook = setInterval(() => {
                         if (typeof SceneManager !== 'undefined' && SceneManager.updateMain && !SceneManager.__turboPatched) {
@@ -820,7 +1020,7 @@ if (!window.__rpgPluginHookInstalled) {
                             SceneManager.updateMain = function() {
                                 origUpdate.call(this);
                                 if (window.__rpgTurbo) {
-                                    for (let i = 0; i < 2; i++) { 
+                                    for (let i = 0; i < 2; i++) {
                                         if (this.updateInputData) this.updateInputData();
                                         if (this.updateManagers) this.updateManagers();
                                         if (this.updateScene) this.updateScene();
@@ -830,147 +1030,244 @@ if (!window.__rpgPluginHookInstalled) {
                             clearInterval(turboHook);
                         }
                     }, 500);
-                }
-            }, { passive: false });
-
-            document.addEventListener('pointerdown', (e) => {
-                if (!sysPanel.contains(e.target) && e.target !== sysBtn) sysPanel.classList.remove('_open');
-            });
-            document.addEventListener('contextmenu', e => {
-                if (e.target.closest('#_mob_ctrl') || e.target.closest('#_sys_menu_container')) e.preventDefault();
-            });
-            
-            if (isMobile) {
-                document.getElementById('_mob_ctrl').addEventListener('pointerdown', e => e.stopPropagation(), { passive: false });
-                ['touchstart', 'touchmove', 'touchend', 'pointerdown', 'pointermove', 'pointerup', 'mousedown', 'mousemove', 'mouseup'].forEach(ev => {
-                    document.getElementById('_mob_ctrl').addEventListener(ev, e => e.stopPropagation(), { passive: false });
-                });
-            }
-
-            // Динамические раскладки кнопок
-            let currentLayout = 0;
-            const layouts = [
-                {
-                    name: 'Стандарт',
-                    keys: {
-                        _a_ok: { kn: 'ok', kc: 32, key: ' ', code: 'Space', label: 'OK' },
-                        _a_esc: { kn: 'escape', kc: 27, key: 'Escape', code: 'Escape', label: 'ESC' },
-                        _a_menu: { kn: 'control', kc: 17, key: 'Control', code: 'ControlLeft', label: 'MENU' },
-                        _a_shift: { kn: 'shift', kc: 16, key: 'Shift', code: 'ShiftLeft', label: 'SHIFT' }
-                    }
                 },
-                {
-                    name: 'Z/X/Q/W',
-                    keys: {
-                        _a_ok: { kn: 'ok', kc: 90, key: 'z', code: 'KeyZ', label: 'Z' },
-                        _a_esc: { kn: 'escape', kc: 88, key: 'x', code: 'KeyX', label: 'X' },
-                        _a_menu: { kn: 'pageup', kc: 81, key: 'q', code: 'KeyQ', label: 'Q' },
-                        _a_shift: { kn: 'pagedown', kc: 87, key: 'w', code: 'KeyW', label: 'W' }
-                    }
-                }
-            ];
+            });
 
-            const updateLabels = () => {
-                if (!isMobile) return;
-                document.getElementById('_a_ok').innerText = layouts[currentLayout].keys._a_ok.label;
-                document.getElementById('_a_esc').innerText = layouts[currentLayout].keys._a_esc.label;
-                document.getElementById('_a_menu').innerText = layouts[currentLayout].keys._a_menu.label;
-                document.getElementById('_a_shift').innerText = layouts[currentLayout].keys._a_shift.label;
-                document.getElementById('_layout_toggle').innerText = `🔄 Раскладка: ${layouts[currentLayout].name}`;
-            };
-
-            if (isMobile) {
-                document.getElementById('_layout_toggle').addEventListener('pointerdown', (e) => {
-                    e.preventDefault(); e.stopPropagation();
-                    currentLayout = currentLayout === 0 ? 1 : 0;
-                    updateLabels();
-                }, { passive: false });
+            addMenuItem({
+                id: '_sys_stretch', section: 'screen', icon: 'stretch', label: T.stretch,
+                isOn: () => !!(window.__rpgIsStretched && window.__rpgIsStretched()),
+                onClick: () => window.__toggleRpgStretch && window.__toggleRpgStretch(),
+            });
+            // Сглаживание: «вкл» — плавно при дробном увеличении и чётко при целом,
+            // «выкл» — всегда чёткие пиксели. Выбор запоминается (см. setupModernViewport)
+            addMenuItem({
+                id: '_sys_smooth', section: 'screen', icon: 'smooth', label: T.smooth,
+                isOn: () => !window.__rpgSmoothing || window.__rpgSmoothing() === 'auto',
+                onClick: () => window.__toggleRpgSmoothing && window.__toggleRpgSmoothing(),
+            });
+            if (!IS_IOS) {
+                const isFull = () => !!(document.fullscreenElement || document.webkitFullscreenElement);
+                addMenuItem({
+                    id: '_sys_fs', section: 'screen', icon: 'fullscreen', label: T.fullscreen,
+                    isOn: isFull,
+                    onClick: () => {
+                        const el = document.documentElement;
+                        const p = !isFull() ? (el.requestFullscreen || el.webkitRequestFullscreen).call(el) : (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+                        if (p && p.catch) p.catch(() => {});
+                    },
+                });
+                document.addEventListener('fullscreenchange', renderMenu);
+                document.addEventListener('webkitfullscreenchange', renderMenu);
             }
 
-            updateLabels();
+            if (IS_MOBILE) setupTouchControls();
+        });
+    }
 
-            const dpadMap = { 
-                _d_up: {kn:'up',kc:38,key:'ArrowUp'}, 
-                _d_down: {kn:'down',kc:40,key:'ArrowDown'}, 
-                _d_left: {kn:'left',kc:37,key:'ArrowLeft'}, 
-                _d_right: {kn:'right',kc:39,key:'ArrowRight'} 
-            };
+    // Экранное управление для телефона и планшета. Крестовина из четырёх отдельных
+    // кнопок не давала вести пальцем: чтобы свернуть за угол, надо было отпустить одну
+    // кнопку и попасть в другую. Теперь это джойстик: направление меняется скольжением,
+    // а на выходе — четыре направления, как и ждут игры RPG Maker
+    function setupTouchControls() {
+        const KEYS = {
+            up:       { kn: 'up',       kc: 38, key: 'ArrowUp',    code: 'ArrowUp' },
+            down:     { kn: 'down',     kc: 40, key: 'ArrowDown',  code: 'ArrowDown' },
+            left:     { kn: 'left',     kc: 37, key: 'ArrowLeft',  code: 'ArrowLeft' },
+            right:    { kn: 'right',    kc: 39, key: 'ArrowRight', code: 'ArrowRight' },
+            ok:       { kn: 'ok',       kc: 32, key: ' ',          code: 'Space' },
+            cancel:   { kn: 'escape',   kc: 27, key: 'Escape',     code: 'Escape' },
+            dash:     { kn: 'shift',    kc: 16, key: 'Shift',      code: 'ShiftLeft' },
+            // Ctrl: во многих играх «держать — пропускать текст». Раньше эта кнопка
+            // называлась MENU, хотя меню не открывала
+            skip:     { kn: 'control',  kc: 17, key: 'Control',    code: 'ControlLeft' },
+            pageup:   { kn: 'pageup',   kc: 81, key: 'q',          code: 'KeyQ' },
+            pagedown: { kn: 'pagedown', kc: 87, key: 'w',          code: 'KeyW' },
+        };
+        // Часть игр слушает только Z и X, а не пробел и Esc
+        const ZX = {
+            ok:     { kn: 'ok',     kc: 90, key: 'z', code: 'KeyZ' },
+            cancel: { kn: 'escape', kc: 88, key: 'x', code: 'KeyX' },
+        };
+        let useZX = false;
+        const held = new Set();      // нажатые прямо сейчас
+        const latched = new Set();   // включённые переключатели «Бег» и «Пропуск»
 
-            const triggerKey = (id, isDown) => {
-                const type = isDown ? 'keydown' : 'keyup';
-                let config;
-                if (id.startsWith('_d_')) {
-                    config = dpadMap[id];
-                    config.code = config.key;
-                } else {
-                    config = layouts[currentLayout].keys[id];
+        function sendKey(name, isDown) {
+            const k = (useZX && ZX[name]) || KEYS[name];
+            if (!k) return;
+            if (isDown) held.add(name); else held.delete(name);
+            if (typeof Input !== 'undefined') {
+                if (Input._currentState) Input._currentState[k.kn] = isDown;
+                if (Input.currentState) Input.currentState[k.kn] = isDown;
+            }
+            const ev = new KeyboardEvent(isDown ? 'keydown' : 'keyup', { bubbles: true, cancelable: true, key: k.key, code: k.code });
+            Object.defineProperty(ev, 'keyCode', { get: () => k.kc });
+            Object.defineProperty(ev, 'which', { get: () => k.kc });
+            document.dispatchEvent(ev);
+        }
+
+        const root = document.createElement('div');
+        root.id = '_mob_ctrl';
+        root.innerHTML = `
+            <div id="_stick" class="_glass" role="application" aria-label="${T.stick}">
+                ${['up', 'down', 'left', 'right'].map(d => `<i class="_stick_dir" data-dir="${d}">${icon('chevron')}</i>`).join('')}
+                <div id="_stick_knob"></div>
+            </div>
+            <div id="_pad">
+                <div class="_pills _row2">
+                    <button type="button" class="_pill _glass" data-key="pageup" aria-label="${T.prev}">${icon('prev')}</button>
+                    <button type="button" class="_pill _glass" data-key="pagedown" aria-label="${T.next}">${icon('next')}</button>
+                </div>
+                <div class="_pills _row1">
+                    <button type="button" class="_pill _glass" data-key="skip" data-latch="1" aria-label="${T.skip_hint}">${T.skip}</button>
+                    <button type="button" class="_pill _glass" data-key="dash" data-latch="1" aria-label="${T.dash_hint}">${T.dash}</button>
+                </div>
+                <button type="button" id="_btn_b" class="_btn _glass" data-key="cancel" aria-label="${T.back_hint}">B<span class="_cap">${T.back}</span></button>
+                <button type="button" id="_btn_a" class="_btn _glass" data-key="ok" aria-label="${T.ok_hint}">A<span class="_cap">${T.ok}</span></button>
+            </div>`;
+        document.body.appendChild(root);
+
+        // Касания по управлению — не игре: иначе MV увидел бы их как касание экрана
+        ['touchstart', 'touchmove', 'touchend', 'touchcancel', 'pointerdown', 'pointermove', 'pointerup', 'mousedown', 'mousemove', 'mouseup', 'click', 'contextmenu'].forEach(t => {
+            root.addEventListener(t, (e) => { e.stopPropagation(); if (t === 'contextmenu') e.preventDefault(); }, { passive: false });
+        });
+
+        // Без касаний управление гаснет — меньше закрывает текст
+        let idleTimer = 0;
+        const wake = () => { root.classList.remove('_idle'); clearTimeout(idleTimer); };
+        const sleepSoon = () => {
+            clearTimeout(idleTimer);
+            idleTimer = setTimeout(() => { if (!held.size) root.classList.add('_idle'); }, 3500);
+        };
+        sleepSoon();
+
+        // --- Джойстик ---
+        const stick = document.getElementById('_stick');
+        const knob = document.getElementById('_stick_knob');
+        const dirEls = {};
+        stick.querySelectorAll('._stick_dir').forEach(el => { dirEls[el.dataset.dir] = el; });
+        let stickId = null, stickDir = null;
+
+        // Ось меняется, только когда другая явно перевешивает: у диагонали направление
+        // иначе дрожало бы между двумя, и герой шёл бы рывками
+        function pickDir(dx, dy, current) {
+            const ax = Math.abs(dx), ay = Math.abs(dy);
+            const horiz = dx > 0 ? 'right' : 'left', vert = dy > 0 ? 'down' : 'up';
+            if (current === horiz) return ay > ax * 1.25 ? vert : horiz;
+            if (current === vert) return ax > ay * 1.25 ? horiz : vert;
+            return ax >= ay ? horiz : vert;
+        }
+        function setStickDir(dir) {
+            if (dir === stickDir) return;
+            if (stickDir) { sendKey(stickDir, false); dirEls[stickDir].classList.remove('_on'); }
+            stickDir = dir;
+            if (dir) { sendKey(dir, true); dirEls[dir].classList.add('_on'); }
+        }
+        function moveStick(e) {
+            const r = stick.getBoundingClientRect();
+            const radius = r.width / 2;
+            const dx = e.clientX - (r.left + radius), dy = e.clientY - (r.top + radius);
+            const dist = Math.hypot(dx, dy), travel = radius * 0.42;
+            const k = dist > travel ? travel / dist : 1;
+            knob.style.transform = `translate(${dx * k}px, ${dy * k}px)`;
+            // Мёртвая зона в центре: палец, просто лежащий на джойстике, героя не двигает
+            setStickDir(dist < radius * 0.22 ? null : pickDir(dx, dy, stickDir));
+        }
+        function releaseStick() {
+            stickId = null;
+            stick.classList.remove('_drag');
+            knob.style.transform = '';
+            setStickDir(null);
+        }
+        stick.addEventListener('pointerdown', (e) => {
+            e.preventDefault();
+            stickId = e.pointerId;
+            try { stick.setPointerCapture(e.pointerId); } catch (_) {}
+            stick.classList.add('_drag');
+            wake();
+            moveStick(e);
+        }, { passive: false });
+        stick.addEventListener('pointermove', (e) => { if (e.pointerId === stickId) { e.preventDefault(); moveStick(e); } }, { passive: false });
+        ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(t => stick.addEventListener(t, (e) => {
+            if (e.pointerId !== stickId) return;
+            releaseStick();
+            sleepSoon();
+        }));
+
+        // --- Кнопки ---
+        root.querySelectorAll('[data-key]').forEach((btn) => {
+            const name = btn.dataset.key;
+            const latch = btn.dataset.latch === '1';
+            let pid = null;
+            btn.addEventListener('pointerdown', (e) => {
+                e.preventDefault();
+                wake();
+                if (latch) {
+                    // Держать «Бег» пальцем нельзя — большой палец нужен на A. Поэтому
+                    // «Бег» и «Пропуск» включаются касанием и выключаются следующим
+                    const on = !latched.has(name);
+                    if (on) latched.add(name); else latched.delete(name);
+                    btn.classList.toggle('_latched', on);
+                    sendKey(name, on);
+                    btn.classList.add('_on');
+                    setTimeout(() => btn.classList.remove('_on'), 120);
+                    sleepSoon();
+                    return;
                 }
-                if (!config) return;
+                if (pid !== null) return;
+                pid = e.pointerId;
+                try { btn.setPointerCapture(e.pointerId); } catch (_) {}
+                btn.classList.add('_on');
+                sendKey(name, true);
+            }, { passive: false });
+            if (latch) return;
+            ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(t => btn.addEventListener(t, (e) => {
+                if (e.pointerId !== pid) return;
+                pid = null;
+                btn.classList.remove('_on');
+                sendKey(name, false);
+                sleepSoon();
+            }));
+        });
 
-                if (typeof Input !== 'undefined') {
-                    if (Input._currentState) Input._currentState[config.kn] = isDown;
-                    if (Input.currentState)  Input.currentState[config.kn]  = isDown;
-                }
+        // Свернули игру или заблокировали экран — отпускаем всё, что было зажато, иначе
+        // герой продолжил бы идти. Движок при потере фокуса сбрасывает свои клавиши, так
+        // что включённые «Бег» и «Пропуск» по возвращении нажимаем заново
+        function releaseHeld() {
+            releaseStick();
+            root.querySelectorAll('._btn._on, ._pill._on').forEach(b => b.classList.remove('_on'));
+            for (const name of [...held]) if (!latched.has(name)) sendKey(name, false);
+        }
+        const restoreLatched = () => { for (const name of latched) sendKey(name, true); };
+        document.addEventListener('visibilitychange', () => { if (document.hidden) releaseHeld(); else restoreLatched(); });
+        window.addEventListener('blur', releaseHeld);
+        window.addEventListener('focus', restoreLatched);
 
-                const ev = new KeyboardEvent(type, { bubbles: true, cancelable: true, key: config.key, code: config.code, keyCode: config.kc, which: config.kc });
-                Object.defineProperty(ev, 'keyCode', { get: () => config.kc });
-                Object.defineProperty(ev, 'which', { get: () => config.kc });
-                document.dispatchEvent(ev);
-            };
-
-            const allBtnIds = ['_d_up', '_d_down', '_d_left', '_d_right', '_a_ok', '_a_esc', '_a_menu', '_a_shift'];
-
-            allBtnIds.forEach(id => {
-                const el = document.getElementById(id);
-                if (!el) return;
-                const press = e => { e.preventDefault(); e.stopPropagation(); if (el.dataset.active) return; el.dataset.active = "true"; el.classList.add('_on'); triggerKey(id, true); };
-                const release = e => { e.preventDefault(); e.stopPropagation(); if (!el.dataset.active) return; el.dataset.active = ""; el.classList.remove('_on'); triggerKey(id, false); };
-
-                el.addEventListener('touchstart', press, { passive: false });
-                el.addEventListener('touchend', release, { passive: false });
-                el.addEventListener('touchcancel', release, { passive: false });
-                el.addEventListener('pointerdown', press);
-                el.addEventListener('pointerup', release);
-                el.addEventListener('pointercancel', release);
-            });
+        addMenuItem({
+            id: '_sys_keys', section: 'controls', icon: 'keys', label: T.keys_zx,
+            isOn: () => useZX,
+            onClick: () => { releaseHeld(); useZX = !useZX; },
         });
     }
 
     // --- 6. ДИАГНОСТИКА, ТАЧ-РЕЖИМ, МОНИТОРЫ ---
+    // Счётчик кадров считает, только пока он на экране. Раньше он и журнал ниже
+    // работали на каждом кадре всю игру, даже скрытые, — лишняя работа для телефона
     function setupFpsMonitor() {
-        const showByDefault = location.search.includes('fps') || location.search.includes('dev');
-        window.__fpsMonitorVisible = showByDefault;
-        
+        let visible = false;
+        let raf = 0;
+
         const monitor = document.createElement('div');
         monitor.id = '_fps_monitor';
-        monitor.style.cssText = `display: ${showByDefault ? 'block' : 'none'}; position: fixed; top: max(64px, env(safe-area-inset-top) + 48px); right: max(16px, env(safe-area-inset-right)); z-index: 2147483647; background: rgba(0,0,0,0.75); color: #0f0; font-family: 'Courier New', monospace; font-size: 11px; line-height: 1.5; padding: 8px 10px; border-radius: 8px; min-width: 130px; pointer-events: none; border: 1px solid rgba(255,255,255,0.1); backdrop-filter: blur(4px);`;
+        monitor.style.cssText = `display: none; position: fixed; top: max(64px, env(safe-area-inset-top) + 48px); right: max(16px, env(safe-area-inset-right)); z-index: 2147483647; background: rgba(0,0,0,0.75); color: #0f0; font-family: 'Courier New', monospace; font-size: 11px; line-height: 1.5; padding: 8px 10px; border-radius: 8px; min-width: 130px; pointer-events: none; border: 1px solid rgba(255,255,255,0.1); backdrop-filter: blur(4px);`;
         document.body.appendChild(monitor);
 
-        window.__toggleFpsMonitor = function() {
-            window.__fpsMonitorVisible = !window.__fpsMonitorVisible;
-            monitor.style.display = window.__fpsMonitorVisible ? 'block' : 'none';
-        };
-
-        const menuTimer = setInterval(() => {
-            const panel = document.getElementById('_sys_panel');
-            if (!panel) return;
-            clearInterval(menuTimer);
-            const btn = document.createElement('div');
-            btn.className = '_sys_item';
-            btn.innerHTML = '📊 FPS Монитор';
-            panel.appendChild(btn);
-            btn.addEventListener('pointerdown', (e) => {
-                e.preventDefault(); e.stopPropagation();
-                window.__toggleFpsMonitor();
-                btn.classList.toggle('_active', window.__fpsMonitorVisible);
-                document.getElementById('_sys_panel').classList.remove('_open');
-            }, { passive: false });
-        }, 300);
-
         const HISTORY = 60;
-        const fpsHistory = new Array(HISTORY).fill(60);
-        let frameTimes = [], lastFrame = performance.now(), frameCount = 0, lastFpsUpdate = performance.now();
-        let lagSpikes = 0;
+        let fpsHistory, frameTimes, lastFrame, frameCount, lastFpsUpdate, lagSpikes;
+        function reset() {
+            fpsHistory = new Array(HISTORY).fill(60);
+            frameTimes = []; lastFrame = performance.now(); frameCount = 0; lastFpsUpdate = performance.now(); lagSpikes = 0;
+        }
 
         function sparkline(data) {
             const bars = ['▁','▂','▃','▄','▅','▆','▇','█'];
@@ -984,68 +1281,72 @@ if (!window.__rpgPluginHookInstalled) {
             const now = performance.now(), frameTime = now - lastFrame;
             lastFrame = now;
             frameCount++; frameTimes.push(frameTime);
-            
+
             if (frameTimes.length > HISTORY) frameTimes.shift();
             if (frameTime > 50) lagSpikes++;
 
             if (now - lastFpsUpdate >= 500) {
                 const currentFps = Math.round(frameCount / ((now - lastFpsUpdate) / 1000));
                 frameCount = 0; lastFpsUpdate = now;
-                
+
                 fpsHistory.push(currentFps);
                 if (fpsHistory.length > HISTORY) fpsHistory.shift();
 
-                if (window.__fpsMonitorVisible) {
-                    const avgFps = Math.round(fpsHistory.reduce((a, b) => a + b, 0) / fpsHistory.length);
-                    const avgFrameTime = frameTimes.reduce((a, b) => a + b, 0) / frameTimes.length;
-                    const color = getColor(currentFps);
-                    monitor.innerHTML = `
-                        <span style="color:${color};font-size:16px;font-weight:bold">${currentFps} FPS</span><br>
-                        <span style="color:#aaa">кадр: ${avgFrameTime.toFixed(1)}ms</span><br>
-                        <span style="color:#888">min:${Math.min(...fpsHistory)} avg:${avgFps} max:${Math.max(...fpsHistory)}</span><br>
-                        <span style="color:#f44;font-size:10px">спайки: ${lagSpikes}</span><br>
-                        <span style="color:${color};letter-spacing:0;font-size:10px">${sparkline(fpsHistory)}</span>
-                    `;
-                }
+                const avgFps = Math.round(fpsHistory.reduce((a, b) => a + b, 0) / fpsHistory.length);
+                const avgFrameTime = frameTimes.reduce((a, b) => a + b, 0) / frameTimes.length;
+                const color = getColor(currentFps);
+                monitor.innerHTML = `
+                    <span style="color:${color};font-size:16px;font-weight:bold">${currentFps} FPS</span><br>
+                    <span style="color:#aaa">${T.fps_frame}: ${avgFrameTime.toFixed(1)}ms</span><br>
+                    <span style="color:#888">min:${Math.min(...fpsHistory)} avg:${avgFps} max:${Math.max(...fpsHistory)}</span><br>
+                    <span style="color:#f44;font-size:10px">${T.fps_spikes}: ${lagSpikes}</span><br>
+                    <span style="color:${color};letter-spacing:0;font-size:10px">${sparkline(fpsHistory)}</span>
+                `;
             }
-            requestAnimationFrame(tick);
+            if (visible) raf = requestAnimationFrame(tick);
         }
-        requestAnimationFrame(tick);
+
+        function setVisible(v) {
+            visible = v;
+            monitor.style.display = v ? 'block' : 'none';
+            cancelAnimationFrame(raf);
+            raf = 0;
+            if (v) { reset(); raf = requestAnimationFrame(tick); }
+        }
+        window.__toggleFpsMonitor = () => setVisible(!visible);
+
+        addMenuItem({ id: '_sys_fps', section: 'debug', icon: 'fps', label: T.fps, isOn: () => visible, onClick: () => setVisible(!visible) });
+        if (location.search.includes('fps') || location.search.includes('dev')) setVisible(true);
     }
 
+    // Журнал подтормаживаний пишет, пока открыт
     function setupSpikeDiagnostics() {
-        const SPIKE_THRESHOLD_MS = 40; 
-        const MAX_LOG = 30;            
+        const SPIKE_THRESHOLD_MS = 40;
+        const MAX_LOG = 30;
         const log = [];
         let lastFrameTime = performance.now();
-        let sessionStart = performance.now();
+        const sessionStart = performance.now();
+        let recording = false;
+        let raf = 0;
         window.__spikeLog = log;
 
         const panel = document.createElement('div');
+        // id нужен перехватчику касаний на телефоне: без него он глотал нажатия
+        // по этой панели, и кнопка «Очистить» не работала
+        panel.id = '_spike_panel';
         panel.style.cssText = `display: none; position: fixed; bottom: 10px; left: 10px; right: 10px; max-height: 45vh; background: rgba(0,0,0,0.92); border: 1px solid rgba(255,100,0,0.4); border-radius: 10px; z-index: 2147483647; font-family: 'Courier New', monospace; font-size: 10px; color: #ddd; overflow-y: auto; -webkit-overflow-scrolling: touch; pointer-events: auto;`;
-        panel.innerHTML = `<div style="position:sticky;top:0;background:rgba(0,0,0,0.95);padding:6px 10px;border-bottom:1px solid rgba(255,100,0,0.3);display:flex;justify-content:space-between;align-items:center;"><span style="color:#f80;font-weight:bold">⚡ Spike Log</span><span id="_spike_count" style="color:#f44">0 спайков</span><button id="_spike_clear" style="background:rgba(255,80,0,0.3);border:1px solid rgba(255,80,0,0.5);border-radius:4px;color:#fff;padding:2px 8px;font-size:10px;">Очистить</button></div><div id="_spike_log_body" style="padding:6px 10px;"></div>`;
+        panel.innerHTML = `<div style="position:sticky;top:0;background:rgba(0,0,0,0.95);padding:6px 10px;border-bottom:1px solid rgba(255,100,0,0.3);display:flex;justify-content:space-between;align-items:center;"><span style="color:#f80;font-weight:bold">${T.spikes}</span><span id="_spike_count" style="color:#f44">${T.spikes_total}: 0</span><button id="_spike_clear" style="background:rgba(255,80,0,0.3);border:1px solid rgba(255,80,0,0.5);border-radius:4px;color:#fff;padding:2px 8px;font-size:10px;">${T.spikes_clear}</button></div><div id="_spike_log_body" style="padding:6px 10px;"></div>`;
         document.body.appendChild(panel);
-
-        document.getElementById('_spike_clear')?.addEventListener('pointerdown', (e) => {
-            e.stopPropagation(); log.length = 0;
-            document.getElementById('_spike_log_body').innerHTML = '<span style="color:#666">— Лог очищен —</span>';
-            document.getElementById('_spike_count').textContent = '0 спайков';
+        // Касания и прокрутка журнала — не игре: иначе на карте герой шёл бы туда, где нажали «Очистить»
+        ['pointerdown', 'mousedown', 'mouseup', 'touchstart', 'touchmove', 'touchend', 'wheel', 'click'].forEach(t => {
+            panel.addEventListener(t, (e) => e.stopPropagation(), { passive: true });
         });
 
-        const menuTimer = setInterval(() => {
-            const sysPanel = document.getElementById('_sys_panel');
-            if (!sysPanel) return;
-            clearInterval(menuTimer);
-            const btn = document.createElement('div');
-            btn.className = '_sys_item';
-            btn.textContent = '🔍 Spike Log';
-            sysPanel.appendChild(btn);
-            btn.addEventListener('pointerdown', (e) => {
-                e.preventDefault(); e.stopPropagation();
-                panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
-                sysPanel.classList.remove('_open');
-            }, { passive: false });
-        }, 500);
+        onTap(document.getElementById('_spike_clear'), () => {
+            log.length = 0;
+            document.getElementById('_spike_log_body').innerHTML = `<span style="color:#666">${T.spikes_cleared}</span>`;
+            document.getElementById('_spike_count').textContent = `${T.spikes_total}: 0`;
+        });
 
         function getGameState(frameMs) {
             const state = { ms: frameMs.toFixed(1), t: ((performance.now() - sessionStart) / 1000).toFixed(1) };
@@ -1076,34 +1377,44 @@ if (!window.__rpgPluginHookInstalled) {
             if (delta > SPIKE_THRESHOLD_MS) {
                 log.unshift(getGameState(delta));
                 if (log.length > MAX_LOG) log.pop();
-                if (panel.style.display !== 'none') {
-                    const body = document.getElementById('_spike_log_body');
-                    if (body) body.innerHTML = log.map((s, i) => `<div style="border-bottom:1px solid rgba(255,255,255,0.05);padding:3px 0"><span style="color:#666">#${i+1} +${s.t}s</span><span style="color:${s.ms > 80 ? '#f44' : s.ms > 60 ? '#f80' : '#ff0'};font-weight:bold"> ${s.ms}ms</span><span style="color:#aaa"> ${s.scene || '?'}</span> ${s.parallelEvents > 0 ? `<span style="color:#f44"> ⚠️ parallel:${s.parallelEvents}</span>` : ''} ${s.textures > 200 ? `<span style="color:#f44"> tex:${s.textures}⚠️</span>` : (s.textures ? ` tex:${s.textures}` : '')}</div>`).join('');
-                }
+                const body = document.getElementById('_spike_log_body');
+                if (body) body.innerHTML = log.map((s, i) => `<div style="border-bottom:1px solid rgba(255,255,255,0.05);padding:3px 0"><span style="color:#666">#${i+1} +${s.t}s</span><span style="color:${s.ms > 80 ? '#f44' : s.ms > 60 ? '#f80' : '#ff0'};font-weight:bold"> ${s.ms}ms</span><span style="color:#aaa"> ${s.scene || '?'}</span> ${s.parallelEvents > 0 ? `<span style="color:#f44"> ⚠️ parallel:${s.parallelEvents}</span>` : ''} ${s.textures > 200 ? `<span style="color:#f44"> tex:${s.textures}⚠️</span>` : (s.textures ? ` tex:${s.textures}` : '')}</div>`).join('');
                 const countEl = document.getElementById('_spike_count');
-                if (countEl) countEl.textContent = `${log.length} спайков`;
+                if (countEl) countEl.textContent = `${T.spikes_total}: ${log.length}`;
             }
-            requestAnimationFrame(detectLoop);
+            if (recording) raf = requestAnimationFrame(detectLoop);
         }
-        requestAnimationFrame(detectLoop);
+
+        function setOpen(open) {
+            recording = open;
+            panel.style.display = open ? 'block' : 'none';
+            cancelAnimationFrame(raf);
+            raf = 0;
+            if (open) { lastFrameTime = performance.now(); raf = requestAnimationFrame(detectLoop); }
+        }
+
+        addMenuItem({ id: '_sys_spikes', section: 'debug', icon: 'pulse', label: T.spikes, isOn: () => recording, onClick: () => setOpen(!recording) });
+        if (location.search.includes('dev')) setOpen(true);
     }
 
     function setupTouchModeToggle() {
-        const _isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
-            (/iPad|iPhone|iPod/.test(navigator.userAgent)) ||
-            (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-        if (!_isMobile) return; 
+        if (!IS_MOBILE) return;
 
-        window.__rpgTouchEnabled = false; 
+        window.__rpgTouchEnabled = false;
 
         const interceptor = (e) => {
-            if (window.__rpgTouchEnabled) return; 
+            // Касание мимо меню ⚙ закрывает его. Проверка здесь, а не только в обработчике
+            // на document: перехватчик глотает касание раньше, и меню оставалось открытым
+            if ((e.type === 'pointerdown' || e.type === 'touchstart') && !(e.target && e.target.closest && e.target.closest('#_sys_menu_container'))) closeMenu();
+            if (window.__rpgTouchEnabled) return;
             if (e.target && e.target.closest && (
-                e.target.closest('#_sys_menu_container') || 
-                e.target.closest('#_mob_ctrl') || 
-                e.target.closest('#_fps_monitor') || 
+                e.target.closest('#_sys_menu_container') ||
+                e.target.closest('#_mob_ctrl') ||
+                e.target.closest('#_fps_monitor') ||
                 e.target.closest('#_spike_panel') ||
-                e.target.closest('#_layout_toggle') 
+                // Окно чит-меню: без этого на телефоне его нельзя было нажать пальцем
+                e.target.closest('#cheat_menu') ||
+                e.target.closest('#cheat_menu_text')
             )) return;
             e.stopPropagation();
             e.stopImmediatePropagation();
@@ -1113,73 +1424,46 @@ if (!window.__rpgPluginHookInstalled) {
             window.addEventListener(ev, interceptor, { capture: true, passive: false });
         });
 
-        window.__toggleRpgTouchMode = function() {
-            window.__rpgTouchEnabled = !window.__rpgTouchEnabled;
-            const item = document.getElementById('_touch_mode_item');
-            if (item) {
-                item.innerHTML = (window.__rpgTouchEnabled ? '✅' : '👆') + ' Touch Mode';
-                item.classList.toggle('_active', window.__rpgTouchEnabled);
-            }
-            document.getElementById('_sys_panel')?.classList.remove('_open');
-        };
-
-        document.addEventListener('DOMContentLoaded', () => {
-            const panelTimer = setInterval(() => {
-                const panel = document.getElementById('_sys_panel');
-                if (!panel) return;
-                clearInterval(panelTimer);
-                if (!document.getElementById('_touch_mode_item')) {
-                    const item = document.createElement('div');
-                    item.id = '_touch_mode_item';
-                    item.className = '_sys_item';
-                    item.innerHTML = '👆 Touch Mode';
-                    item.style.cursor = 'pointer';
-                    panel.appendChild(item);
-                    item.addEventListener('pointerdown', (e) => { e.stopPropagation(); window.__toggleRpgTouchMode(); });
-                }
-            }, 150);
-        });
+        window.__toggleRpgTouchMode = function() { window.__rpgTouchEnabled = !window.__rpgTouchEnabled; };
+        addMenuItem({ id: '_sys_touch', section: 'controls', icon: 'tap', label: T.touch, isOn: () => window.__rpgTouchEnabled, onClick: () => window.__toggleRpgTouchMode() });
     }
 
+    // Чит-меню (56 КБ) раньше загружалось в каждую игру сразу, даже если им не
+    // пользовались. Теперь — при первом нажатии пункта в меню ⚙
     function injectEmeraldCheatMenu() {
-        const waitTimer = setInterval(() => {
-            if (typeof DataManager !== 'undefined' && typeof SceneManager !== 'undefined') {
-                clearInterval(waitTimer);
+        let state = 'idle';   // idle → loading → ready
+
+        function openCheats() {
+            if (!window.Cheat_Menu) return;
+            // Открывается оно только в самой игре: на титульном экране ещё нет героев
+            if (typeof $gameActors === 'undefined' || !$gameActors || !$gameActors._data) {
+                console.warn('[RPG Fixes] Чит-меню открывается после начала игры');
+                return;
+            }
+            window.Cheat_Menu.overlay_openable = true;
+            const ev = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: '1', code: 'Digit1' });
+            Object.defineProperty(ev, 'keyCode', { get: () => 49 });
+            Object.defineProperty(ev, 'which', { get: () => 49 });
+            document.dispatchEvent(ev);
+        }
+
+        addMenuItem({
+            id: '_sys_cheat', section: 'game', icon: 'wand', label: T.cheats,
+            onClick: () => {
+                if (state === 'ready') { openCheats(); return; }
+                if (state === 'loading') return;
+                state = 'loading';
+                const css = document.createElement('link');
+                css.rel = 'stylesheet';
+                css.href = '/Cheat_Menu.css';
+                document.head.appendChild(css);
                 const script = document.createElement('script');
                 script.src = '/Cheat_Menu.js';
+                script.onload = () => { state = 'ready'; openCheats(); };
+                script.onerror = () => { state = 'idle'; console.warn('[RPG Fixes] Чит-меню не загрузилось'); };
                 document.body.appendChild(script);
-
-                const cssLink = document.createElement('link');
-                cssLink.rel = 'stylesheet';
-                cssLink.href = '/Cheat_Menu.css';
-                document.head.appendChild(cssLink);
-            }
-        }, 100);
-        
-        const initObserver = setInterval(() => {
-            const sysPanel = document.getElementById('_sys_panel');
-            if (!sysPanel) return; 
-            clearInterval(initObserver);
-
-            if (document.getElementById('_sys_cheat_mod')) return; 
-
-            const cheatBtn = document.createElement('div');
-            cheatBtn.id = '_sys_cheat_mod';
-            cheatBtn.className = '_sys_item';
-            cheatBtn.innerHTML = '💉 Открыть Чит-Меню';
-            sysPanel.appendChild(cheatBtn);
-            
-            cheatBtn.addEventListener('pointerdown', (e) => {
-                e.preventDefault(); e.stopPropagation();
-                if (window.Cheat_Menu) {
-                    window.Cheat_Menu.overlay_openable = true;
-                    document.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, keyCode: 49, which: 49, key: '1' }));
-                } else {
-                    console.warn('[RPG Fixes] Плагин читов еще не загрузился в память.');
-                }
-                sysPanel.classList.remove('_open');
-            }, { passive: false });
-        }, 300);
+            },
+        });
     }
 
     // ============================================================================
@@ -1770,7 +2054,11 @@ if (!window.__rpgPluginHookInstalled) {
             console.log('[RPG Fixes] 🛡️ Защита от вечной загрузки шрифтов (MZ) активирована');
         }
 
-    }, 5); // <-- КРИТИЧНОЕ ИЗМЕНЕНИЕ: проверяем каждые 5 миллисекунд!
+    }, 5); // Часто — чтобы успеть до первого использования этих функций при загрузке игры
+    // ...но только пока игра загружается. Раньше проверка крутилась 200 раз в секунду
+    // до самого закрытия вкладки и не давала процессору телефона отдыхать. Всё, что
+    // она латает, появляется при загрузке ядра и плагинов — за первые секунды
+    setTimeout(() => clearInterval(saveFixInterval), 15000);
 
     // ============================================================================
     // 🛡️ БРОНЯ ОТ КРИВЫХ ПЛАГИНОВ (ГЛОБАЛЬНЫЙ ПАТЧ JSON.parse - ТИХИЙ РЕЖИМ)

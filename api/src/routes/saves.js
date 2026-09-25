@@ -131,8 +131,10 @@ module.exports = function(EXTRACT_TMP) {
         } catch(e) { res.json({}); }
     });
 
-    router.post('/:gameId/:key', async (req, res) => {
-        if (typeof req.body.value !== 'string') return res.status(400).json({ error: 'Bad data' });
+    // Сейв целиком в теле запроса. Общий лимит сервера — 1 МБ, а слоты больших игр
+    // тяжелее, поэтому здесь свой: сюда доходят только после проверки входа
+    router.post('/:gameId/:key', express.json({ limit: '50mb' }), async (req, res) => {
+        if (typeof req.body?.value !== 'string') return res.status(400).json({ error: 'Bad data' });
         try {
             const gameId = path.basename(req.params.gameId);
             const fileName = encodeURIComponent(path.basename(req.params.key));

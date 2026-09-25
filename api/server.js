@@ -51,9 +51,16 @@ setIo(io);
 // [3] ГЛОБАЛЬНЫЕ MIDDLEWARE И НАСТРОЙКА ПАПОК
 // ============================================================================
 app.use(compression());
-// Тело JSON у нас максимум в несколько килобайт (метаданные, форма входа).
-// 50 МБ позволяли любому неавторизованному клиенту занимать память сервера.
-app.use(express.json({ limit: '1mb' }));
+// Тело JSON у нас обычно в несколько килобайт (метаданные, форма входа), и 1 МБ
+// хватает с запасом: 50 МБ позволяли любому неавторизованному клиенту занимать
+// память сервера. Исключение — сейвы: у больших игр один слот весит больше мегабайта
+// (Fallen Priestess — 1,1 МБ), и с общим лимитом сервер отвечал 413 — сохранение
+// оставалось только в браузере. Их разбирает сам роут сохранений с лимитом побольше
+// и уже после проверки входа (routes/saves.js)
+const smallJson = express.json({ limit: '1mb' });
+app.use((req, res, next) => (
+    req.method === 'POST' && req.path.startsWith('/api/saves/') ? next() : smallJson(req, res, next)
+));
 app.use(cookieParser());
 // Отключаем строгие политики Helmet, чтобы игры в iframe (Cross-Origin) работали корректно
 app.use(helmet({ 
@@ -189,15 +196,18 @@ app.get('*', requireAuth, async (req, res, next) => {
 
         // 3. Если запрошена директория - ищем исполняемый файл (index.html)
         if (stat && stat.isDirectory()) {
-            if (!req.path.endsWith('/')) return res.redirect(req.path + '/');
+            // Строку запроса при переходе в папку игры не теряем: в ней язык меню (?lang=)
+            // и отладочные ?fps, ?dev
+            const query = req.originalUrl.includes('?') ? req.originalUrl.slice(req.originalUrl.indexOf('?')) : '';
+            if (!req.path.endsWith('/')) return res.redirect(req.path + '/' + query);
             
             if (fs.existsSync(path.join(filePath, 'index.html'))) {
                 filePath = path.join(filePath, 'index.html');
             } else if (fs.existsSync(path.join(filePath, 'www', 'index.html'))) {
-                return res.redirect(req.path + 'www/');
+                return res.redirect(req.path + 'www/' + query);
             } else {
                 const deepDir = await findGameFolder(filePath);
-                if (deepDir) return res.redirect('/' + path.relative(GAMES_DIR, deepDir).replace(/\\/g, '/') + '/');
+                if (deepDir) return res.redirect('/' + path.relative(GAMES_DIR, deepDir).replace(/\\/g, '/') + '/' + query);
                 return res.status(404).send(`<div style="color:red; text-align:center; padding:50px;">index.html не найден.</div>`);
             }
         }
