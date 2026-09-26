@@ -2393,12 +2393,15 @@ if (!window.__rpgPluginHookInstalled) {
             console.log('[RPG Fixes] 🛡️ DataManager.loadBackground (NUUN) вылечен');
         }
 
-        // Патчим отрисовку фона
+        // Патчим отрисовку фона. Метод фона берём в момент вызова, а не запоминаем:
+        // щит встаёт раньше плагинов, и запомненный заранее метод меню обходил бы их
+        // обёртки — в Fallen Priestess экран сохранения из-за этого падал (плагин Drill
+        // не находил фона, который создаёт его обёртка)
         if (window.Scene_File && window.Scene_File.prototype.createBackground && !window.Scene_File.prototype.createBackground._isSafe) {
-            const origCreateBg = window.Scene_File.prototype.createBackground;
+            const ownBg = Object.prototype.hasOwnProperty.call(window.Scene_File.prototype, 'createBackground') ? window.Scene_File.prototype.createBackground : null;
             window.Scene_File.prototype.createBackground = function() {
                 try {
-                    origCreateBg.apply(this, arguments);
+                    (ownBg || Object.getPrototypeOf(window.Scene_File.prototype).createBackground).apply(this, arguments);
                 } catch(e) {
                     console.warn('[RPG Fixes] 🛡️ Предотвращен краш фона меню сохранений:', e);
                     if (!this._backgroundSprite) {
