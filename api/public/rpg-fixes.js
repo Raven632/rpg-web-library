@@ -660,39 +660,6 @@ if (!window.__rpgPluginHookInstalled) {
         }
     }
 
-    // На мониторе 120–144 Гц браузер зовёт игру чаще, чем она обновляется (60 раз
-    // в секунду), а движок рисует кадр на каждый вызов — больше половины кадров рисуется
-    // зря. Рисуем, только если с прошлого кадра игра обновилась. Замер без ограничения
-    // кадров: MV рисовала 342 кадра в секунду при 60 обновлениях. На обычных 60 Гц
-    // и на iPhone ничего не меняется — там каждый кадр и есть обновление
-    function skipIdleRenders() {
-        let updated = true, lastUpdate = 0, broken = false;
-        const shouldRender = () => {
-            const now = performance.now();
-            if (broken || updated) { updated = false; lastUpdate = now; return true; }
-            // Секунды без обновлений у живой игры не бывает — значит, плагин заменил
-            // updateScene, не вызвав нашу версию. Тогда рисуем как раньше, каждый кадр.
-            // Считаем по времени, а не по кадрам: на мониторе 480 Гц тридцать кадров —
-            // это 60 мс, и хватало одной заминки, чтобы отключиться навсегда
-            if (now - lastUpdate > 1000) { broken = true; return true; }
-            return false;
-        };
-        const timer = setInterval(() => {
-            if (typeof SceneManager === 'undefined' || typeof Graphics === 'undefined' || typeof Utils === 'undefined' || !SceneManager.updateScene) return;
-            clearInterval(timer);
-            const updateScene = SceneManager.updateScene;
-            SceneManager.updateScene = function() { updated = true; return updateScene.apply(this, arguments); };
-            if (Utils.RPGMAKER_NAME === 'MZ' && typeof Graphics._canRender === 'function') {
-                const canRender = Graphics._canRender;
-                Graphics._canRender = function() { return canRender.apply(this, arguments) && shouldRender(); };
-            } else if (typeof SceneManager.renderScene === 'function') {
-                const renderScene = SceneManager.renderScene;
-                SceneManager.renderScene = function() { if (shouldRender()) return renderScene.apply(this, arguments); };
-            }
-        }, 50);
-        setTimeout(() => clearInterval(timer), 30000);
-    }
-
     // ============================================================================
     // 4. СИСТЕМА ОБЛАЧНЫХ СОХРАНЕНИЙ
     // ============================================================================
@@ -2022,7 +1989,6 @@ if (!window.__rpgPluginHookInstalled) {
         fixDevicePixelRatio();
         setupModernViewport();
         applyPerformanceOptimizations();
-        skipIdleRenders();
         setupSecureAudio(); 
         // Слушает касания на window раньше перехватчика касаний (setupTouchModeToggle)
         setupWakeLock();
