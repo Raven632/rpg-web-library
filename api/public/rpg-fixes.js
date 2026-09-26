@@ -1237,9 +1237,29 @@ if (!window.__rpgPluginHookInstalled) {
         const held = new Set();      // нажатые прямо сейчас
         const latched = new Set();   // включённые переключатели «Бег» и «Пропуск»
 
+        // Игра могла отдать стандартную клавишу под своё действие: в RJ01548022 пробел
+        // прячет окно сообщения, и A вместо «Далее» прятала текст. Тогда жмём другую
+        // клавишу, которая в этой игре значит то же самое
+        const SAME = {
+            ok:       [[13, 'Enter', 'Enter'], [90, 'z', 'KeyZ']],
+            escape:   [[88, 'x', 'KeyX'], [45, 'Insert', 'Insert'], [96, '0', 'Numpad0']],
+            pageup:   [[33, 'PageUp', 'PageUp']],
+            pagedown: [[34, 'PageDown', 'PageDown']],
+        };
+        function gameKey(k) {
+            const map = typeof Input !== 'undefined' && Input.keyMapper;
+            if (!map || map[k.kc] === k.kn) return k;
+            const alt = (SAME[k.kn] || []).find(([kc]) => map[kc] === k.kn);
+            return alt ? { kn: k.kn, kc: alt[0], key: alt[1], code: alt[2] } : k;
+        }
+        const pressedAs = {};   // отпускаем той же клавишей, что нажали
+
         function sendKey(name, isDown) {
-            const k = (useZX && ZX[name]) || KEYS[name];
+            let k = (useZX && ZX[name]) || KEYS[name];
             if (!k) return;
+            // Z и X включают вручную для игр, которые слушают именно их, — их не подменяем
+            if (isDown) { if (!(useZX && ZX[name])) k = gameKey(k); pressedAs[name] = k; }
+            else if (pressedAs[name]) { k = pressedAs[name]; delete pressedAs[name]; }
             if (isDown) held.add(name); else held.delete(name);
             if (typeof Input !== 'undefined') {
                 if (Input._currentState) Input._currentState[k.kn] = isDown;
