@@ -212,38 +212,60 @@ app.get('*', requireAuth, async (req, res, next) => {
             }
         }
 
-        // 4. Оптимизация и транскодирование Аудио (Фикс для iOS Safari)
+        // 4. Звук: отдаём тот формат, который попросили
+        // Формат выбирает браузер: rpg-fixes проверяет, умеет ли он Ogg. .ogg — всегда
+        // настоящий Ogg (MZ на старых iOS разбирает его своим декодером). .m4a просит только
+        // браузер без Ogg — если готового m4a в игре нет, перекодируем (FFmpeg, с кэшем).
+        // Раньше сервер угадывал iPhone по User-Agent и подменял Ogg на m4a даже тем, кто
+        // Ogg умеет: каждая мелодия в первый раз ждала перекодирования, а MZ получал m4a
+        // вместо Ogg для своего декодера и молчал
         const ext = path.extname(filePath).toLowerCase();
         if (ext === '.m4a' || ext === '.ogg') {
             const base = filePath.slice(0, -4);
-            const ua = req.headers['user-agent'] || '';
-            const isIOS = /iPad|iPhone|iPod/.test(ua) || (ua.includes('Mac') && ua.includes('Mobile'));
-            
-            // Ищем альтернативные форматы или зашифрованные файлы (.rpgmvo)
-            const pathsToTry = ext === '.m4a' 
-                ? [filePath, base + '.ogg', filePath + '_', base + '.rpgmvo', base + '.rpgmvm'] 
-                : [filePath, base + '.m4a', filePath + '_', base + '.rpgmvm', base + '.rpgmvo']; 
+            // Для m4a первыми — готовые (.rpgmvm — тот же m4a, зашифрованный): их не надо перекодировать
+            const pathsToTry = ext === '.m4a'
+                ? [filePath, base + '.rpgmvm', base + '.ogg', base + '.rpgmvo']
+                : [filePath, base + '.m4a', filePath + '_', base + '.rpgmvm', base + '.rpgmvo'];
 
             let sourcePath = null;
             for (const p of pathsToTry) {
                 try { await fsp.access(p); sourcePath = p; break; } catch {}
             }
+            // Папка игры — та, где лежит audio/: в ней data/System.json с ключом шифрования.
+            // Так находится и игра в www/, и во вложенной папке
+            const parts = sourcePath ? path.relative(GAMES_DIR, sourcePath).split(path.sep) : [];
+            const audioAt = parts.indexOf('audio');
+            const gameRoot = path.join(GAMES_DIR, ...(audioAt > 0 ? parts.slice(0, audioAt) : parts.slice(0, 1)));
 
-            if (sourcePath) {
-                const isEncrypted = sourcePath.endsWith('.rpgmvo') || sourcePath.endsWith('.rpgmvm');
-                // Если это iOS и формат не поддерживается - конвертируем на лету в m4a
-                if (isIOS && (isEncrypted || sourcePath.endsWith('.ogg'))) {
-                    try {
-                        const gameFolder = reqPath.split('/').filter(Boolean)[0];
-                        const readyPath = await audioService.ensureM4aFromSource(sourcePath, path.join(GAMES_DIR, gameFolder));
-                        res.type('audio/mp4');
-                        res.setHeader('Cache-Control', 'public, max-age=86400');
-                        res.setHeader('Access-Control-Allow-Origin', '*');
-                        return res.sendFile(readyPath);
-                    } catch (err) { filePath = sourcePath; } 
-                } else {
-                    filePath = sourcePath;
-                }
+            if (sourcePath && sourcePath !== filePath && ext === '.m4a') {
+                try {
+                    const readyPath = await audioService.ensureM4aFromSource(sourcePath, gameRoot);
+                    res.type('audio/mp4');
+                    res.setHeader('Cache-Control', 'public, max-age=86400');
+                    res.setHeader('Access-Control-Allow-Origin', '*');
+                    return res.sendFile(readyPath);
+                } catch (err) { filePath = sourcePath; }
+            } else if (sourcePath && sourcePath !== filePath && /\.(rpgmvo|rpgmvm|ogg_)$/i.test(sourcePath)) {
+                // Просили обычный .ogg, а в игре только зашифрованный — отдаём расшифрованным
+                try {
+                    const data = await audioService.decryptRpgmvo(sourcePath, gameRoot);
+                    res.type(sourcePath.endsWith('.rpgmvm') ? 'audio/mp4' : 'audio/ogg');
+                    res.setHeader('Cache-Control', 'public, max-age=86400');
+                    return res.send(data);
+                } catch (err) { filePath = sourcePath; }
+            } else if (sourcePath) {
+                filePath = sourcePath;
+            }
+        }
+
+        // Ролики: в сборках для Windows они только .webm, а MV на телефоне просит .mp4.
+        // rpg-fixes теперь просит .webm, если браузер его умеет, но плагины выбирают формат
+        // сами — поэтому, если файла в нужном формате нет, отдаём другой: браузер
+        // разберёт его по содержимому
+        if (ext === '.webm' || ext === '.mp4') {
+            try { await fsp.access(filePath); } catch {
+                const other = filePath.slice(0, -ext.length) + (ext === '.webm' ? '.mp4' : '.webm');
+                try { await fsp.access(other); filePath = other; } catch {}
             }
         }
 

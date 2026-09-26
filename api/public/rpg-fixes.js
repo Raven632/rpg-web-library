@@ -444,13 +444,32 @@ if (!window.__rpgPluginHookInstalled) {
             return smoothMode;
         };
 
+        // Вырез, «островок» и скруглённые углы iPhone. Страница растянута на весь экран
+        // (viewport-fit=cover), и раньше картинка игры считалась по всему экрану: растянутая,
+        // она уходила под вырез — на iPhone 13 лёжа по 47 px с каждой стороны. Теперь игра
+        // встаёт в безопасную зону. Снизу отступ не берём: там только тонкая полоска «домой»,
+        // а игра на телефоне лёжа из-за неё стала бы мельче
+        const safeProbe = document.createElement('div');
+        safeProbe.id = '_safe_area_probe';
+        safeProbe.style.cssText = 'position:fixed;left:0;top:0;width:0;height:0;visibility:hidden;pointer-events:none;padding:env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);';
+        document.documentElement.appendChild(safeProbe);
+        function safeInsets() {
+            const cs = getComputedStyle(safeProbe);
+            return { left: parseFloat(cs.paddingLeft) || 0, right: parseFloat(cs.paddingRight) || 0, top: parseFloat(cs.paddingTop) || 0 };
+        }
+
+        // Где сейчас холст: сдвиг и масштаб. Нужно, чтобы поставить поверх него видео
+        const placed = { left: 0, top: 0, sx: 1, sy: 1 };
+
         const resizeObserver = new ResizeObserver(() => { if (targetCanvas) requestAnimationFrame(applyScale); });
         function applyScale() {
             if (!targetCanvas || !targetCanvas.width) return;
             const w = targetCanvas.width, h = targetCanvas.height;
             targetCanvas.style.setProperty('width', w + 'px', 'important');
             targetCanvas.style.setProperty('height', h + 'px', 'important');
-            let scaleX = window.innerWidth / w; let scaleY = window.innerHeight / h;
+            const safe = safeInsets();
+            const areaW = window.innerWidth - safe.left - safe.right, areaH = window.innerHeight - safe.top;
+            let scaleX = areaW / w; let scaleY = areaH / h;
             if (!isStretched) { const scale = Math.min(scaleX, scaleY); scaleX = scaleY = scale; }
 
             // Считаем в настоящих пикселях экрана: на iPhone и ноутбуке с масштабом 125%
@@ -463,14 +482,48 @@ if (!window.__rpgPluginHookInstalled) {
 
             // По центру, но с точностью до пикселя экрана: при центровке через 50% холст
             // на нечётной ширине окна вставал на полпикселя, и даже при ×2 пиксели выходили неровными
-            const left = Math.round((window.innerWidth - w * scaleX) / 2 * dpr) / dpr;
-            const top = Math.round((window.innerHeight - h * scaleY) / 2 * dpr) / dpr;
+            const left = Math.round((safe.left + (areaW - w * scaleX) / 2) * dpr) / dpr;
+            const top = Math.round((safe.top + (areaH - h * scaleY) / 2) * dpr) / dpr;
             targetCanvas.style.setProperty('left', '0px', 'important');
             targetCanvas.style.setProperty('top', '0px', 'important');
             targetCanvas.style.setProperty('transform-origin', '0 0', 'important');
             targetCanvas.style.setProperty('transform', `translate(${left}px, ${top}px) scale(${scaleX}, ${scaleY})`, 'important');
+            Object.assign(placed, { left, top, sx: scaleX, sy: scaleY });
+            placeVideo();
         }
         function forceScaleUpdate() { if (targetCanvas) requestAnimationFrame(applyScale); }
+
+        // Видео движка — поверх картинки игры. Движок (и плагины вроде MovieManager) ставит
+        // его по своей схеме: картинка игры по центру окна в масштабе Graphics._realScale.
+        // А холст ставит rpg-fixes — со своим масштабом, растяжением и отступом от выреза.
+        // Переводим положение видео из одной схемы в другую. Раньше ролик стоял мимо
+        // картинки, а на телефоне — в исходном размере, срезанный краем экрана
+        let watchedVideo = null;
+        function placeVideo() {
+            const v = (typeof Graphics !== 'undefined' && Graphics._video) || (typeof Video !== 'undefined' && Video._element);
+            if (!v || !targetCanvas || !targetCanvas.width) return;
+            if (watchedVideo !== v) {
+                watchedVideo = v;
+                // Движок и плагины двигают видео и сами — тогда пересчитываем
+                new MutationObserver(placeVideo).observe(v, { attributes: true, attributeFilter: ['style', 'width', 'height'] });
+                v.addEventListener('loadedmetadata', placeVideo);
+            }
+            const rs = (typeof Graphics !== 'undefined' && Graphics._realScale) || 1;
+            const engineX = (window.innerWidth - targetCanvas.width * rs) / 2;
+            const engineY = (window.innerHeight - targetCanvas.height * rs) / 2;
+            let L = 0, T = 0;
+            for (let e = v; e; e = e.offsetParent) { L += e.offsetLeft; T += e.offsetTop; }
+            const kx = placed.sx / rs, ky = placed.sy / rs;
+            const x = placed.left + (L - engineX) * kx, y = placed.top + (T - engineY) * ky;
+            const t = `translate(${x - L}px, ${y - T}px) scale(${kx}, ${ky})`;
+            // Сравниваем со своим прошлым значением, а не со style.transform: браузер
+            // записывает его по-своему, и наблюдатель крутился бы бесконечно
+            if (v.__rpgTransform !== t) {
+                v.__rpgTransform = t;
+                v.style.transformOrigin = '0 0';
+                v.style.transform = t;
+            }
+        }
 
         const domObserver = new MutationObserver((mutations, obs) => {
             const c = document.getElementById('GameCanvas') || document.querySelector('canvas');
@@ -482,7 +535,17 @@ if (!window.__rpgPluginHookInstalled) {
                     if (typeof Graphics !== 'undefined') {
                         Graphics.pageToCanvasX = function (x) { if (!this._canvas) return 0; const rect = this._canvas.getBoundingClientRect(); return Math.round((x - rect.left) * (this._canvas.width / rect.width)); };
                         Graphics.pageToCanvasY = function (y) { if (!this._canvas) return 0; const rect = this._canvas.getBoundingClientRect(); return Math.round((y - rect.top) * (this._canvas.height / rect.height)); };
-                        if (Graphics._centerElement) Graphics._centerElement = function() {};
+                        // Холсты ставит rpg-fixes (applyScale). Всё остальное — видео, окно ошибки —
+                        // движок ставит сам, как привык. Раньше отключалось и это, и ролик
+                        // оставался там, где оказался при создании
+                        if (Graphics._centerElement && !Graphics._centerElement.__rpg) {
+                            const center = Graphics._centerElement;
+                            Graphics._centerElement = function(el) {
+                                if (el && el.tagName === 'CANVAS') return;
+                                return center.apply(this, arguments);
+                            };
+                            Graphics._centerElement.__rpg = true;
+                        }
                         clearInterval(hookTimer);
                     }
                 }, 100);
@@ -1469,6 +1532,11 @@ if (!window.__rpgPluginHookInstalled) {
     // ============================================================================
     // 7. ЧИСТОЕ АУДИО + AUTO-FALLBACK + ЗАЩИТА ОТ АВТО-МУТА ПРИ СНЕ
     // ============================================================================
+    // Для проверки, умеет ли браузер Ogg (см. ниже): 100 мс тишины, Vorbis 8 кГц моно.
+    // Короче нельзя: из одного пакета Vorbis звука не получается, и Chromium отвечает
+    // «не могу декодировать», хотя Ogg умеет
+    const OGG_PROBE = 'T2dnUwACAAAAAAAAAAAAAAAAAAAAAOEUWLYBHgF2b3JiaXMAAAAAAUAfAAAAAAAAgFcAAAAAAACZAU9nZ1MAAAAAAAAAAAAAAAAAAAEAAADSMjkZCzD///////////+1A3ZvcmJpcwYAAABmZm1wZWcBAAAAFgAAAGVuY29kZXI9TGF2YyBsaWJ2b3JiaXMBBXZvcmJpcxJCQ1YBAAABAAxSFCElGVNKYwiVUlIpBR1jUFtHHWPUOUYhZBBTiEkZpXtPKpVYSsgRUlgpRR1TTFNJlVKWKUUdYxRTSCFT1jFloXMUS4ZJCSVsTa50FkvomWOWMUYdY85aSp1j1jFFHWNSUkmhcxg6ZiVkFDpGxehifDA6laJCKL7H3lLpLYWKW4q91xpT6y2EGEtpwQhhc+211dxKasUYY4wxxsXiUyiC0JBVAAABAABABAFCQ1YBAAoAAMJQDEVRgNCQVQBABgCAABRFcRTHcRxHkiTLAkJDVgEAQAAAAgAAKI7hKJIjSZJkWZZlWZameZaouaov+64u667t6roOhIasBADIAAAYhiGH3knMkFOQSSYpVcw5CKH1DjnlFGTSUsaYYoxRzpBTDDEFMYbQKYUQ1E45pQwiCENInWTOIEs96OBi5zgQGrIiAIgCAACMQYwhxpBzDEoGIXKOScggRM45KZ2UTEoorbSWSQktldYi55yUTkompbQWUsuklNZCKwUAAAQ4AAAEWAiFhqwIAKIAABCDkFJIKcSUYk4xh5RSjinHkFLMOcWYcowx6CBUzDHIHIRIKcUYc0455iBkDCrmHIQMMgEAAAEOAAABFkKhISsCgDgBAIMkaZqlaaJoaZooeqaoqqIoqqrleabpmaaqeqKpqqaquq6pqq5seZ5peqaoqp4pqqqpqq5rqqrriqpqy6ar2rbpqrbsyrJuu7Ks256qyrapurJuqq5tu7Js664s27rkearqmabreqbpuqrr2rLqurLtmabriqor26bryrLryratyrKua6bpuqKr2q6purLtyq5tu7Ks+6br6rbqyrquyrLu27au+7KtC7vourauyq6uq7Ks67It67Zs20LJ81TVM03X9UzTdVXXtW3VdW1bM03XNV1XlkXVdWXVlXVddWVb90zTdU1XlWXTVWVZlWXddmVXl0XXtW1Vln1ddWVfl23d92VZ133TdXVblWXbV2VZ92Vd94VZt33dU1VbN11X103X1X1b131htm3fF11X11XZ1oVVlnXf1n1lmHWdMLqurqu27OuqLOu+ruvGMOu6MKy6bfyurQvDq+vGseu+rty+j2rbvvDqtjG8um4cu7Abv+37xrGpqm2brqvrpivrumzrvm/runGMrqvrqiz7uurKvm/ruvDrvi8Mo+vquirLurDasq/Lui4Mu64bw2rbwu7aunDMsi4Mt+8rx68LQ9W2heHVdaOr28ZvC8PSN3a+AACAAQcAgAATykChISsCgDgBAAYhCBVjECrGIIQQUgohpFQxBiFjDkrGHJQQSkkhlNIqxiBkjknIHJMQSmiplNBKKKWlUEpLoZTWUmotptRaDKG0FEpprZTSWmopttRSbBVjEDLnpGSOSSiltFZKaSlzTErGoKQOQiqlpNJKSa1lzknJoKPSOUippNJSSam1UEproZTWSkqxpdJKba3FGkppLaTSWkmptdRSba21WiPGIGSMQcmck1JKSamU0lrmnJQOOiqZg5JKKamVklKsmJPSQSglg4xKSaW1kkoroZTWSkqxhVJaa63VmFJLNZSSWkmpxVBKa621GlMrNYVQUgultBZKaa21VmtqLbZQQmuhpBZLKjG1FmNtrcUYSmmtpBJbKanFFluNrbVYU0s1lpJibK3V2EotOdZaa0ot1tJSjK21mFtMucVYaw0ltBZKaa2U0lpKrcXWWq2hlNZKKrGVklpsrdXYWow1lNJiKSm1kEpsrbVYW2w1ppZibLHVWFKLMcZYc0u11ZRai621WEsrNcYYa2415VIAAMCAAwBAgAlloNCQlQBAFAAAYAxjjEFoFHLMOSmNUs45JyVzDkIIKWXOQQghpc45CKW01DkHoZSUQikppRRbKCWl1losAACgwAEAIMAGTYnFAQoNWQkARAEAIMYoxRiExiClGIPQGKMUYxAqpRhzDkKlFGPOQcgYc85BKRljzkEnJYQQQimlhBBCKKWUAgAAChwAAAJs0JRYHKDQkBUBQBQAAGAMYgwxhiB0UjopEYRMSielkRJaCylllkqKJcbMWomtxNhICa2F1jJrJcbSYkatxFhiKgAA7MABAOzAQig0ZCUAkAcAQBijFGPOOWcQYsw5CCE0CDHmHIQQKsaccw5CCBVjzjkHIYTOOecghBBC55xzEEIIoYMQQgillNJBCCGEUkrpIIQQQimldBBCCKGUUgoAACpwAAAIsFFkc4KRoEJDVgIAeQAAgDFKOSclpUYpxiCkFFujFGMQUmqtYgxCSq3FWDEGIaXWYuwgpNRajLV2EFJqLcZaQ0qtxVhrziGl1mKsNdfUWoy15tx7ai3GWnPOuQAA3AUHALADG0U2JxgJKjRkJQCQBwBAIKQUY4w5h5RijDHnnENKMcaYc84pxhhzzjnnFGOMOeecc4wx55xzzjnGmHPOOeecc84556CDkDnnnHPQQeicc845CCF0zjnnHIQQCgAAKnAAAAiwUWRzgpGgQkNWAgDhAACAMZRSSimllFJKqKOUUkoppZRSAiGllFJKKaWUUkoppZRSSimllFJKKaWUUkoppZRSSimllFJKKaWUUkoppZRSSimllFJKKaWUUkoppZRSSimllFJKKaWUUkoppZRSSimllFJKKaWUUkoppZRSSimllFJKKaWUUkoppZRSSimVUkoppZRSSimllFJKKaUAIN8KBwD/BxtnWEk6KxwNLjRkJQAQDgAAGMMYhIw5JyWlhjEIpXROSkklNYxBKKVzElJKKYPQWmqlpNJSShmElGILIZWUWgqltFZrKam1lFIoKcUaS0qppdYy5ySkklpLrbaYOQelpNZaaq3FEEJKsbXWUmuxdVJSSa211lptLaSUWmstxtZibCWlllprqcXWWkyptRZbSy3G1mJLrcXYYosxxhoLAOBucACASLBxhpWks8LR4EJDVgIAIQEABDJKOeecgxBCCCFSijHnoIMQQgghREox5pyDEEIIIYSMMecghBBCCKGUkDHmHIQQQgghhFI65yCEUEoJpZRSSucchBBCCKWUUkoJIYQQQiillFJKKSGEEEoppZRSSiklhBBCKKWUUkoppYQQQiillFJKKaWUEEIopZRSSimllBJCCKGUUkoppZRSQgillFJKKaWUUkooIYRSSimllFJKCSWUUkoppZRSSikhlFJKKaWUUkoppQAAgAMHAIAAI+gko8oibDThwgMQAAAAAgACTACBAYKCUQgChBEIAAAAAAAIAPgAAEgKgIiIaOYMDhASFBYYGhweICIkAAAAAAAAAAAAAAAABE9nZ1MABCADAAAAAAAAAAAAAAIAAAB1uGc9BQEBAQEBAAAAAAA=';
+
     function setupSecureAudio() {
         if (typeof AudioManager !== 'undefined' && !AudioManager.__SafeCheckPatched) {
             AudioManager.__SafeCheckPatched = true; 
@@ -1478,10 +1546,40 @@ if (!window.__rpgPluginHookInstalled) {
 
         // Блок decTimer отсюда удален, чтобы не ломать картинки!
 
+        // --- Формат звука: Ogg или m4a ---
+        // Звук в играх — Ogg. Safari научился его играть только в iOS 18.4, и «умею» от
+        // тега <audio> ещё не значит, что умеет Web Audio, через который звучат игры.
+        // Поэтому проверяем по-настоящему: декодируем крошечный Ogg (2,6 КБ тишины).
+        // Это миллисекунды — проверка заканчивается раньше, чем игра попросит первый звук.
+        // Умеет — игра получает свой Ogg как есть. Не умеет (iPhone до iOS 18.4, старые Mac):
+        // MV просит .m4a (сервер отдаст готовый или перекодирует), а MZ разбирает Ogg
+        // своим встроенным декодером. Раньше формат угадывал сервер по User-Agent: iPhone
+        // всегда получал перекодированный m4a — каждая мелодия в первый раз ждала FFmpeg,
+        // а MZ на старых iOS получал m4a вместо Ogg для своего декодера и молчал
+        const oggAudio = { ok: false };
+        try { oggAudio.ok = !!document.createElement('audio').canPlayType('audio/ogg; codecs="vorbis"'); } catch (_) {}
+        if (oggAudio.ok) {
+            try {
+                const OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+                const bytes = Uint8Array.from(atob(OGG_PROBE), (c) => c.charCodeAt(0));
+                const fail = () => { oggAudio.ok = false; };
+                const p = new OAC(1, 1, 22050).decodeAudioData(bytes.buffer, () => {}, fail);
+                if (p && p.catch) p.catch(fail);
+            } catch (_) { oggAudio.ok = false; }
+        }
+        window.__rpgOggAudio = oggAudio;
+
         const formatTimer = setInterval(() => {
             if (typeof WebAudio !== 'undefined' && typeof AudioManager !== 'undefined') {
-                WebAudio.canPlayOgg = function() { return true; };
-                AudioManager.audioFileExt = function() { return '.ogg'; };
+                if (typeof Utils !== 'undefined' && Utils.RPGMAKER_NAME === 'MZ') {
+                    // MZ всегда просит .ogg и сам решает, декодировать ли его своим декодером
+                    Utils.canPlayOgg = () => oggAudio.ok;
+                } else {
+                    // MV на телефонах по умолчанию просит .m4a, а в сборках для Windows
+                    // его обычно нет — поэтому Ogg всегда, когда браузер его умеет
+                    WebAudio.canPlayOgg = () => oggAudio.ok;
+                    AudioManager.audioFileExt = () => (oggAudio.ok ? '.ogg' : '.m4a');
+                }
                 clearInterval(formatTimer);
             }
         }, 50);
@@ -1535,14 +1633,25 @@ if (!window.__rpgPluginHookInstalled) {
                     WebAudio.prototype.__loadPatched = true;
                     WebAudio.prototype._load = function(url) {
                         const self = this;
-                        let finalUrl = url;
-                        if (typeof Decrypter !== 'undefined' && Decrypter.hasEncryptedAudio) finalUrl = Decrypter.extToEncryptExt(url);
+                        const encrypted = typeof Decrypter !== 'undefined' && Decrypter.hasEncryptedAudio;
+                        // Шифрованный звук для браузера без Ogg просим обычным .m4a: сервер
+                        // сам расшифрует и перекодирует. Раньше просили .rpgmvm, которого
+                        // в сборках для Windows нет, — и на старых iPhone было тихо
+                        const plainM4a = encrypted && !oggAudio.ok && /\.m4a$/i.test(url);
+                        const finalUrl = encrypted && !plainM4a ? Decrypter.extToEncryptExt(url) : url;
+                        const onLoad = (x) => {
+                            if (!plainM4a) return self._onXhrLoad(x);
+                            // Ответ уже расшифрован. _onXhrLoad смотрит на флаг сразу, ещё до
+                            // декодирования, — на это время его и снимаем
+                            Decrypter.hasEncryptedAudio = false;
+                            try { self._onXhrLoad(x); } finally { Decrypter.hasEncryptedAudio = true; }
+                        };
                         const xhr = new XMLHttpRequest();
                         xhr.open('GET', finalUrl);
                         xhr.responseType = 'arraybuffer';
                         xhr.onload = function() {
                             if (xhr.status < 400) {
-                                self._onXhrLoad(xhr);
+                                onLoad(xhr);
                             } else if (finalUrl.match(/\.(ogg|rpgmvo)$/i)) {
                                 const fbUrl = finalUrl.replace(/\.ogg$/i, '.m4a').replace(/\.rpgmvo$/i, '.rpgmvm');
                                 const xhr2 = new XMLHttpRequest();
@@ -1558,28 +1667,56 @@ if (!window.__rpgPluginHookInstalled) {
             }
         }, 50);
 
-        // 5) МЯГКИЙ БУДИЛЬНИК (Без сброса громкости)
-        let _lastPoke = 0;
+        // 5) ЗВУК ВКЛЮЧАЕТСЯ С ПЕРВОГО КАСАНИЯ
+        // Браузер не пускает звук, пока человек не коснулся страницы, а iPhone засчитывает
+        // только конец касания — touchend или click, начало (touchstart) не считается.
+        // Движок включает звук сам, но на телефоне касания по экрану до него не доходят:
+        // их перехватывает setupTouchModeToggle. Поэтому включаем здесь, на window в фазе
+        // захвата: этот слушатель ставится раньше перехватчика и раньше экранных кнопок.
+        // Раньше тут слушались только touchstart и pointerdown, а пауза в 500 мс после
+        // них отбрасывала click того же касания, — на iPhone звук не появлялся, пока
+        // не нажмёшь экранную кнопку
         function forceAudioWakeUp() {
-            const now = Date.now();
-            if (now - _lastPoke < 500) return; 
-            
             const ctx = (typeof WebAudio !== 'undefined' && WebAudio._context) ? WebAudio._context : null;
-            if (!ctx) return;
-
+            // 'interrupted' — iOS: звонок, Siri, выключенный экран
+            if (!ctx || ctx.state === 'running' || ctx.state === 'closed') return;
             try {
-                if (ctx.state === 'suspended' || ctx.state === 'interrupted') {
-                    ctx.resume().catch(()=>{});
-                    const buffer = ctx.createBuffer(1, 1, 22050);
-                    const src = ctx.createBufferSource();
-                    src.buffer = buffer; src.connect(ctx.destination); src.start(0);
-                }
-                _lastPoke = now;
+                ctx.resume().catch(() => {});
+                // Пустой звук — старый способ отпереть его на iOS, для движков постарше
+                const src = ctx.createBufferSource();
+                src.buffer = ctx.createBuffer(1, 1, 22050);
+                src.connect(ctx.destination);
+                src.start(0);
             } catch (err) {}
         }
 
-        ['touchstart', 'pointerdown', 'click', 'keydown'].forEach(ev => {
+        ['touchstart', 'touchend', 'pointerdown', 'pointerup', 'mousedown', 'click', 'keydown'].forEach(ev => {
             window.addEventListener(ev, forceAudioWakeUp, { capture: true, passive: true });
+        });
+
+        // Видео со звуком iPhone тоже запускает только из касания. Но разрешение даётся
+        // плееру, а не ролику: стоит один раз запустить плеер в касании — дальше он играет
+        // сам. Плеер у движка один на все ролики, его и «разрешаем» первым касанием. Ролик,
+        // который уже идёт без звука (начался до касания), этим касанием получает звук.
+        // Только конец касания, клик и клавиша: начало касания iPhone не засчитывает
+        function unlockVideo(e) {
+            if (!e.isTrusted) return;
+            // Ролики, которые начались до касания и идут без звука, получают звук. Каждым
+            // касанием, а не только первым: плагины заводят для роликов свои плееры, и
+            // каждому новому iPhone заново не даёт звук
+            for (const muted of mutedVideos) muted.muted = false;
+            mutedVideos.clear();
+            const v = (typeof Graphics !== 'undefined' && Graphics._video) || (typeof Video !== 'undefined' && Video._element);
+            if (!v || v.__rpgUnlocked || !v.paused) return;
+            v.__rpgUnlocked = true;
+            try {
+                const p = _originalVideoPlay.call(v);
+                if (p && p.catch) p.catch(() => {});
+                v.pause();
+            } catch (_) {}
+        }
+        ['touchend', 'click', 'keydown'].forEach(ev => {
+            window.addEventListener(ev, unlockVideo, { capture: true, passive: true });
         });
 
         document.addEventListener('visibilitychange', () => {
@@ -1929,19 +2066,33 @@ if (!window.__rpgPluginHookInstalled) {
         return el;
     };
 
-    // 2. Защита от зависаний при NotAllowedError (оставляем из прошлого фикса)
+    // 2. Запуск ролика. Движок включает ролик из игрового цикла, а не из касания, и iPhone
+    //    отказывал ролику со звуком — rpg-fixes тогда имитировал конец, и ролик пропускался.
+    //    Теперь ролик, начатый до первого касания, идёт без звука, а касание возвращает звук
+    //    (unlockVideo в setupSecureAudio); после первого касания плеер играет со звуком сам
     const _originalVideoPlay = HTMLVideoElement.prototype.play;
+    const mutedVideos = new Set();   // заглушены нами: звук им вернёт следующее касание
     HTMLVideoElement.prototype.play = function() {
         // Дублируем защиту на всякий случай
         this.setAttribute('playsinline', 'playsinline');
         this.setAttribute('webkit-playsinline', 'playsinline');
-        
+
         const promise = _originalVideoPlay.apply(this, arguments);
-        
+
         if (promise !== undefined) {
             promise.catch(error => {
-                console.warn('[RPG-Fixes] Видео заблокировано политикой Apple:', error);
-                // Если Safari всё же убил видео, имитируем его завершение, чтобы игра не зависла
+                // Запуск прервали паузой или следующим роликом — это не отказ. Раньше и тут
+                // имитировался конец, и мог оборваться уже следующий ролик
+                if (error && error.name === 'AbortError') return;
+                if (error && error.name === 'NotAllowedError' && !this.muted) {
+                    this.muted = true;
+                    mutedVideos.add(this);
+                    const retry = _originalVideoPlay.call(this);
+                    if (retry && retry.catch) retry.catch(() => this.dispatchEvent(new Event('ended')));
+                    return;
+                }
+                console.warn('[RPG-Fixes] Видео не запустилось:', error);
+                // Совсем не играет — имитируем конец, чтобы игра не зависла
                 setTimeout(() => {
                     this.dispatchEvent(new Event('ended'));
                 }, 100);
@@ -1949,6 +2100,33 @@ if (!window.__rpgPluginHookInstalled) {
         }
         return promise;
     };
+
+    // 3. MV на телефонах всегда просит ролик в .mp4, а в сборках для Windows ролики только
+    //    .webm — на iPhone каждый ролик MV упирался в 404 и пропускался. Safari играет WebM
+    //    с iOS 17.4, так что просим .webm всегда, когда браузер его умеет. MZ так и делает сам
+    let canWebm = false;
+    try { canWebm = !!_origCreateElement.call(document, 'video').canPlayType('video/webm'); } catch (_) {}
+    const videoExtTimer = setInterval(() => {
+        if (typeof Game_Interpreter === 'undefined' || typeof Utils === 'undefined') return;
+        clearInterval(videoExtTimer);
+        if (Utils.RPGMAKER_NAME === 'MZ') return;
+        Game_Interpreter.prototype.videoFileExt = () => (canWebm ? '.webm' : '.mp4');
+    }, 50);
+    setTimeout(() => clearInterval(videoExtTimer), 30000);
+
+    // 4. Библиотека iphone-inline-video из MV нужна была iPhone до iOS 10, где видео внутри
+    //    страницы не играло: она подменяет плееру play() и сама листает кадры. Старый iPhone
+    //    она узнаёт по признаку, который есть только у Safari, — у любого другого браузера
+    //    с iPhone в User-Agent она включается зря и ломает ролик. Где браузер играет видео
+    //    внутри страницы сам, отключаем её
+    if ('playsInline' in HTMLVideoElement.prototype) {
+        const inlineVideoTimer = setInterval(() => {
+            if (typeof window.makeVideoPlayableInline !== 'function') return;
+            clearInterval(inlineVideoTimer);
+            window.makeVideoPlayableInline = function() {};
+        }, 20);
+        setTimeout(() => clearInterval(inlineVideoTimer), 30000);
+    }
 
    // ============================================================================
     // 🛡️ БРОНЯ ОТ ПОВРЕЖДЕННЫХ СЕЙВОВ И ОШИБОК ПЛАГИНОВ (V5 HYPER-SPEED)
@@ -2015,21 +2193,48 @@ if (!window.__rpgPluginHookInstalled) {
             console.log('[RPG Fixes] 🛡️ Scene_File.createBackground защищен');
         }
 
-        // 4. ЯДЕРНАЯ ЗАЩИТА от вечной загрузки при пропавших шрифтах (Для старых игр MV)
+        // 4. Шрифты MV: не ждать вечно шрифт, который не загрузится (нет файла, битый), и не
+        //    бросать медленный. Раньше через секунду любой недогрузившийся шрифт считался
+        //    «мёртвым»: у Karryn's Prison он весит 7,5 МБ, и на телефоне меню титула
+        //    рисовалось запасным шрифтом. Теперь смотрим, что с ним на самом деле:
+        //    загрузился — дальше, ошибка или его вовсе нет — дальше без него,
+        //    грузится — ждём, но не дольше 20 секунд
         if (window.Graphics && typeof window.Graphics.isFontLoaded === 'function' && !window.Graphics._fontPatchActive) {
             const _origIsFontLoaded = window.Graphics.isFontLoaded;
-            window.Graphics._fontLoadStartTime = Date.now();
-            
+            const fontWaitStart = Date.now();
+            const skipped = new Set();
+            const fontState = (name) => {
+                const want = String(name).replace(/["']/g, '').toLowerCase();
+                const faces = [];
+                try {
+                    document.fonts.forEach(f => { if (f.family.replace(/["']/g, '').toLowerCase() === want) faces.push(f); });
+                } catch (_) { return 'unknown'; }
+                if (!faces.length) return 'missing';
+                if (faces.some(f => f.status === 'loaded')) return 'loaded';
+                if (faces.every(f => f.status === 'error')) return 'error';
+                // Объявлен, но никто его ещё не попросил — просим сами, иначе ждали бы зря
+                faces.forEach(f => { if (f.status === 'unloaded') f.load().catch(() => {}); });
+                return 'loading';
+            };
+            const skip = (name, why) => {
+                if (!skipped.has(name)) {
+                    skipped.add(name);
+                    console.warn(`[RPG Fixes] 🛡️ Шрифт ${name}: ${why} — игра стартует без него`);
+                }
+                return true;
+            };
+
             window.Graphics.isFontLoaded = function(name) {
                 if (_origIsFontLoaded.apply(this, arguments)) return true;
-                if (Date.now() - window.Graphics._fontLoadStartTime > 1000) {
-                    console.warn(`[RPG Fixes] 🛡️ Шрифт ${name} мертв. Принудительный старт игры!`);
-                    return true; 
-                }
+                const state = fontState(name);
+                if (state === 'loaded') return true;
+                if (state === 'error') return skip(name, 'файл не загрузился');
+                if (state === 'missing') return skip(name, 'игра его не объявила');
+                if (Date.now() - fontWaitStart > 20000) return skip(name, 'не догрузился за 20 секунд');
                 return false;
             };
             window.Graphics._fontPatchActive = true;
-            console.log('[RPG Fixes] 🛡️ Ядерная защита шрифтов (MV) активирована');
+            console.log('[RPG Fixes] 🛡️ Защита шрифтов (MV) активирована');
         }
 
         // 5. Защита от вечной загрузки при пропавших шрифтах (Для новых игр MZ)
