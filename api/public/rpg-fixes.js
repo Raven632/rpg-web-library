@@ -176,11 +176,13 @@ if (!window.__rpgPluginHookInstalled) {
             restart: 'Перезапустить игру', restart_confirm: 'Ещё раз — и перезапуск',
             save: 'Сохранить', save_blocked: 'Только на карте, вне сцены', loading: 'Загрузка игры…',
             stretch: 'Растянуть экран', smooth: 'Сглаживание', fullscreen: 'На весь экран',
-            keys_zx: 'Кнопки A и B как Z и X', touch: 'Касания по игре',
+            touch: 'Касания по игре',
             fps: 'Счётчик кадров', spikes: 'Журнал подтормаживаний',
             stick: 'Джойстик', prev: 'Предыдущий (Q)', next: 'Следующий (W)',
             skip: 'Пропуск', skip_hint: 'Пропуск текста (Ctrl)', dash: 'Бег', dash_hint: 'Бег (Shift)',
-            back: 'назад', back_hint: 'Назад, меню', ok: 'ок', ok_hint: 'ОК',
+            back: 'назад', menu: 'меню', back_hint: 'Назад, меню (X)', ok: 'ок', ok_hint: 'Выбрать (Z)', a_hint: 'Клавиша A',
+            keys: 'Другие клавиши', keys_game: 'Клавиши этой игры', keys_all: 'Все клавиши',
+            cap_auto: 'авто', cap_skip: 'пропуск', cap_log: 'журнал', cap_hide: 'скрыть',
             sync_busy: '☁️ Синхронизация…', sync_ok: '✅ Сохранено',
             sync_offline: '📡 Ждём сеть (сохранено локально)',
             sync_lost: '⚠️ Нет связи с сервером, а в браузере нет места — не закрывайте игру, пока не вернётся сеть',
@@ -193,11 +195,13 @@ if (!window.__rpgPluginHookInstalled) {
             restart: 'Restart game', restart_confirm: 'Press again to restart',
             save: 'Save', save_blocked: 'Only on the map, outside scenes', loading: 'Loading game…',
             stretch: 'Stretch to screen', smooth: 'Smoothing', fullscreen: 'Full screen',
-            keys_zx: 'A and B as Z and X', touch: 'Touch input in game',
+            touch: 'Touch input in game',
             fps: 'FPS counter', spikes: 'Stutter log',
             stick: 'Joystick', prev: 'Previous (Q)', next: 'Next (W)',
             skip: 'Skip', skip_hint: 'Skip text (Ctrl)', dash: 'Run', dash_hint: 'Run (Shift)',
-            back: 'back', back_hint: 'Back, menu', ok: 'ok', ok_hint: 'OK',
+            back: 'back', menu: 'menu', back_hint: 'Back, menu (X)', ok: 'ok', ok_hint: 'Confirm (Z)', a_hint: 'Key A',
+            keys: 'More keys', keys_game: 'This game\u2019s keys', keys_all: 'All keys',
+            cap_auto: 'auto', cap_skip: 'skip', cap_log: 'log', cap_hide: 'hide',
             sync_busy: '☁️ Syncing…', sync_ok: '✅ Saved',
             sync_offline: '📡 Waiting for network (saved locally)',
             sync_lost: '⚠️ No connection to the server and no space left in the browser — keep the game open until the network is back',
@@ -210,11 +214,13 @@ if (!window.__rpgPluginHookInstalled) {
             restart: 'Spiel neu starten', restart_confirm: 'Zum Neustart erneut drücken',
             save: 'Speichern', save_blocked: 'Nur auf der Karte, außerhalb von Szenen', loading: 'Spiel wird geladen…',
             stretch: 'Bild strecken', smooth: 'Glättung', fullscreen: 'Vollbild',
-            keys_zx: 'A und B als Z und X', touch: 'Touch-Eingabe im Spiel',
+            touch: 'Touch-Eingabe im Spiel',
             fps: 'FPS-Anzeige', spikes: 'Ruckel-Protokoll',
             stick: 'Joystick', prev: 'Vorheriger (Q)', next: 'Nächster (W)',
             skip: 'Vorspulen', skip_hint: 'Text vorspulen (Strg)', dash: 'Rennen', dash_hint: 'Rennen (Umschalt)',
-            back: 'zurück', back_hint: 'Zurück, Menü', ok: 'ok', ok_hint: 'OK',
+            back: 'zurück', menu: 'Menü', back_hint: 'Zurück, Menü (X)', ok: 'ok', ok_hint: 'Auswählen (Z)', a_hint: 'Taste A',
+            keys: 'Weitere Tasten', keys_game: 'Tasten dieses Spiels', keys_all: 'Alle Tasten',
+            cap_auto: 'auto', cap_skip: 'vorspulen', cap_log: 'Verlauf', cap_hide: 'ausblenden',
             sync_busy: '☁️ Synchronisiere…', sync_ok: '✅ Gespeichert',
             sync_offline: '📡 Warte auf Netz (lokal gespeichert)',
             sync_lost: '⚠️ Keine Verbindung zum Server und kein Platz im Browser — Spiel nicht schließen, bis das Netz zurück ist',
@@ -231,10 +237,10 @@ if (!window.__rpgPluginHookInstalled) {
         return known(lang) ? lang : 'ru';   // 'ru' — как и в самой библиотеке по умолчанию
     })()];
 
-    // Настройки, которые запоминаются для каждой игры: «Касания по игре», «A и B как Z и X»,
-    // «Растянуть экран». Раньше они сбрасывались при каждом запуске, и в игре, которой
-    // нужны Z и X, это приходилось включать заново. Хранятся в браузере: на телефоне
-    // и на компьютере они и должны быть разными
+    // Настройки, которые запоминаются для каждой игры: «Касания по игре», «Растянуть экран».
+    // Раньше они сбрасывались при каждом запуске, и в игре, которой нужны касания, это
+    // приходилось включать заново. Хранятся в браузере: на телефоне и на компьютере они
+    // и должны быть разными
     const gameSettings = (() => {
         const key = 'rpgfix_game_' + (location.pathname.split('/').filter(Boolean)[0] || 'unknown');
         let data = {};
@@ -1054,7 +1060,13 @@ if (!window.__rpgPluginHookInstalled) {
                 #_mob_ctrl._idle { opacity: 0.38; }
                 ._glass { background: rgba(14,14,18,0.3); border: 1.5px solid rgba(255,255,255,0.26); color: rgba(255,255,255,0.92); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
 
-                #_stick { position: fixed; left: calc(max(14px, env(safe-area-inset-left)) + 6px); bottom: calc(max(14px, env(safe-area-inset-bottom)) + 6px); width: calc(var(--u) * 2.55); height: calc(var(--u) * 2.55); border-radius: 50%; pointer-events: auto; touch-action: none; }
+                /* Джойстик встаёт под палец в любом месте левого нижнего угла — целиться в
+                   него не нужно. Когда касания идут в игру (или открыто чит-меню), угол
+                   отдаём им, и джойстик работает только на своём месте */
+                #_stick_zone { position: fixed; left: 0; bottom: 0; width: min(45vw, 440px); height: min(72vh, calc(100vh - 70px)); pointer-events: auto; touch-action: none; }
+                #_mob_ctrl._zone_off #_stick_zone { pointer-events: none; }
+                #_stick { position: fixed; left: calc(max(14px, env(safe-area-inset-left)) + 6px); bottom: calc(max(14px, env(safe-area-inset-bottom)) + 6px); width: calc(var(--u) * 2.55); height: calc(var(--u) * 2.55); border-radius: 50%; pointer-events: auto; touch-action: none; transition: transform .18s ease-out; }
+                #_stick._float { transition: none; }
                 ._stick_dir { position: absolute; width: 22%; height: 22%; color: rgba(255,255,255,0.4); transition: color .12s; }
                 ._stick_dir svg { display: block; width: 100%; height: 100%; }
                 ._stick_dir[data-dir="up"] { top: 3%; left: 39%; }
@@ -1062,24 +1074,40 @@ if (!window.__rpgPluginHookInstalled) {
                 ._stick_dir[data-dir="left"] { left: 3%; top: 39%; transform: rotate(-90deg); }
                 ._stick_dir[data-dir="right"] { right: 3%; top: 39%; transform: rotate(90deg); }
                 ._stick_dir._on { color: #fff; }
-                #_stick_knob { position: absolute; left: 29%; top: 29%; width: 42%; height: 42%; border-radius: 50%; background: rgba(255,255,255,0.18); border: 1.5px solid rgba(255,255,255,0.5); box-shadow: 0 2px 10px rgba(0,0,0,0.35); transition: transform .14s ease-out; }
-                #_stick._drag #_stick_knob { transition: none; background: rgba(255,255,255,0.28); }
+                #_stick_knob { position: absolute; left: 29%; top: 29%; width: 42%; height: 42%; border-radius: 50%; background: rgba(255,255,255,0.18); border: 1.5px solid rgba(255,255,255,0.5); box-shadow: 0 2px 10px rgba(0,0,0,0.35); transition: transform .14s ease-out, background .12s, border-color .12s; }
+                #_stick._drag #_stick_knob { transition: background .12s, border-color .12s; background: rgba(255,255,255,0.28); }
+                /* Палец у самого края — бег */
+                #_stick._run #_stick_knob { background: rgba(217,180,94,0.55); border-color: #d9b45e; }
 
-                #_pad { position: fixed; right: calc(max(14px, env(safe-area-inset-right)) + 6px); bottom: calc(max(14px, env(safe-area-inset-bottom)) + 6px); width: calc(var(--u) * 2.7); height: calc(var(--u) * 3.35); pointer-events: none; }
+                #_pad { position: fixed; right: calc(max(14px, env(safe-area-inset-right)) + 6px); bottom: calc(max(14px, env(safe-area-inset-bottom)) + 6px); width: calc(var(--u) * 2.7); height: calc(var(--u) * 4.1); pointer-events: none; }
                 ._btn { position: absolute; padding: 0; border-radius: 50%; display: flex; align-items: center; justify-content: center; font: 600 calc(var(--u) * 0.42) -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; pointer-events: auto; touch-action: none; transition: transform .08s, background .08s; }
                 ._btn._on { transform: scale(0.93); background: rgba(255,255,255,0.3); }
-                /* A и B по диагонали, как на Game Boy: A выше и правее, под большой палец */
-                #_btn_a { right: 0; bottom: calc(var(--u) * 0.6); width: calc(var(--u) * 1.3); height: calc(var(--u) * 1.3); border-color: rgba(255,255,255,0.42); }
-                #_btn_b { right: calc(var(--u) * 1.48); bottom: calc(var(--u) * 0.06); width: calc(var(--u) * 1.08); height: calc(var(--u) * 1.08); font-size: calc(var(--u) * 0.36); }
+                /* Дугой вокруг большого пальца: Z — под ним, X — ниже и левее, A — выше и левее */
+                #_btn_z { right: 0; bottom: calc(var(--u) * 0.6); width: calc(var(--u) * 1.3); height: calc(var(--u) * 1.3); border-color: rgba(255,255,255,0.42); }
+                #_btn_x { right: calc(var(--u) * 1.48); bottom: calc(var(--u) * 0.06); width: calc(var(--u) * 1.08); height: calc(var(--u) * 1.08); font-size: calc(var(--u) * 0.36); }
+                #_btn_a { right: calc(var(--u) * 1.35); bottom: calc(var(--u) * 1.55); width: var(--u); height: var(--u); font-size: calc(var(--u) * 0.34); }
                 ._cap { position: absolute; top: 100%; left: 50%; transform: translateX(-50%); margin-top: 3px; font-size: 10px; font-weight: 500; letter-spacing: .08em; text-transform: uppercase; color: rgba(255,255,255,0.6); white-space: nowrap; pointer-events: none; }
                 ._pills { position: absolute; right: 0; display: flex; gap: 8px; pointer-events: none; }
-                ._pills._row1 { bottom: calc(var(--u) * 2.1); }
-                ._pills._row2 { bottom: calc(var(--u) * 2.76); }
+                ._pills._row1 { bottom: calc(var(--u) * 2.85); }
+                ._pills._row2 { bottom: calc(var(--u) * 3.5); }
                 ._pill { display: flex; align-items: center; justify-content: center; height: calc(var(--u) * 0.56); min-width: calc(var(--u) * 0.56); padding: 0 calc(var(--u) * 0.26); border-radius: 999px; font: 600 11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; letter-spacing: .06em; text-transform: uppercase; pointer-events: auto; touch-action: none; transition: transform .08s, background .12s, color .12s; }
                 ._pill svg { width: 16px; height: 16px; }
                 ._pill._on { transform: scale(0.93); }
-                /* «Бег» и «Пропуск» — переключатели: включённый видно издалека */
+                /* «Бег», «Пропуск» и открытая панель клавиш — переключатели: включённое видно издалека */
                 ._pill._latched { background: rgba(255,255,255,0.9); color: #141414; border-color: transparent; }
+
+                /* Панель остальных клавиш — поверх картинки, в промежутке между джойстиком
+                   и кнопками: ни то ни другое она не закрывает. Вертикально промежутка нет —
+                   там она над кнопками во всю ширину */
+                #_keys_panel { position: fixed; left: calc(max(14px, env(safe-area-inset-left)) + 16px + var(--u) * 2.55); right: calc(max(14px, env(safe-area-inset-right)) + 16px + var(--u) * 3.9); bottom: calc(max(10px, env(safe-area-inset-bottom)) + 4px); max-width: 600px; margin: 0 auto; max-height: calc(100vh - 24px); overflow-y: auto; overscroll-behavior: contain; display: none; padding: 6px 8px 8px; border-radius: 14px; background: rgba(14,14,18,0.9); border: 1px solid rgba(255,255,255,0.14); box-shadow: 0 10px 30px rgba(0,0,0,0.5); pointer-events: auto; touch-action: pan-y; }
+                @media (orientation: portrait) { #_keys_panel { left: 10px; right: 10px; bottom: calc(max(14px, env(safe-area-inset-bottom)) + 16px + var(--u) * 4.1); max-height: 45vh; } }
+                #_keys_panel._open { display: block; }
+                ._keys_title { margin: 4px 2px 5px; font: 600 10px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; letter-spacing: .08em; text-transform: uppercase; color: rgba(255,255,255,0.5); }
+                ._keys_grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(36px, 1fr)); gap: 4px; }
+                ._keys_grid._game { grid-template-columns: repeat(auto-fill, minmax(62px, 1fr)); margin-bottom: 4px; }
+                ._key { height: 34px; padding: 0 2px; border-radius: 8px; display: flex; flex-direction: column; align-items: center; justify-content: center; font: 600 13px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; line-height: 1.05; touch-action: none; }
+                ._key small { font-size: 9px; font-weight: 500; opacity: .7; text-transform: lowercase; }
+                ._key._on { background: rgba(255,255,255,0.3); }
 
                 @media (pointer: fine) { #_mob_ctrl { display: none !important; } }
             `;
@@ -1209,87 +1237,95 @@ if (!window.__rpgPluginHookInstalled) {
         });
     }
 
-    // Экранное управление для телефона и планшета. Крестовина из четырёх отдельных
-    // кнопок не давала вести пальцем: чтобы свернуть за угол, надо было отпустить одну
-    // кнопку и попасть в другую. Теперь это джойстик: направление меняется скольжением,
-    // а на выходе — четыре направления, как и ждут игры RPG Maker
+    // Экранное управление для телефона и планшета: джойстик слева, клавиши справа.
+    // Кнопки подписаны клавишами клавиатуры — Z, X, A, — как их называют сами игры в
+    // подсказках («Z — выбрать, X — меню, A — автотекст»). Нажать такую кнопку — то же,
+    // что нажать клавишу, а что она значит, решает раскладка игры. Раньше были A и B,
+    // которые слали пробел и Esc, — и в игре, где пробел прячет окно сообщения, «A»
+    // прятала текст вместо «Далее». Остальные клавиши — в панели ⌨: сверху те, что
+    // плагины этой игры повесили на свои действия, ниже — вся клавиатура
     function setupTouchControls() {
-        const KEYS = {
-            up:       { kn: 'up',       kc: 38, key: 'ArrowUp',    code: 'ArrowUp' },
-            down:     { kn: 'down',     kc: 40, key: 'ArrowDown',  code: 'ArrowDown' },
-            left:     { kn: 'left',     kc: 37, key: 'ArrowLeft',  code: 'ArrowLeft' },
-            right:    { kn: 'right',    kc: 39, key: 'ArrowRight', code: 'ArrowRight' },
-            ok:       { kn: 'ok',       kc: 32, key: ' ',          code: 'Space' },
-            cancel:   { kn: 'escape',   kc: 27, key: 'Escape',     code: 'Escape' },
-            dash:     { kn: 'shift',    kc: 16, key: 'Shift',      code: 'ShiftLeft' },
-            // Ctrl: во многих играх «держать — пропускать текст». Раньше эта кнопка
-            // называлась MENU, хотя меню не открывала
-            skip:     { kn: 'control',  kc: 17, key: 'Control',    code: 'ControlLeft' },
-            pageup:   { kn: 'pageup',   kc: 81, key: 'q',          code: 'KeyQ' },
-            pagedown: { kn: 'pagedown', kc: 87, key: 'w',          code: 'KeyW' },
+        // Клавиши, которые умеет нажимать экранное управление: код → [key, code]
+        const KEYBOARD = {
+            8: ['Backspace', 'Backspace'], 9: ['Tab', 'Tab'], 13: ['Enter', 'Enter'], 16: ['Shift', 'ShiftLeft'],
+            17: ['Control', 'ControlLeft'], 18: ['Alt', 'AltLeft'], 27: ['Escape', 'Escape'], 32: [' ', 'Space'],
+            33: ['PageUp', 'PageUp'], 34: ['PageDown', 'PageDown'], 35: ['End', 'End'], 36: ['Home', 'Home'],
+            37: ['ArrowLeft', 'ArrowLeft'], 38: ['ArrowUp', 'ArrowUp'], 39: ['ArrowRight', 'ArrowRight'], 40: ['ArrowDown', 'ArrowDown'],
+            45: ['Insert', 'Insert'], 46: ['Delete', 'Delete'],
         };
-        // Часть игр слушает только Z и X, а не пробел и Esc
-        const ZX = {
-            ok:     { kn: 'ok',     kc: 90, key: 'z', code: 'KeyZ' },
-            cancel: { kn: 'escape', kc: 88, key: 'x', code: 'KeyX' },
-        };
-        let useZX = !!gameSettings.get('zx');
-        const held = new Set();      // нажатые прямо сейчас
-        const latched = new Set();   // включённые переключатели «Бег» и «Пропуск»
+        for (let i = 0; i < 10; i++) KEYBOARD[48 + i] = [String(i), 'Digit' + i];
+        for (let i = 0; i < 26; i++) { const c = String.fromCharCode(97 + i); KEYBOARD[65 + i] = [c, 'Key' + c.toUpperCase()]; }
+        for (let i = 1; i <= 12; i++) KEYBOARD[111 + i] = ['F' + i, 'F' + i];
+        const SHORT = { 8: '⌫', 9: 'Tab', 13: 'Enter', 16: 'Shift', 17: 'Ctrl', 18: 'Alt', 27: 'Esc', 32: 'Space', 33: 'PgUp', 34: 'PgDn', 35: 'End', 36: 'Home', 45: 'Ins', 46: 'Del' };
+        const keyLabel = (kc) => SHORT[kc] || KEYBOARD[kc][0].toUpperCase();
+        const mapper = () => (typeof Input !== 'undefined' && Input.keyMapper) || {};
 
-        // Игра могла отдать стандартную клавишу под своё действие: в RJ01548022 пробел
-        // прячет окно сообщения, и A вместо «Далее» прятала текст. Тогда жмём другую
-        // клавишу, которая в этой игре значит то же самое
-        const SAME = {
-            ok:       [[13, 'Enter', 'Enter'], [90, 'z', 'KeyZ']],
-            escape:   [[88, 'x', 'KeyX'], [45, 'Insert', 'Insert'], [96, '0', 'Numpad0']],
-            pageup:   [[33, 'PageUp', 'PageUp']],
-            pagedown: [[34, 'PageDown', 'PageDown']],
-        };
-        function gameKey(k) {
-            const map = typeof Input !== 'undefined' && Input.keyMapper;
-            if (!map || map[k.kc] === k.kn) return k;
-            const alt = (SAME[k.kn] || []).find(([kc]) => map[kc] === k.kn);
-            return alt ? { kn: k.kn, kc: alt[0], key: alt[1], code: alt[2] } : k;
-        }
-        const pressedAs = {};   // отпускаем той же клавишей, что нажали
-
-        function sendKey(name, isDown) {
-            let k = (useZX && ZX[name]) || KEYS[name];
+        function sendPhys(kc, isDown) {
+            const k = KEYBOARD[kc];
             if (!k) return;
-            // Z и X включают вручную для игр, которые слушают именно их, — их не подменяем
-            if (isDown) { if (!(useZX && ZX[name])) k = gameKey(k); pressedAs[name] = k; }
-            else if (pressedAs[name]) { k = pressedAs[name]; delete pressedAs[name]; }
-            if (isDown) held.add(name); else held.delete(name);
-            if (typeof Input !== 'undefined') {
-                if (Input._currentState) Input._currentState[k.kn] = isDown;
-                if (Input.currentState) Input.currentState[k.kn] = isDown;
-            }
-            const ev = new KeyboardEvent(isDown ? 'keydown' : 'keyup', { bubbles: true, cancelable: true, key: k.key, code: k.code });
-            Object.defineProperty(ev, 'keyCode', { get: () => k.kc });
-            Object.defineProperty(ev, 'which', { get: () => k.kc });
+            const ev = new KeyboardEvent(isDown ? 'keydown' : 'keyup', { bubbles: true, cancelable: true, key: k[0], code: k[1] });
+            Object.defineProperty(ev, 'keyCode', { get: () => kc });
+            Object.defineProperty(ev, 'which', { get: () => kc });
             document.dispatchEvent(ev);
+        }
+        function setState(name, isDown) {
+            if (typeof Input === 'undefined') return;
+            if (Input._currentState) Input._currentState[name] = isDown;
+            if (Input.currentState) Input.currentState[name] = isDown;
+        }
+
+        // «Бег», «Пропуск» и листание — действия, а не клавиши. Жмём ту клавишу, которая
+        // в этой игре значит это действие. Своя занята чужим (в Fallen Priestess Ctrl
+        // листает страницы) — не жмём ничего, а сообщаем движку действие напрямую
+        const ACTIONS = { dash: ['shift', 16], skip: ['control', 17, 18], pageup: ['pageup', 81, 33], pagedown: ['pagedown', 87, 34] };
+        const actionAs = {};          // чем нажали — тем и отпускаем
+        const actHeld = new Set();    // зажатые действия
+        const physHeld = new Set();   // зажатые клавиши
+        const latched = new Set();    // включённые переключатели «Бег» и «Пропуск»
+        function sendAction(act, isDown) {
+            const [name, ...codes] = ACTIONS[act];
+            if (isDown) {
+                const map = mapper();
+                const kc = codes.find(c => map[c] === name);
+                actionAs[act] = kc ? { kc } : { state: name, kc: map[codes[0]] === undefined ? codes[0] : 0 };
+                actHeld.add(act);
+            } else actHeld.delete(act);
+            const how = actionAs[act];
+            if (!how) return;
+            if (how.state) setState(how.state, isDown);
+            if (how.kc) sendPhys(how.kc, isDown);
+            if (!isDown) delete actionAs[act];
+        }
+        // Стрелка — это стрелка. Если игра её никуда не привязала, направление — движку напрямую
+        const DIRS = { up: 38, down: 40, left: 37, right: 39 };
+        function sendDir(dir, isDown) {
+            if (mapper()[DIRS[dir]] === undefined) setState(dir, isDown);
+            sendPhys(DIRS[dir], isDown);
         }
 
         const root = document.createElement('div');
         root.id = '_mob_ctrl';
         root.innerHTML = `
+            <div id="_stick_zone"></div>
             <div id="_stick" class="_glass" role="application" aria-label="${T.stick}">
                 ${['up', 'down', 'left', 'right'].map(d => `<i class="_stick_dir" data-dir="${d}">${icon('chevron')}</i>`).join('')}
                 <div id="_stick_knob"></div>
             </div>
             <div id="_pad">
                 <div class="_pills _row2">
-                    <button type="button" class="_pill _glass" data-key="pageup" aria-label="${T.prev}">${icon('prev')}</button>
-                    <button type="button" class="_pill _glass" data-key="pagedown" aria-label="${T.next}">${icon('next')}</button>
+                    <button type="button" class="_pill _glass" id="_btn_keys" aria-label="${T.keys}">${icon('keys')}</button>
+                    <button type="button" class="_pill _glass" data-act="pageup" aria-label="${T.prev}">${icon('prev')}</button>
+                    <button type="button" class="_pill _glass" data-act="pagedown" aria-label="${T.next}">${icon('next')}</button>
                 </div>
                 <div class="_pills _row1">
-                    <button type="button" class="_pill _glass" data-key="skip" data-latch="1" aria-label="${T.skip_hint}">${T.skip}</button>
-                    <button type="button" class="_pill _glass" data-key="dash" data-latch="1" aria-label="${T.dash_hint}">${T.dash}</button>
+                    <button type="button" class="_pill _glass" data-act="skip" data-latch="1" aria-label="${T.skip_hint}">${T.skip}</button>
+                    <button type="button" class="_pill _glass" data-act="dash" data-latch="1" aria-label="${T.dash_hint}">${T.dash}</button>
                 </div>
-                <button type="button" id="_btn_b" class="_btn _glass" data-key="cancel" aria-label="${T.back_hint}">B<span class="_cap">${T.back}</span></button>
-                <button type="button" id="_btn_a" class="_btn _glass" data-key="ok" aria-label="${T.ok_hint}">A<span class="_cap">${T.ok}</span></button>
-            </div>`;
+                <button type="button" id="_btn_a" class="_btn _glass" data-kc="65" aria-label="${T.a_hint}">A<span class="_cap"></span></button>
+                <button type="button" id="_btn_x" class="_btn _glass" data-kc="88" aria-label="${T.back_hint}">X<span class="_cap">${T.back}</span></button>
+                <button type="button" id="_btn_z" class="_btn _glass" data-kc="90" aria-label="${T.ok_hint}">Z<span class="_cap">${T.ok}</span></button>
+            </div>
+            <div id="_keys_panel" role="dialog" aria-label="${T.keys}"></div>`;
         document.body.appendChild(root);
 
         // Касания по управлению — не игре: иначе MV увидел бы их как касание экрана
@@ -1302,16 +1338,17 @@ if (!window.__rpgPluginHookInstalled) {
         const wake = () => { root.classList.remove('_idle'); clearTimeout(idleTimer); };
         const sleepSoon = () => {
             clearTimeout(idleTimer);
-            idleTimer = setTimeout(() => { if (!held.size) root.classList.add('_idle'); }, 3500);
+            idleTimer = setTimeout(() => { if (!actHeld.size && !physHeld.size && stickId === null) root.classList.add('_idle'); }, 3500);
         };
-        sleepSoon();
 
         // --- Джойстик ---
+        const zone = document.getElementById('_stick_zone');
         const stick = document.getElementById('_stick');
         const knob = document.getElementById('_stick_knob');
         const dirEls = {};
         stick.querySelectorAll('._stick_dir').forEach(el => { dirEls[el.dataset.dir] = el; });
-        let stickId = null, stickDir = null;
+        let stickId = null, stickDir = null, origin = null, running = false;
+        sleepSoon();
 
         // Ось меняется, только когда другая явно перевешивает: у диагонали направление
         // иначе дрожало бы между двумя, и герой шёл бы рывками
@@ -1324,95 +1361,202 @@ if (!window.__rpgPluginHookInstalled) {
         }
         function setStickDir(dir) {
             if (dir === stickDir) return;
-            if (stickDir) { sendKey(stickDir, false); dirEls[stickDir].classList.remove('_on'); }
+            if (stickDir) { sendDir(stickDir, false); dirEls[stickDir].classList.remove('_on'); }
             stickDir = dir;
-            if (dir) { sendKey(dir, true); dirEls[dir].classList.add('_on'); }
+            if (dir) { sendDir(dir, true); dirEls[dir].classList.add('_on'); }
+        }
+        // Палец у самого края — бег, как на джойстиках в мобильных играх. Только на карте
+        // и если игра и так не бежит: при «всегда бегом» в её настройках Shift, наоборот,
+        // переводит героя на шаг
+        function setRun(on) {
+            if (on) {
+                const onMap = typeof Scene_Map !== 'undefined' && typeof SceneManager !== 'undefined' && SceneManager._scene instanceof Scene_Map;
+                const always = typeof ConfigManager !== 'undefined' && ConfigManager.alwaysDash;
+                if (!onMap || always || latched.has('dash')) on = false;
+            }
+            if (on === running) return;
+            running = on;
+            stick.classList.toggle('_run', on);
+            if (!latched.has('dash')) sendAction('dash', on);
         }
         function moveStick(e) {
-            const r = stick.getBoundingClientRect();
-            const radius = r.width / 2;
-            const dx = e.clientX - (r.left + radius), dy = e.clientY - (r.top + radius);
+            const radius = stick.offsetWidth / 2;
+            const dx = e.clientX - origin.x, dy = e.clientY - origin.y;
             const dist = Math.hypot(dx, dy), travel = radius * 0.42;
             const k = dist > travel ? travel / dist : 1;
             knob.style.transform = `translate(${dx * k}px, ${dy * k}px)`;
             // Мёртвая зона в центре: палец, просто лежащий на джойстике, героя не двигает
-            setStickDir(dist < radius * 0.22 ? null : pickDir(dx, dy, stickDir));
+            const dir = dist < radius * 0.22 ? null : pickDir(dx, dy, stickDir);
+            setStickDir(dir);
+            setRun(!!dir && dist > radius * (running ? 0.62 : 0.8));
+        }
+        function startStick(e) {
+            if (stickId !== null) return;
+            e.preventDefault();
+            stickId = e.pointerId;
+            try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) {}
+            // Место джойстика без сдвига: offset* не видят transform
+            const r = stick.offsetWidth / 2;
+            const rest = { x: stick.offsetLeft + r, y: stick.offsetTop + r };
+            // Коснулись мимо джойстика — он встаёт под палец, целиком на экране
+            origin = Math.hypot(e.clientX - rest.x, e.clientY - rest.y) <= r ? rest : {
+                x: Math.min(Math.max(e.clientX, r + 4), innerWidth - r - 4),
+                y: Math.min(Math.max(e.clientY, r + 4), innerHeight - r - 4),
+            };
+            stick.classList.add('_float', '_drag');
+            stick.style.transform = `translate(${origin.x - rest.x}px, ${origin.y - rest.y}px)`;
+            wake();
+            moveStick(e);
         }
         function releaseStick() {
             stickId = null;
-            stick.classList.remove('_drag');
+            stick.classList.remove('_float', '_drag');
+            stick.style.transform = '';
             knob.style.transform = '';
             setStickDir(null);
+            setRun(false);
         }
-        stick.addEventListener('pointerdown', (e) => {
-            e.preventDefault();
-            stickId = e.pointerId;
-            try { stick.setPointerCapture(e.pointerId); } catch (_) {}
-            stick.classList.add('_drag');
-            wake();
-            moveStick(e);
-        }, { passive: false });
-        stick.addEventListener('pointermove', (e) => { if (e.pointerId === stickId) { e.preventDefault(); moveStick(e); } }, { passive: false });
-        ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(t => stick.addEventListener(t, (e) => {
-            if (e.pointerId !== stickId) return;
-            releaseStick();
-            sleepSoon();
-        }));
+        [zone, stick].forEach(el => {
+            el.addEventListener('pointerdown', startStick, { passive: false });
+            el.addEventListener('pointermove', (e) => { if (e.pointerId === stickId) { e.preventDefault(); moveStick(e); } }, { passive: false });
+            ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(t => el.addEventListener(t, (e) => {
+                if (e.pointerId !== stickId) return;
+                releaseStick();
+                sleepSoon();
+            }));
+        });
 
-        // --- Кнопки ---
-        root.querySelectorAll('[data-key]').forEach((btn) => {
-            const name = btn.dataset.key;
-            const latch = btn.dataset.latch === '1';
-            let pid = null;
+        // --- Кнопки и клавиши ---
+        function bindButton(btn) {
+            const kc = +btn.dataset.kc || 0, act = btn.dataset.act, latch = btn.dataset.latch === '1';
+            const send = (isDown) => {
+                if (!kc) return sendAction(act, isDown);
+                if (isDown) physHeld.add(kc); else physHeld.delete(kc);
+                sendPhys(kc, isDown);
+            };
             btn.addEventListener('pointerdown', (e) => {
                 e.preventDefault();
                 wake();
                 if (latch) {
-                    // Держать «Бег» пальцем нельзя — большой палец нужен на A. Поэтому
+                    // Держать «Бег» пальцем нельзя — большой палец нужен на Z. Поэтому
                     // «Бег» и «Пропуск» включаются касанием и выключаются следующим
-                    const on = !latched.has(name);
-                    if (on) latched.add(name); else latched.delete(name);
+                    const on = !latched.has(act);
+                    if (on) latched.add(act); else latched.delete(act);
                     btn.classList.toggle('_latched', on);
-                    sendKey(name, on);
+                    // Бег от джойстика теперь держит переключатель
+                    if (act === 'dash') { running = false; stick.classList.remove('_run'); }
+                    send(on);
                     btn.classList.add('_on');
                     setTimeout(() => btn.classList.remove('_on'), 120);
                     sleepSoon();
                     return;
                 }
-                if (pid !== null) return;
-                pid = e.pointerId;
+                if (btn._pid != null) return;
+                btn._pid = e.pointerId;
                 try { btn.setPointerCapture(e.pointerId); } catch (_) {}
                 btn.classList.add('_on');
-                sendKey(name, true);
+                send(true);
             }, { passive: false });
             if (latch) return;
             ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(t => btn.addEventListener(t, (e) => {
-                if (e.pointerId !== pid) return;
-                pid = null;
+                if (e.pointerId !== btn._pid) return;
+                btn._pid = null;
                 btn.classList.remove('_on');
-                sendKey(name, false);
+                send(false);
                 sleepSoon();
             }));
-        });
+        }
+        root.querySelectorAll('#_pad [data-kc], #_pad [data-act]').forEach(bindButton);
+
+        // --- Панель остальных клавиш ---
+        // Что значат клавиши, которые плагины вешают на свои действия, — для подписей
+        const CAPTION = {
+            messageAuto: T.cap_auto, AutoTextButton: T.cap_auto, auto_toggle: T.cap_auto, messageSkip: T.cap_skip,
+            log: T.cap_log, backlog: T.cap_log, hakubox_history: T.cap_log, msgHide: T.cap_hide, hide: T.cap_hide,
+        };
+        const STANDARD = new Set(['ok', 'escape', 'cancel', 'shift', 'control', 'pageup', 'pagedown', 'up', 'down', 'left', 'right', 'menu', 'tab', 'debug']);
+        const DEV_NAMES = new Set(['copy', 'messagedebug', 'languagereload']);   // инструменты разработчика
+        // Какие кнопки игра спрашивает у движка: так видно, что клавиша ей правда нужна
+        const asked = new Set();
+        const hookAsk = () => {
+            if (typeof Input === 'undefined') return;
+            for (const fn of ['isPressed', 'isTriggered', 'isRepeated', 'isLongPressed']) {
+                const orig = Input[fn];
+                if (typeof orig !== 'function' || orig.__rpgAsk) continue;
+                Input[fn] = function(name) { asked.add(name); return orig.apply(this, arguments); };
+                Input[fn].__rpgAsk = true;
+            }
+        };
+        hookAsk();
+        const askTimer = setInterval(hookAsk, 500);
+        setTimeout(() => clearInterval(askTimer), 30000);
+        // ...и какие проверяют её события (условие «Кнопка нажата»)
+        function eventButtons() {
+            const out = new Set();
+            const scan = (list) => { for (const c of list || []) if (c && c.code === 111 && c.parameters && c.parameters[0] === 11) out.add(c.parameters[1]); };
+            try { (window.$dataCommonEvents || []).forEach(ce => ce && scan(ce.list)); } catch (_) {}
+            try { ((window.$dataMap && window.$dataMap.events) || []).forEach(ev => ev && (ev.pages || []).forEach(p => scan(p.list))); } catch (_) {}
+            return out;
+        }
+        function gameKeys() {
+            const map = mapper(), used = eventButtons();
+            asked.forEach(n => used.add(n));
+            const out = [];
+            for (const code of Object.keys(map)) {
+                const kc = +code, name = map[code];
+                if (!KEYBOARD[kc] || !name || kc === 90 || kc === 88 || kc === 65) continue;   // Z, X и A и так на экране
+                if (STANDARD.has(name) || DEV_NAMES.has(name)) continue;
+                // Плагины «всей клавиатуры» вешают буквы и цифры на все клавиши подряд — такие
+                // берём, только если игра их спрашивает или клавиша названа сама собой (R → 'R')
+                if (name.length === 1 && name !== String.fromCharCode(kc) && !used.has(name)) continue;
+                out.push({ kc, caption: CAPTION[name] || '' });
+            }
+            // Tab у движка есть всегда, но на экране его нет — показываем, если игра его спрашивает
+            if (map[9] === 'tab' && used.has('tab')) out.push({ kc: 9, caption: '' });
+            return out.sort((a, b) => a.kc - b.kc);
+        }
+        // Листание уже на кнопках ‹ ›, а Home, End и прочие редкие клавиши игры, которым
+        // они нужны, покажутся в разделе этой игры — вся клавиатура влезает без прокрутки
+        const ALL = [...'ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890'].map(c => c.charCodeAt(0)).concat([9, 13, 32, 27, 18, 8]);
+        const keyBtn = (kc, cap) => `<button type="button" class="_key _glass" data-kc="${kc}">${keyLabel(kc)}${cap ? `<small>${cap}</small>` : ''}</button>`;
+        const panel = document.getElementById('_keys_panel');
+        const keysBtn = document.getElementById('_btn_keys');
+        function setPanel(open) {
+            if (open) {
+                const game = gameKeys();
+                panel.innerHTML = (game.length ? `<div class="_keys_title">${T.keys_game}</div><div class="_keys_grid _game">${game.map(g => keyBtn(g.kc, g.caption)).join('')}</div>` : '')
+                    + `<div class="_keys_title">${T.keys_all}</div><div class="_keys_grid">${ALL.map(kc => keyBtn(kc)).join('')}</div>`;
+                panel.querySelectorAll('[data-kc]').forEach(bindButton);
+            }
+            panel.classList.toggle('_open', open);
+            keysBtn.classList.toggle('_latched', open);
+        }
+        keysBtn.addEventListener('pointerdown', (e) => { e.preventDefault(); wake(); setPanel(!panel.classList.contains('_open')); sleepSoon(); }, { passive: false });
+
+        // Подписи под кнопками — по раскладке игры и сцене: на карте X открывает меню
+        const capA = root.querySelector('#_btn_a ._cap'), capX = root.querySelector('#_btn_x ._cap');
+        setInterval(() => {
+            const onMap = typeof Scene_Map !== 'undefined' && typeof SceneManager !== 'undefined' && SceneManager._scene instanceof Scene_Map;
+            const x = onMap ? T.menu : T.back, a = CAPTION[mapper()[65]] || '';
+            if (capX.textContent !== x) capX.textContent = x;
+            if (capA.textContent !== a) capA.textContent = a;
+            // Касания идут в игру или открыто чит-меню — угол экрана не забираем под джойстик
+            root.classList.toggle('_zone_off', !!window.__rpgTouchEnabled || !!(window.Cheat_Menu && window.Cheat_Menu.cheat_menu_open));
+        }, 400);
 
         // Свернули игру или заблокировали экран — отпускаем всё, что было зажато, иначе
         // герой продолжил бы идти. Движок при потере фокуса сбрасывает свои клавиши, так
         // что включённые «Бег» и «Пропуск» по возвращении нажимаем заново
         function releaseHeld() {
             releaseStick();
-            root.querySelectorAll('._btn._on, ._pill._on').forEach(b => b.classList.remove('_on'));
-            for (const name of [...held]) if (!latched.has(name)) sendKey(name, false);
+            root.querySelectorAll('[data-kc], [data-act]').forEach(b => { if (!b.classList.contains('_latched')) { b.classList.remove('_on'); b._pid = null; } });
+            for (const kc of [...physHeld]) { physHeld.delete(kc); sendPhys(kc, false); }
+            for (const act of [...actHeld]) if (!latched.has(act)) sendAction(act, false);
         }
-        const restoreLatched = () => { for (const name of latched) sendKey(name, true); };
+        const restoreLatched = () => { for (const act of latched) sendAction(act, true); };
         document.addEventListener('visibilitychange', () => { if (document.hidden) releaseHeld(); else restoreLatched(); });
         window.addEventListener('blur', releaseHeld);
         window.addEventListener('focus', restoreLatched);
-
-        addMenuItem({
-            id: '_sys_keys', section: 'controls', icon: 'keys', label: T.keys_zx,
-            isOn: () => useZX,
-            onClick: () => { releaseHeld(); useZX = !useZX; gameSettings.set('zx', useZX); },
-        });
     }
 
     // «Пропуск» во всех играх. Пока зажат Ctrl — или включена экранная кнопка «Пропуск»,
