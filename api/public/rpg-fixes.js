@@ -96,6 +96,20 @@ if (typeof ADV_System === 'undefined') {
 // ============================================================================
 // 2. БЛОКИРОВЩИК ПЛАГИНОВ И ЛЕКАРЬ ПРОМИСОВ (Перехватчик)
 // ============================================================================
+
+// Плагины Star Knightess Aura ждут от StorageManager.exists() промис и сразу зовут у
+// ответа .then. Раньше для этого exists() и DataManager.savefileExists() всегда
+// возвращали промис, а промис — всегда «истина»: ядро MV и плагины других игр считали,
+// что есть любой сейв, и удалённые слоты висели в списке. Теперь ответ снова да/нет,
+// а у да/нет есть .then — как у промиса с тем же значением. Обычный код это не задевает:
+// промисы и await ищут .then только у объектов, а true и false — не объекты
+if (!Boolean.prototype.then) {
+    Object.defineProperty(Boolean.prototype, 'then', {
+        value: function(onFulfilled, onRejected) { return Promise.resolve(this.valueOf()).then(onFulfilled, onRejected); },
+        writable: true,
+        configurable: true,
+    });
+}
 if (!window.__rpgPluginHookInstalled) {
     window.__rpgPluginHookInstalled = true;
     
@@ -123,24 +137,6 @@ if (!window.__rpgPluginHookInstalled) {
                             window.Scene_Boot.prototype.loadPlayerData = function() {
                                 var res = _origBootLoad ? _origBootLoad.apply(this, arguments) : undefined;
                                 return (res && typeof res.then === 'function') ? res : Promise.resolve(res);
-                            };
-                        }
-                        
-                        if (window.DataManager && window.DataManager.savefileExists && !window.__saveFilePromiseFixed) {
-                            window.__saveFilePromiseFixed = true;
-                            var _origSaveExists = window.DataManager.savefileExists;
-                            window.DataManager.savefileExists = function() {
-                                var res = _origSaveExists.apply(this, arguments);
-                                return (res && typeof res.then === 'function') ? res : Promise.resolve(res);
-                            };
-                        }
-
-                        if (window.StorageManager && window.StorageManager.exists && !window.__storagePromiseFixed) {
-                            window.__storagePromiseFixed = true;
-                            var _origStorageExists = window.StorageManager.exists;
-                            window.StorageManager.exists = function() {
-                                var res = _origStorageExists.apply(this, arguments);
-                                return (res && typeof res.then === 'function') ? res : Promise.resolve(res || false);
                             };
                         }
                     }
@@ -177,6 +173,7 @@ if (!window.__rpgPluginHookInstalled) {
     const UI_TEXT = {
         ru: {
             settings: 'Настройки', home: 'В библиотеку', turbo: 'Турбо ×3', cheats: 'Чит-меню',
+            restart: 'Перезапустить игру', restart_confirm: 'Ещё раз — и перезапуск',
             stretch: 'Растянуть экран', smooth: 'Сглаживание', fullscreen: 'На весь экран',
             keys_zx: 'Кнопки A и B как Z и X', touch: 'Касания по игре',
             fps: 'Счётчик кадров', spikes: 'Журнал подтормаживаний',
@@ -192,6 +189,7 @@ if (!window.__rpgPluginHookInstalled) {
         },
         en: {
             settings: 'Settings', home: 'Back to library', turbo: 'Turbo ×3', cheats: 'Cheat menu',
+            restart: 'Restart game', restart_confirm: 'Press again to restart',
             stretch: 'Stretch to screen', smooth: 'Smoothing', fullscreen: 'Full screen',
             keys_zx: 'A and B as Z and X', touch: 'Touch input in game',
             fps: 'FPS counter', spikes: 'Stutter log',
@@ -207,6 +205,7 @@ if (!window.__rpgPluginHookInstalled) {
         },
         de: {
             settings: 'Einstellungen', home: 'Zur Bibliothek', turbo: 'Turbo ×3', cheats: 'Cheat-Menü',
+            restart: 'Spiel neu starten', restart_confirm: 'Zum Neustart erneut drücken',
             stretch: 'Bild strecken', smooth: 'Glättung', fullscreen: 'Vollbild',
             keys_zx: 'A und B als Z und X', touch: 'Touch-Eingabe im Spiel',
             fps: 'FPS-Anzeige', spikes: 'Ruckel-Protokoll',
@@ -228,6 +227,23 @@ if (!window.__rpgPluginHookInstalled) {
         if (!known(lang)) try { lang = localStorage.getItem('rpg_lang'); } catch (_) {}
         return known(lang) ? lang : 'ru';   // 'ru' — как и в самой библиотеке по умолчанию
     })()];
+
+    // Настройки, которые запоминаются для каждой игры: «Касания по игре», «A и B как Z и X»,
+    // «Растянуть экран». Раньше они сбрасывались при каждом запуске, и в игре, которой
+    // нужны Z и X, это приходилось включать заново. Хранятся в браузере: на телефоне
+    // и на компьютере они и должны быть разными
+    const gameSettings = (() => {
+        const key = 'rpgfix_game_' + (location.pathname.split('/').filter(Boolean)[0] || 'unknown');
+        let data = {};
+        try { data = JSON.parse(localStorage.getItem(key) || '{}') || {}; } catch (_) {}
+        return {
+            get: (name) => data[name],
+            set: (name, value) => {
+                data[name] = value;
+                try { localStorage.setItem(key, JSON.stringify(data)); } catch (_) {}
+            },
+        };
+    })();
 
     function applyConsoleFixes() {
         function applyCanvasReadFrequently(proto) {
@@ -423,8 +439,8 @@ if (!window.__rpgPluginHookInstalled) {
         `;
         document.head.appendChild(style);
 
-        let isStretched = false; let targetCanvas = null;
-        window.__toggleRpgStretch = () => { isStretched = !isStretched; forceScaleUpdate(); };
+        let isStretched = !!gameSettings.get('stretch'); let targetCanvas = null;
+        window.__toggleRpgStretch = () => { isStretched = !isStretched; gameSettings.set('stretch', isStretched); forceScaleUpdate(); };
         window.__rpgIsStretched = () => isStretched;
 
         // Сглаживание при растягивании. Раньше картинка всегда растягивалась без него
@@ -892,6 +908,7 @@ if (!window.__rpgPluginHookInstalled) {
     const ICONS = {
         gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
         home: '<path d="M3 11l9-7 9 7"/><path d="M5.5 9.5V20h13V9.5"/><path d="M10 20v-5h4v5"/>',
+        restart: '<path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3"/><path d="M4.5 4v4h4"/>',
         fullscreen: '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>',
         stretch: '<path d="M3 12h18"/><path d="M7 8l-4 4 4 4M17 8l4 4-4 4"/>',
         smooth: '<path d="M3 15c3-6 6-6 9 0s6 6 9 0"/>',
@@ -946,9 +963,10 @@ if (!window.__rpgPluginHookInstalled) {
         el.innerHTML = `<span class="_sys_ico">${icon(item.icon)}</span><span class="_sys_label">${item.label}</span>` + (item.isOn ? '<span class="_sys_switch"></span>' : '');
         if (item.isOn) el.classList.toggle('_on', !!item.isOn());
         onTap(el, () => {
-            item.onClick();
+            // onClick вернул true — меню остаётся открытым (подтверждение перезапуска)
+            const keepOpen = item.onClick(el);
             if (item.isOn) el.classList.toggle('_on', !!item.isOn());
-            else closeMenu();
+            else if (!keepOpen) closeMenu();
         });
         return el;
     }
@@ -996,6 +1014,8 @@ if (!window.__rpgPluginHookInstalled) {
                 ._sys_switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: rgba(255,255,255,0.75); transition: transform .2s; }
                 ._sys_item._on ._sys_switch { background: #d9b45e; }
                 ._sys_item._on ._sys_switch::after { transform: translateX(12px); background: #fff; }
+                ._sys_item._warn { color: #f0b35e; }
+                ._sys_item._warn ._sys_ico { color: #f0b35e; }
                 ._sys_group + ._sys_group::before, ._sys_col + ._sys_col::before { content: ''; display: block; height: 1px; margin: 5px 8px; background: rgba(255,255,255,0.08); }
                 /* Лёжа на телефоне меню в одну колонку не влезает по высоте — колонки встают рядом */
                 @media (max-height: 500px) and (min-width: 560px) {
@@ -1067,6 +1087,24 @@ if (!window.__rpgPluginHookInstalled) {
             document.addEventListener('pointerdown', (e) => { if (!menu.contains(e.target)) closeMenu(); });
 
             addMenuItem({ id: '_sys_home', section: 'nav', icon: 'home', label: T.home, onClick: () => { window.location.href = '/'; } });
+
+            // Перезапуск. В приложении с экрана «Домой» у Safari нет кнопки обновления,
+            // и зависшую игру можно было только закрыть. Несохранённое пропадёт, поэтому
+            // с подтверждением: первое нажатие меняет надпись, второе в течение 3 секунд
+            // перезапускает
+            addMenuItem({
+                id: '_sys_restart', section: 'nav', icon: 'restart', label: T.restart,
+                onClick: (el) => {
+                    // «Взведён» — это сам пункт с новой надписью: меню при открытии рисуется
+                    // заново, и старое первое нажатие не превращает новое в перезапуск
+                    if (el.classList.contains('_warn')) { window.location.reload(); return true; }
+                    const label = el.querySelector('._sys_label');
+                    label.textContent = T.restart_confirm;
+                    el.classList.add('_warn');
+                    setTimeout(() => { label.textContent = T.restart; el.classList.remove('_warn'); }, 3000);
+                    return true;
+                },
+            });
 
             window.__rpgTurbo = false;
             addMenuItem({
@@ -1151,7 +1189,7 @@ if (!window.__rpgPluginHookInstalled) {
             ok:     { kn: 'ok',     kc: 90, key: 'z', code: 'KeyZ' },
             cancel: { kn: 'escape', kc: 88, key: 'x', code: 'KeyX' },
         };
-        let useZX = false;
+        let useZX = !!gameSettings.get('zx');
         const held = new Set();      // нажатые прямо сейчас
         const latched = new Set();   // включённые переключатели «Бег» и «Пропуск»
 
@@ -1309,8 +1347,63 @@ if (!window.__rpgPluginHookInstalled) {
         addMenuItem({
             id: '_sys_keys', section: 'controls', icon: 'keys', label: T.keys_zx,
             isOn: () => useZX,
-            onClick: () => { releaseHeld(); useZX = !useZX; },
+            onClick: () => { releaseHeld(); useZX = !useZX; gameSettings.set('zx', useZX); },
         });
+    }
+
+    // «Пропуск» во всех играх. Пока зажат Ctrl — или включена экранная кнопка «Пропуск»,
+    // она и шлёт Ctrl, — текст появляется сразу и листается сам, а на выборе ответа
+    // останавливается: окно выбора движок ждёт отдельно. Заодно быстрее идут журнал боя
+    // и бегущие титры. Раньше кнопка работала только там, где у игры есть свой плагин
+    // пропуска на Ctrl, — а он есть не у всех, и клавиши у них разные
+    function setupTextSkip() {
+        const skipping = () => typeof Input !== 'undefined' && !!Input.isPressed && Input.isPressed('control');
+        const orSkip = (proto, name) => {
+            const orig = proto && proto[name];
+            if (typeof orig !== 'function' || orig.__rpgSkip) return;
+            proto[name] = function() { return orig.apply(this, arguments) || skipping(); };
+            proto[name].__rpgSkip = true;
+        };
+        const apply = () => {
+            if (typeof Window_Message === 'undefined') return;
+            // Движок спрашивает «нажали?», когда решает показать текст сразу и перелистнуть страницу
+            orSkip(Window_Message.prototype, 'isTriggered');
+            if (typeof Window_BattleLog !== 'undefined') orSkip(Window_BattleLog.prototype, 'isFastForward');
+            if (typeof Window_ScrollText !== 'undefined') orSkip(Window_ScrollText.prototype, 'isFastForward');
+            // Паузы внутри текста (\. и \|) тоже пропускаем
+            const wait = Window_Message.prototype.updateWait;
+            if (typeof wait === 'function' && !wait.__rpgSkip) {
+                Window_Message.prototype.updateWait = function() {
+                    if (skipping()) this._waitCount = 0;
+                    return wait.apply(this, arguments);
+                };
+                Window_Message.prototype.updateWait.__rpgSkip = true;
+            }
+        };
+        // Плагины сообщений подменяют эти методы своими — поэтому ставим и после них
+        apply();
+        const timer = setInterval(apply, 500);
+        setTimeout(() => clearInterval(timer), 30000);
+    }
+
+    // Экран не гаснет, пока игра на экране: иначе телефон блокируется посреди сцены или
+    // длинного диалога, если долго его не касаться. Скрыли вкладку — браузер снимает
+    // блокировку сам, вернулись — ставим снова. Safari может дать её только после касания
+    // страницы, поэтому просим и по касанию
+    function setupWakeLock() {
+        if (!navigator.wakeLock || !navigator.wakeLock.request) return;
+        let lock = null, asking = false;
+        const acquire = () => {
+            if (lock || asking || document.visibilityState !== 'visible') return;
+            asking = true;
+            navigator.wakeLock.request('screen').then((l) => {
+                lock = l;
+                l.addEventListener('release', () => { if (lock === l) lock = null; });
+            }).catch(() => {}).finally(() => { asking = false; });
+        };
+        acquire();
+        document.addEventListener('visibilitychange', acquire);
+        ['touchend', 'click', 'keydown'].forEach(t => window.addEventListener(t, acquire, { capture: true, passive: true }));
     }
 
     // --- 6. ДИАГНОСТИКА, ТАЧ-РЕЖИМ, МОНИТОРЫ ---
@@ -1463,7 +1556,7 @@ if (!window.__rpgPluginHookInstalled) {
     function setupTouchModeToggle() {
         if (!IS_MOBILE) return;
 
-        window.__rpgTouchEnabled = false;
+        window.__rpgTouchEnabled = !!gameSettings.get('touch');
 
         const interceptor = (e) => {
             // Касание мимо меню ⚙ закрывает его. Проверка здесь, а не только в обработчике
@@ -1487,7 +1580,10 @@ if (!window.__rpgPluginHookInstalled) {
             window.addEventListener(ev, interceptor, { capture: true, passive: false });
         });
 
-        window.__toggleRpgTouchMode = function() { window.__rpgTouchEnabled = !window.__rpgTouchEnabled; };
+        window.__toggleRpgTouchMode = function() {
+            window.__rpgTouchEnabled = !window.__rpgTouchEnabled;
+            gameSettings.set('touch', window.__rpgTouchEnabled);
+        };
         addMenuItem({ id: '_sys_touch', section: 'controls', icon: 'tap', label: T.touch, isOn: () => window.__rpgTouchEnabled, onClick: () => window.__toggleRpgTouchMode() });
     }
 
@@ -1510,6 +1606,38 @@ if (!window.__rpgPluginHookInstalled) {
             document.dispatchEvent(ev);
         }
 
+        // Чит-меню сделано для мыши и клавиатуры. На телефоне его стрелки и пункты не
+        // нажимались: касание поверх картинки игры движок MV гасит (preventDefault), и
+        // браузер не присылал чит-меню нажатие мышью — а само касание уходило в игру,
+        // и герой шёл туда, где нажали. Теперь касания и мышь по чит-меню — только ему
+        function prepareCheatMenu() {
+            const parts = [Cheat_Menu.overlay_box, Cheat_Menu.overlay];
+            parts.forEach(el => ['touchstart', 'touchmove', 'touchend', 'mousedown', 'mouseup', 'click'].forEach(t => {
+                el.addEventListener(t, (e) => e.stopPropagation(), { passive: true });
+            }));
+            // У края экрана меню стоит в 5 пикселях от него — на iPhone лёжа это под вырезом.
+            // Сдвигаем на ширину выреза: ту же, по которой встаёт картинка игры
+            const fit = () => {
+                const probe = document.getElementById('_safe_area_probe');
+                if (!probe) return;
+                const cs = getComputedStyle(probe);
+                const inset = { left: parseFloat(cs.paddingLeft) || 0, right: parseFloat(cs.paddingRight) || 0, top: parseFloat(cs.paddingTop) || 0 };
+                parts.forEach(el => ['left', 'right', 'top'].forEach(side => {
+                    const v = el.style[side];
+                    if (inset[side] && (v === '5px' || v === '-15px')) el.style[side] = (parseFloat(v) + inset[side]) + 'px';
+                }));
+            };
+            const position = Cheat_Menu.position_menu;
+            Cheat_Menu.position_menu = function() { position.apply(this, arguments); fit(); };
+            window.addEventListener('resize', fit);   // своё на resize чит-меню повесило раньше
+            fit();
+            // Подложка у чит-меню высотой 100 пикселей, а пунктов больше: нижние строки
+            // ложились прямо на текст игры. Подложку даём всей таблице
+            const style = document.createElement('style');
+            style.textContent = '#cheat_menu { background: transparent !important; } #cheat_menu_text { background: rgba(10,10,14,0.9); border-radius: 8px; }';
+            document.head.appendChild(style);
+        }
+
         addMenuItem({
             id: '_sys_cheat', section: 'game', icon: 'wand', label: T.cheats,
             onClick: () => {
@@ -1522,7 +1650,7 @@ if (!window.__rpgPluginHookInstalled) {
                 document.head.appendChild(css);
                 const script = document.createElement('script');
                 script.src = '/Cheat_Menu.js';
-                script.onload = () => { state = 'ready'; openCheats(); };
+                script.onload = () => { state = 'ready'; prepareCheatMenu(); openCheats(); };
                 script.onerror = () => { state = 'idle'; console.warn('[RPG Fixes] Чит-меню не загрузилось'); };
                 document.body.appendChild(script);
             },
@@ -1725,47 +1853,6 @@ if (!window.__rpgPluginHookInstalled) {
     }
 
     // ============================================================================
-    // 8. ГЛОБАЛЬНЫЙ ЩИТ И ФИКСЫ ПЛАГИНОВ (MV/MZ)
-    // ============================================================================
-    function setupGlobalCrashProtection() {
-        const coreTimer = setInterval(() => {
-            if (typeof SceneManager !== 'undefined') {
-                clearInterval(coreTimer);
-                if (!SceneManager.__gacePatched) {
-                    SceneManager.__gacePatched = true;
-                    const origCatchException = SceneManager.catchException;
-                    SceneManager.catchException = function(e) {
-                        if (e instanceof Error) {
-                            console.warn(`🛡️ [GACE] Ошибка перехвачена:`, e.message);
-                            if (typeof SoundManager !== 'undefined') SoundManager.playBuzzer();
-                            return; 
-                        }
-                        origCatchException.call(this, e);
-                    };
-                }
-            }
-        }, 100);
-
-        // ВОССТАНОВЛЕНО: Безопасный патч для SceneGlossary.js
-        const pluginTimer = setInterval(() => {
-            if (typeof Game_Party !== 'undefined' && Game_Party.prototype.getAllGlossaryCategory && !Game_Party.prototype.__gaceGlossaryPatched) {
-                Game_Party.prototype.__gaceGlossaryPatched = true;
-                const origGlossaryCat = Game_Party.prototype.getAllGlossaryCategory;
-                Game_Party.prototype.getAllGlossaryCategory = function() {
-                    try {
-                        const categories = origGlossaryCat.apply(this, arguments);
-                        return categories ? categories.filter(Boolean) : [];
-                    } catch (e) { return ['Все']; }
-                };
-                clearInterval(pluginTimer);
-                console.log('✅ [GACE] Асинхронный патч для SceneGlossary.js успешно применен!');
-            }
-        }, 500);
-
-        setTimeout(() => clearInterval(pluginTimer), 15000);
-    }
-
-    // ============================================================================
     // ФИКС КРАША СНИМКОВ ЭКРАНА (Броня на уровне движка RPG Maker)
     // ============================================================================
     const bitmapShieldTimer = setInterval(() => {
@@ -1813,141 +1900,6 @@ if (!window.__rpgPluginHookInstalled) {
         }
     }, 100);
 
-    // ВОССТАНОВЛЕНО: Отдельный и надежный анти-спам фильтр
-    function setupNetworkAntiSpam() {
-        const patchTimer = setInterval(() => {
-            if (typeof ImageManager !== 'undefined' && !ImageManager.__spamHooked) {
-                ImageManager.__spamHooked = true;
-                const origLoadBitmap = ImageManager.loadBitmap;
-                
-                // Перехватываем только запросы картинок с названиями null/undefined
-                ImageManager.loadBitmap = function(folder, filename) {
-                    if (filename && (String(filename).toLowerCase().includes('null') || String(filename).toLowerCase().includes('undefined'))) {
-                        if (!this.__dummyBitmap) this.__dummyBitmap = typeof Bitmap !== 'undefined' ? new Bitmap(1, 1) : {};
-                        return this.__dummyBitmap;
-                    }
-                    return origLoadBitmap.apply(this, arguments);
-                };
-
-                clearInterval(patchTimer);
-            }
-        }, 100);
-        setTimeout(() => clearInterval(patchTimer), 10000);
-    }
-
-    // ============================================================================
-    // 9. АБСОЛЮТНАЯ БРОНЯ ДЛЯ СПРАЙТОВ (Защита от reading 'width')
-    // ============================================================================
-    function setupSpriteArmor() {
-        const spriteArmorTimer = setInterval(() => {
-            if (typeof Sprite_Picture !== 'undefined' && typeof Sprite_Character !== 'undefined') {
-                clearInterval(spriteArmorTimer);
-                
-                const safeBitmap = typeof Bitmap !== 'undefined' ? new Bitmap(1, 1) : { width: 1, height: 1, isReady: () => true };
-                
-                const origPicUpdate = Sprite_Picture.prototype.update;
-                Sprite_Picture.prototype.update = function() {
-                    if (!this.bitmap) this.bitmap = safeBitmap;
-                    try { origPicUpdate.call(this); } catch(e) { console.warn('[RPG Fixes] Перехвачен краш картинки:', e); }
-                };
-
-                const origCharUpdate = Sprite_Character.prototype.update;
-                Sprite_Character.prototype.update = function() {
-                    if (!this.bitmap) this.bitmap = safeBitmap;
-                    try { origCharUpdate.call(this); } catch(e) { console.warn('[RPG Fixes] Перехвачен краш персонажа:', e); }
-                };
-                
-                console.log('[RPG Fixes] 🛡️ Броня спрайтов активирована!');
-            }
-        }, 100);
-    }
-
-    // ============================================================================
-    // 10. СОВРЕМЕННЫЙ ДЕШИФРАТОР (Идеальный фикс загрузки .rpgmvp)
-    // ============================================================================
-    function setupModernDecrypter() {
-        var decrypterPatchTimer = setInterval(function() {
-            if (typeof Decrypter === 'undefined' || !Decrypter.decryptImg) return;
-            clearInterval(decrypterPatchTimer);
-
-            Decrypter.decryptImg = function(url, bitmap) {
-                var self = this;
-                var encUrl = this.extToEncryptExt(url);
-
-                fetch(encUrl, { cache: 'no-store' })
-                    .then(function(response) {
-                        if (!response.ok) throw new Error('HTTP ' + response.status + ': ' + encUrl);
-                        return response.arrayBuffer();
-                    })
-                    .then(function(arrayBuffer) {
-                        var decrypted = self.decryptArrayBuffer(arrayBuffer);
-                        var blob      = new Blob([decrypted], { type: 'image/png' });
-                        var blobUrl   = URL.createObjectURL(blob);
-
-                        var freshImage = new Image();
-
-                        freshImage.onload = function() {
-                            bitmap._image.onload = function() {
-                                if (bitmap._baseTexture) {
-                                    bitmap._baseTexture.hasLoaded = true;
-                                    bitmap._baseTexture.width  = bitmap._image.naturalWidth  || bitmap._image.width  || 1;
-                                    bitmap._baseTexture.height = bitmap._image.naturalHeight || bitmap._image.height || 1;
-                                    bitmap._baseTexture.source = bitmap._image;
-                                    bitmap._baseTexture.dirty();
-                                    if (bitmap._baseTexture.emit) {
-                                        bitmap._baseTexture.emit('loaded', bitmap._baseTexture);
-                                    }
-                                }
-                                bitmap._url       = url;
-                                bitmap._isLoading = false;
-                                bitmap.width  = bitmap._image.naturalWidth  || bitmap._image.width  || 1;
-                                bitmap.height = bitmap._image.naturalHeight || bitmap._image.height || 1;
-
-                                if (Array.isArray(bitmap._loadListeners)) {
-                                    var listeners = bitmap._loadListeners.slice();
-                                    bitmap._loadListeners = [];
-                                    for (var li = 0; li < listeners.length; li++) {
-                                        try { listeners[li](bitmap); } catch(e) {}
-                                    }
-                                }
-                                if (typeof bitmap._onLoad === 'function') {
-                                    try { bitmap._onLoad(); } catch(e) {}
-                                }
-                                setTimeout(function() { URL.revokeObjectURL(blobUrl); }, 5000);
-                            };
-                            bitmap._image.onerror = function() {
-                                console.warn('[RPG Fixes] Blob onerror:', url);
-                                bitmap._isLoading = false;
-                                if (Array.isArray(bitmap._loadListeners)) bitmap._loadListeners = [];
-                                if (typeof bitmap._onError === 'function') { try { bitmap._onError(); } catch(e) {} }
-                            };
-                            bitmap._image.src = blobUrl;
-                            if (bitmap._image.complete && bitmap._image.naturalWidth > 0) {
-                                bitmap._image.onload();
-                            }
-                        };
-                        freshImage.onerror = function() {
-                            console.warn('[RPG Fixes] Blob freshImage error:', url);
-                            bitmap._isLoading = false;
-                            if (Array.isArray(bitmap._loadListeners)) bitmap._loadListeners = [];
-                        };
-                        freshImage.src = blobUrl;
-                        if (freshImage.complete && freshImage.naturalWidth > 0) {
-                            freshImage.onload();
-                        }
-                    })
-                    .catch(function(e) {
-                        console.warn('[RPG Fixes] Decrypter fetch error:', url, e);
-                        bitmap._isLoading = false;
-                        if (Array.isArray(bitmap._loadListeners)) bitmap._loadListeners = [];
-                        if (typeof bitmap._onError === 'function') { try { bitmap._onError(); } catch(e2) {} }
-                    });
-            };
-            console.log('[RPG Fixes] Bulletproof Decrypter MV 1.5.1 activated!');
-        }, 100);
-        setTimeout(function() { clearInterval(decrypterPatchTimer); }, 15000);
-    }
-
     // ============================================================================
     // ИНИЦИАЛИЗАЦИЯ
     // ============================================================================
@@ -1960,16 +1912,15 @@ if (!window.__rpgPluginHookInstalled) {
         setupModernViewport();
         applyPerformanceOptimizations();
         setupSecureAudio(); 
+        // Слушает касания на window раньше перехватчика касаний (setupTouchModeToggle)
+        setupWakeLock();
         setupCloudSaves();
         setupUIAndGamepad();
+        setupTextSkip();
         setupFpsMonitor();
         setupSpikeDiagnostics();
         setupTouchModeToggle();
         injectEmeraldCheatMenu();
-        
-        // Наши восстановленные функции
-        //setupGlobalCrashProtection();
-        //setupSpriteArmor();
         console.log('✅ RPG-Fixes Ultimate v4.1 успешно загружен!');
     }
 
@@ -2133,11 +2084,17 @@ if (!window.__rpgPluginHookInstalled) {
     // ============================================================================
     const saveFixInterval = setInterval(() => {
         
-        // 1. Лечим ядро StorageManager (global -> array)
+        // 1. Лечим ядро StorageManager (global -> array). Пустой или повреждённый общий список
+        //    сейвов, настройки и данные плагинов — не повод падать, подставляем пустые. А сами
+        //    сейвы (file1, file2…) не трогаем: раньше повреждённый сейв тоже подменялся пустым
+        //    объектом, игра «загружала» пустоту — $gameSystem и $gameParty пропадали, и дальше
+        //    она падала. Без подмены MZ честно отвечает, что загрузить не удалось
         if (window.StorageManager && window.StorageManager.loadObject && !window.StorageManager.loadObject._isSafe) {
             const origLoad = window.StorageManager.loadObject;
             window.StorageManager.loadObject = function(saveName) {
-                return origLoad.apply(this, arguments).then(contents => {
+                const loading = origLoad.apply(this, arguments);
+                if (/^file\d+$/.test(saveName)) return loading;
+                return loading.then(contents => {
                     if (saveName === 'global') return (contents && Array.isArray(contents)) ? contents : [];
                     return contents || {}; 
                 }).catch(e => {
