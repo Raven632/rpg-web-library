@@ -174,6 +174,7 @@ if (!window.__rpgPluginHookInstalled) {
         ru: {
             settings: 'Настройки', home: 'В библиотеку', turbo: 'Турбо ×3', cheats: 'Чит-меню',
             restart: 'Перезапустить игру', restart_confirm: 'Ещё раз — и перезапуск',
+            save: 'Сохранить', save_blocked: 'Только на карте, вне сцены', loading: 'Загрузка игры…',
             stretch: 'Растянуть экран', smooth: 'Сглаживание', fullscreen: 'На весь экран',
             keys_zx: 'Кнопки A и B как Z и X', touch: 'Касания по игре',
             fps: 'Счётчик кадров', spikes: 'Журнал подтормаживаний',
@@ -190,6 +191,7 @@ if (!window.__rpgPluginHookInstalled) {
         en: {
             settings: 'Settings', home: 'Back to library', turbo: 'Turbo ×3', cheats: 'Cheat menu',
             restart: 'Restart game', restart_confirm: 'Press again to restart',
+            save: 'Save', save_blocked: 'Only on the map, outside scenes', loading: 'Loading game…',
             stretch: 'Stretch to screen', smooth: 'Smoothing', fullscreen: 'Full screen',
             keys_zx: 'A and B as Z and X', touch: 'Touch input in game',
             fps: 'FPS counter', spikes: 'Stutter log',
@@ -206,6 +208,7 @@ if (!window.__rpgPluginHookInstalled) {
         de: {
             settings: 'Einstellungen', home: 'Zur Bibliothek', turbo: 'Turbo ×3', cheats: 'Cheat-Menü',
             restart: 'Spiel neu starten', restart_confirm: 'Zum Neustart erneut drücken',
+            save: 'Speichern', save_blocked: 'Nur auf der Karte, außerhalb von Szenen', loading: 'Spiel wird geladen…',
             stretch: 'Bild strecken', smooth: 'Glättung', fullscreen: 'Vollbild',
             keys_zx: 'A und B als Z und X', touch: 'Touch-Eingabe im Spiel',
             fps: 'FPS-Anzeige', spikes: 'Ruckel-Protokoll',
@@ -323,6 +326,8 @@ if (!window.__rpgPluginHookInstalled) {
                 clearInterval(pmTimer);
             }
         }, 10);
+        // Не игра RPG Maker (или сломанная) — не опрашиваем вечно
+        setTimeout(() => clearInterval(pmTimer), 30000);
     }
 
     function setupBrowserStubs() {
@@ -600,19 +605,34 @@ if (!window.__rpgPluginHookInstalled) {
             
             // 1. Глушим экран ошибки Karryn's Prison
             const origAddListener = window.addEventListener;
+            const origRemoveListener = window.removeEventListener;
+            // Обёртка на каждый слушатель одна — по ней его и снимаем. Раньше снять
+            // слушатель ошибок было нельзя: removeEventListener искал исходную функцию,
+            // а на окне висела обёртка
+            const safeListeners = new WeakMap();
             window.addEventListener = function(type, listener, options) {
-                if (type === 'unhandledrejection' || type === 'error') {
-                    const safeListener = function(event) {
-                        const err = event.reason || event.error || event;
-                        if (err && (err.name === 'AbortError' || (err.message && err.message.toLowerCase().includes('aborted')))) {
-                            event.preventDefault(); event.stopPropagation(); return;
-                        }
-                        if (typeof listener === 'function') return listener.apply(this, arguments);
-                        if (listener && typeof listener.handleEvent === 'function') return listener.handleEvent(event);
-                    };
+                if ((type === 'unhandledrejection' || type === 'error') && listener) {
+                    let safeListener = safeListeners.get(listener);
+                    if (!safeListener) {
+                        safeListener = function(event) {
+                            const err = event.reason || event.error || event;
+                            if (err && (err.name === 'AbortError' || (err.message && err.message.toLowerCase().includes('aborted')))) {
+                                event.preventDefault(); event.stopPropagation(); return;
+                            }
+                            if (typeof listener === 'function') return listener.apply(this, arguments);
+                            if (listener && typeof listener.handleEvent === 'function') return listener.handleEvent(event);
+                        };
+                        safeListeners.set(listener, safeListener);
+                    }
                     return origAddListener.call(this, type, safeListener, options);
                 }
                 return origAddListener.call(this, type, listener, options);
+            };
+            window.removeEventListener = function(type, listener, options) {
+                if ((type === 'unhandledrejection' || type === 'error') && listener && safeListeners.has(listener)) {
+                    listener = safeListeners.get(listener);
+                }
+                return origRemoveListener.call(this, type, listener, options);
             };
 
             // 2. Бронируем декодер (Умный авто-повтор после сна)
@@ -638,6 +658,39 @@ if (!window.__rpgPluginHookInstalled) {
                 };
             }
         }
+    }
+
+    // На мониторе 120–144 Гц браузер зовёт игру чаще, чем она обновляется (60 раз
+    // в секунду), а движок рисует кадр на каждый вызов — больше половины кадров рисуется
+    // зря. Рисуем, только если с прошлого кадра игра обновилась. Замер без ограничения
+    // кадров: MV рисовала 342 кадра в секунду при 60 обновлениях. На обычных 60 Гц
+    // и на iPhone ничего не меняется — там каждый кадр и есть обновление
+    function skipIdleRenders() {
+        let updated = true, lastUpdate = 0, broken = false;
+        const shouldRender = () => {
+            const now = performance.now();
+            if (broken || updated) { updated = false; lastUpdate = now; return true; }
+            // Секунды без обновлений у живой игры не бывает — значит, плагин заменил
+            // updateScene, не вызвав нашу версию. Тогда рисуем как раньше, каждый кадр.
+            // Считаем по времени, а не по кадрам: на мониторе 480 Гц тридцать кадров —
+            // это 60 мс, и хватало одной заминки, чтобы отключиться навсегда
+            if (now - lastUpdate > 1000) { broken = true; return true; }
+            return false;
+        };
+        const timer = setInterval(() => {
+            if (typeof SceneManager === 'undefined' || typeof Graphics === 'undefined' || typeof Utils === 'undefined' || !SceneManager.updateScene) return;
+            clearInterval(timer);
+            const updateScene = SceneManager.updateScene;
+            SceneManager.updateScene = function() { updated = true; return updateScene.apply(this, arguments); };
+            if (Utils.RPGMAKER_NAME === 'MZ' && typeof Graphics._canRender === 'function') {
+                const canRender = Graphics._canRender;
+                Graphics._canRender = function() { return canRender.apply(this, arguments) && shouldRender(); };
+            } else if (typeof SceneManager.renderScene === 'function') {
+                const renderScene = SceneManager.renderScene;
+                SceneManager.renderScene = function() { if (shouldRender()) return renderScene.apply(this, arguments); };
+            }
+        }, 50);
+        setTimeout(() => clearInterval(timer), 30000);
     }
 
     // ============================================================================
@@ -909,6 +962,7 @@ if (!window.__rpgPluginHookInstalled) {
         gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
         home: '<path d="M3 11l9-7 9 7"/><path d="M5.5 9.5V20h13V9.5"/><path d="M10 20v-5h4v5"/>',
         restart: '<path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3"/><path d="M4.5 4v4h4"/>',
+        save: '<path d="M5 4h11l3 3v13H5z"/><path d="M8.5 4v4.5h6V4"/><path d="M8.5 20v-6h7v6"/>',
         fullscreen: '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>',
         stretch: '<path d="M3 12h18"/><path d="M7 8l-4 4 4 4M17 8l4 4-4 4"/>',
         smooth: '<path d="M3 15c3-6 6-6 9 0s6 6 9 0"/>',
@@ -947,8 +1001,9 @@ if (!window.__rpgPluginHookInstalled) {
     // Пункты меню приходят из разных частей файла (экран, управление, диагностика,
     // читы), а рисуются здесь, по разделам и всегда в одном порядке. Разделы собраны
     // в две колонки: на высоком экране они идут одна под другой, на низком (телефон
-    // лёжа) — рядом, и листать меню не нужно
-    const MENU_COLUMNS = [['nav', 'game', 'screen'], ['controls', 'debug']];
+    // лёжа) — рядом, и листать меню не нужно. Колонки примерно поровну: лёжа
+    // на iPhone 13 в высоту помещается шесть пунктов
+    const MENU_COLUMNS = [['nav', 'game'], ['screen', 'controls', 'debug']];
     const menuItems = [];
     function addMenuItem(item) { menuItems.push(item); renderMenu(); }
     function closeMenu() {
@@ -1022,7 +1077,7 @@ if (!window.__rpgPluginHookInstalled) {
                     #_sys_panel._open { display: grid; grid-template-columns: 1fr 1fr; }
                     ._sys_col + ._sys_col { margin-left: 5px; padding-left: 5px; border-left: 1px solid rgba(255,255,255,0.08); }
                     ._sys_col + ._sys_col::before { display: none; }
-                    ._sys_item { padding: 8px 10px; }
+                    ._sys_item { padding: 7px 10px; }
                 }
 
                 /* Экранное управление. Единица --u — от короткой стороны экрана: на телефоне
@@ -1131,6 +1186,28 @@ if (!window.__rpgPluginHookInstalled) {
                             clearInterval(turboHook);
                         }
                     }, 500);
+                },
+            });
+
+            // Сохранить где угодно: многие игры дают сохраняться только в особых местах.
+            // Открываем обычный экран сохранения игры — но только на карте или из меню игры
+            // и вне сцены: сохранение посреди события может сломать сюжет. Нельзя — пункт
+            // на пару секунд говорит, почему
+            addMenuItem({
+                id: '_sys_save', section: 'game', icon: 'save', label: T.save,
+                onClick: (el) => {
+                    const scene = typeof SceneManager !== 'undefined' && SceneManager._scene;
+                    const place = scene && ((typeof Scene_Map !== 'undefined' && scene instanceof Scene_Map) || (typeof Scene_Menu !== 'undefined' && scene instanceof Scene_Menu));
+                    const calm = place && !$gameMap.isEventRunning() && !$gameMessage.isBusy() && !$gamePlayer.isTransferring();
+                    if (calm && typeof Scene_Save !== 'undefined') {
+                        SceneManager.push(Scene_Save);
+                        return false;
+                    }
+                    const label = el.querySelector('._sys_label');
+                    label.textContent = T.save_blocked;
+                    el.classList.add('_warn');
+                    setTimeout(() => { label.textContent = T.save; el.classList.remove('_warn'); }, 2500);
+                    return true;
                 },
             });
 
@@ -1404,6 +1481,39 @@ if (!window.__rpgPluginHookInstalled) {
         acquire();
         document.addEventListener('visibilitychange', acquire);
         ['touchend', 'click', 'keydown'].forEach(t => window.addEventListener(t, acquire, { capture: true, passive: true }));
+    }
+
+    // Пока игра грузится, экран чёрный — иногда секунды, а с большим шрифтом на медленной
+    // сети и дольше: непонятно, грузится она или зависла. Через полсекунды внизу появляется
+    // «Загрузка игры…» и держится, пока не начнётся первая сцена после загрузочной.
+    // Внизу, а не по центру: в центре движок рисует свою картинку загрузки
+    function setupLoadingHint() {
+        const style = document.createElement('style');
+        style.textContent = `
+            #_loading_hint { position: fixed; left: 50%; bottom: calc(max(20px, env(safe-area-inset-bottom)) + 12px); transform: translateX(-50%); z-index: 2147483645; display: flex; align-items: center; gap: 10px; padding: 8px 16px; border-radius: 999px; background: rgba(20,20,24,0.72); color: rgba(255,255,255,0.85); font: 500 13px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; white-space: nowrap; pointer-events: none; opacity: 0; transition: opacity .3s; }
+            #_loading_hint._show { opacity: 1; }
+            #_loading_hint i { width: 13px; height: 13px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.22); border-top-color: rgba(255,255,255,0.9); animation: _rpg_spin .8s linear infinite; }
+            @keyframes _rpg_spin { to { transform: rotate(360deg); } }
+        `;
+        document.head.appendChild(style);
+        const hint = document.createElement('div');
+        hint.id = '_loading_hint';
+        hint.innerHTML = `<i></i>${T.loading}`;
+        document.body.appendChild(hint);
+
+        const done = () => {
+            // Игра упала — показывает свой экран ошибки, наша надпись там лишняя
+            if (typeof Graphics !== 'undefined' && Graphics._errorPrinter && Graphics._errorPrinter.innerHTML.trim()) return true;
+            if (typeof SceneManager === 'undefined' || !SceneManager._scene) return false;
+            if (SceneManager._stopped) return true;
+            const scene = SceneManager._scene;
+            if (typeof Scene_Boot !== 'undefined' && scene instanceof Scene_Boot) return false;
+            return scene.isStarted ? scene.isStarted() : !!SceneManager._sceneStarted;
+        };
+        const show = setTimeout(() => hint.classList.add('_show'), 500);
+        const hide = () => { clearInterval(watch); clearTimeout(show); hint.classList.remove('_show'); setTimeout(() => hint.remove(), 400); };
+        const watch = setInterval(() => { if (done()) hide(); }, 200);
+        setTimeout(hide, 120000);
     }
 
     // --- 6. ДИАГНОСТИКА, ТАЧ-РЕЖИМ, МОНИТОРЫ ---
@@ -1899,6 +2009,7 @@ if (!window.__rpgPluginHookInstalled) {
             console.log('[RPG Fixes] 🛡️ Броня Bitmap (getPixel/clearRect) активирована!');
         }
     }, 100);
+    setTimeout(() => clearInterval(bitmapShieldTimer), 30000);
 
     // ============================================================================
     // ИНИЦИАЛИЗАЦИЯ
@@ -1911,11 +2022,13 @@ if (!window.__rpgPluginHookInstalled) {
         fixDevicePixelRatio();
         setupModernViewport();
         applyPerformanceOptimizations();
+        skipIdleRenders();
         setupSecureAudio(); 
         // Слушает касания на window раньше перехватчика касаний (setupTouchModeToggle)
         setupWakeLock();
         setupCloudSaves();
         setupUIAndGamepad();
+        setupLoadingHint();
         setupTextSkip();
         setupFpsMonitor();
         setupSpikeDiagnostics();
@@ -2234,7 +2347,8 @@ if (!window.__rpgPluginHookInstalled) {
                 if (typeof text === 'string') {
                     const trimmed = text.trim();
                     
-                    // 1. Игнорируем пустые строки (возвращаем оригинальную ошибку, чтобы плагины сами ее тихо обработали)
+                    // 1. Пустая строка — возвращаем её же, без ошибки: у плагинов с пустыми
+                    //    параметрами JSON.parse('') иначе ронял игру при загрузке
                     if (trimmed === '') {
                         return text; 
                     }
